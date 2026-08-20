@@ -1,8 +1,6 @@
-# Agent Accounting CLI — Discovery
+# AgentBahi
 
-This is a temporary project name.
-
-The goal is an open-source, agent-native accounting and India-compliance CLI.
+The goal is an open-source, agent-native accounting and India-compliance CLI. This project is currently in discovery phase.
 
 Default storage is local SQLite, with future PostgreSQL/MySQL adapters.
 
