@@ -778,33 +778,33 @@ For drafts and unrelated bookkeeping:
 
 ### Approved Mixed-Use Allocation Rules (Tenant-Scoped, Versioned, Immutable)
 
-**Purpose**: For recurring expenses with both business and personal use (e.g., home-office rent, utilities), an **approved allocation rule** records the settled, evidence-backed business/personal split. The rule is immutable once approved, versioned per change, and reusable only within the same tenant for matching vendor/category/premises/conditions.
+**Purpose and lifecycle**: For recurring expenses with both business and personal use (e.g., home-office rent, utilities), an allocation rule records an evidence-backed business/personal split. Its lifecycle is **proposed → explicitly human-approved → superseded**. An agent or skill may create or suggest only a proposal; it may never approve its own rule or silently imply approval. A separate deterministic approve action requires recorded human confirmation before transitioning the proposal to `human_approved`. Approved rules are immutable.
 
 **Rule structure** (persisted separately from statutory rule packs):
-- **Tenant**: Which legal entity owns this rule.
-- **Premises**: Specific address or property.
-- **Expense/Vendor/Category**: Matched items (e.g., "Rent for 123 Main St," "Electricity supplier MSEDCL").
-- **Method/Formula**: Allocation basis (e.g., "dedicated-room area ratio," "hours business use per week").
-- **Percentage or Cap**: Business-attributable share (e.g., "60% business, 40% personal").
-- **Evidence**: Reference to supporting allocation workpaper or CA recommendation.
-- **Valid Dates**: Effective from/to dates.
-- **Approver**: Actor authorizing the rule (name, date).
-- **Version**: Immutable version ID (e.g., "v1", "v2").
+- **Tenant and scope**: Legal-entity tenant plus premises, expense/vendor/category scope.
+- **Method/formula and share**: Allocation basis and percentage or cap.
+- **Evidence**: Supporting allocation workpaper, invoice split schedule, or CA recommendation.
+- **Approval**: `actor_type` (must be `human`), approving human identity, `approved_at`, approval evidence/source, and immutable audit binding to the proposal, evidence hashes, and recorded human confirmation.
+- **Version and effective interval**: Immutable version ID and a half-open effective interval; a new version supersedes the prior version and closes its interval at the new version's effective boundary.
+- **Matching snapshots/fingerprints**: Persist normalized snapshots and fingerprints for premises characteristics; vendor/payee identity and classification; tariff/plan; usage basis/pattern; and applicable tax-rule version.
 
 **Reuse and triggers**:
-- Future matching transactions for the same expense type and premises within valid dates reuse the rule without reapproval.
-- Material changes (premises move, rate plan change, usage-pattern change, payee-classification change, tax-rule-version change) require reapproval and a new rule version.
+- Reuse only a `human_approved` rule for the same tenant/scope, within its effective interval, when all required stored match inputs remain equal and exactly one applicable rule exists.
+- Missing or unverifiable match inputs produce `candidate_only` and require reapproval. Zero or multiple exact matches fail closed for rule reuse and require user resolution; gross bookkeeping posting remains allowed with a visible exception.
+- Enforce non-overlapping applicable intervals per tenant and scope. Premises, tariff/plan, usage, vendor/payee classification, or tax-rule changes require a new proposal and version.
 
 **Independence from tax treatment**:
 - An approved allocation rule documents the split only; it does NOT determine tax deductibility, depreciation treatment, or GST ITC eligibility.
-- Tax treatment is assessed separately against effective statutory rules (Income Tax Act 2025 s28(2), s33(3)(b), s34, s62; CGST Act s16/s17, Rule 36) by CA review.
+- s28(2) and s33(3)(b) restrict an otherwise allowable deduction/depreciation and do not themselves create entitlement; fair-proportion determination is assigned to the Assessing Officer having regard to business use. Do not imply utilities fall under s28(2). The approved split is a workpaper/input, not binding on the Assessing Officer or other tax authority.
+- Tax treatment is assessed separately against effective statutory rules (Income Tax Act 2025 s28(2), s33(3)(b), s34, s62; CGST Act s16(2), s17, Rule 36) by CA review. Under GST, s16(2) carries invoice possession, receipt, tax-paid, and return conditions; s17 governs business/non-business and taxable/exempt apportionment and blocked credits. Allocation approval never grants ITC.
+- Where Income-tax Rules 2026 Rule 46 applies, an internal memo, bank statement, or internal voucher may support a business-purpose explanation but never substitutes for a mandatory bill, receipt, original voucher, or payment voucher. A missing receipt never blocks gross posting; the required-record gap leaves the relevant tax lane incomplete and `review_required`.
 - Allocation approval is not automatic tax approval; the CA may disallow, partially allow, or modify the tax claim regardless of the approved rule.
 
 **Sole proprietor vs. company posting**:
 - **Sole proprietor**: Books the business share to the relevant expense account and the personal share to drawings (not business expense).
-- **Company**: Records only the approved business-share amount as company expense or reimbursement, routed through appropriate compliance framework for possible perquisite/payroll/related-party implications (CA review required).
+- **Company**: If an employee/director paid personally, reimburse only the approved business share. If the company bank paid the full mixed-use bill, post the business share to expense/asset and the personal share to a named recoverable/receivable from the accountable individual, or use a separately reviewed payroll/perquisite treatment. Keep the double-entry balanced; never silently expense the personal share. No automatic tax treatment is claimed.
 
-**Storage**: Approved rules are stored separately from versioned statutory rule packs. They are tenant-scoped and immutable (new version created on change, never overwrite). Queries filter by tenant, premises, vendor, and valid-date range to reuse applicable rules.
+**Storage**: Rules are tenant-scoped and immutable (new version on change, never overwrite). The engine's deterministic approve action records the human confirmation and audit binding. Queries enforce tenant/scope and exact stored match inputs; they never silently choose among zero or multiple matches.
 
 ### Obligation Engine
 
