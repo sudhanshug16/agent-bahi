@@ -129,3 +129,11 @@ The current focus is the native core and its first automation baseline: building
 - System operates normally with imported data
 
 **Note**: No importer implementation is in the current phase. The native core and skills layer (Phases 1–7) must be complete and tested before any Zoho Books data is loaded. Import validation requirements are pre-specified in `zoho-backup-fixture.md` and will not be modified during development.
+
+## Deferred / Future
+
+### Inventory Accounting (Deferred)
+
+No inventory accounting in v1; products/services and document lines may carry description, quantity, unit, rate, tax treatment, and configured ledger account, but the system will not implement stock movements, warehouses, stock valuation, automated COGS, batches, serial numbers, or manufacturing.
+
+Future inventory support should be enabled by stable item/document-line references and modular extension boundaries, not by speculative placeholder inventory tables now.

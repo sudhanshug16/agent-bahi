@@ -8,6 +8,8 @@
 - **Automation policy**: Routine, high-confidence work is automated; ambiguity becomes an explicit exception
 - **Migration source**: Zoho Books is the eventual migration source, confirmed by Sudhanshu on 2026-08-20
 - **Zoho import phase**: Intentionally deferred to the final phase and must not drive the canonical accounting model; Zoho remains the validated migration source
+- **Inventory accounting (v1)**: No inventory accounting in v1; products/services and document lines may carry description, quantity, unit, rate, tax treatment, and configured ledger account, but the system will not implement stock movements, warehouses, stock valuation, automated COGS, batches, serial numbers, or manufacturing
+- **Future inventory support**: Future inventory support should be enabled by stable item/document-line references and modular extension boundaries, not by speculative placeholder inventory tables now
 
 ## Working defaults
 
