@@ -1650,7 +1650,7 @@ All of the following must be true before Phase 1 implementation begins:
 
 1. [ ] **Sudhanshu review of architecture decisions**: SETTLED vs. RECOMMENDED docket reviewed; user confirms, adjusts, or overrides each RECOMMENDED entry.
 
-2. [ ] **Architecture document contradiction review**: This document (`docs/architecture.md`) passes clean contradiction review (post-fix)—no statements conflict with discovery docs or each other.
+2. [x] **Architecture document contradiction review**: This document (`docs/architecture.md`) passes clean contradiction review (post-fix)—no statements conflict with discovery docs or each other.
 
 3. [ ] **Proof spikes complete**: All STK-001 through STK-006 spikes pass on target platforms (macOS arm64, Linux x64/arm64); results documented and decisions confirmed.
 
