@@ -229,7 +229,7 @@ A single configured database (SQLite, PostgreSQL, or MySQL) may contain multiple
 
 - **GSTIN applicability**: Determined by effective-dated registration profile (state, status, scheme, effective dates) and command date/scope. A registration inactive on the command date does not apply.
 
-- **Echo always**: Include effective GSTIN (or "none") in every output, whether human or JSON. Never hide GSTIN resolution behind the scenes.
+- **Echo context always**: Include tenant identifier in every output (human/JSON). For GSTIN: if `gst_context=required`, echo the selected GSTIN identifier; if `gst_context=none`, emit gstin_id:null in JSON and "GSTIN: not applicable" in human output. Never hide GSTIN resolution backend.
 
 ### Tenant Configuration
 
@@ -954,8 +954,8 @@ Versioned job skills without embedded accounting rules:
 - Echo effective tenant in all output.
 
 **GSTIN selection** (conditional on command metadata `gst_context`):
-- If `gst_context = none`: Do not resolve GSTIN; clear prior session GSTIN; reject `--gstin` flag; do not echo GSTIN in output.
-- If `gst_context = required`: Resolve ACTIVE+APPLICABLE registrations for command date/scope. Zero registrations: fail explicitly (no GSTIN applicable). One registration: auto-select without `--gstin` flag. Multiple registrations: require `--gstin <value>` or named session context; fail explicitly on ambiguity. Echo effective GSTIN in output.
+- If `gst_context = none`: Do not resolve GSTIN; clear prior session GSTIN; reject `--gstin` flag; do not echo an actual GSTIN identifier in output (JSON: gstin_id null; human: "GSTIN: not applicable").
+- If `gst_context = required`: Resolve ACTIVE+APPLICABLE registrations for command date/scope. Zero registrations: fail explicitly (no GSTIN applicable). One registration: auto-select without `--gstin` flag. Multiple registrations: require `--gstin <value>` or named session context; fail explicitly on ambiguity. Echo selected GSTIN identifier in output (JSON: gstin_id = identifier; human: "GSTIN: <identifier>").
 
 - **No silent defaults**: Ambiguity fails explicitly; no hidden last-choice memory.
 
@@ -1278,23 +1278,22 @@ Workflow:
     - [TX] Post exactly one balanced entry: Dr. Net-Pay Employee Payable | Cr. Bank (no duplicate submissions/clearings).
     - [TX] Bank reconciliation skill matches statement debit to export record and reconciles.
 10. [TX] Calculate statutory deposit liability (date-scoped per rule version; not deduction date but deposit/filing deadline).
-13. [TX] **Calculate statutory deposit liability** (date-scoped per rule version; not deduction date but deposit/filing deadline).
-14. [EXT] **Government deposit/remittance** (separate from bank payment):
+11. [EXT] **Government deposit/remittance** (separate from bank payment):
     - User prepares and remits statutory amounts per effective obligation (e.g., TDS, PF, ESI) via bank challan or portal.
     - [EXT] Payment/debit evidence observed (transaction ID, receipt timestamp).
     - [TX] After actual government payment/debit confirmed: Post exactly one balanced entry Dr. [applicable statutory liability account] | Cr. Bank.
     - [TX] Record challan/portal evidence and reconcile to payment evidence.
-15. [EXT] **Employee certificate generation and delivery** (separate from government filing):
+12. [EXT] **Employee certificate generation and delivery** (separate from government filing):
     - [TX] Generate statutory documents (form/certificate/declaration) from frozen payroll data + deposit evidence.
     - [EXT] Verify receipt by employee (where required).
     - [EXT] Deliver to employee (email, portal, etc.).
     - Certificates are NEVER uploaded/filed to government portal as "certificates"; they are delivered to employee.
     - Certificates do NOT receive ARN; they are employee deliverables, not government filings.
-16. [EXT] **Government statement/return filing** (separate from certificate delivery):
+13. [EXT] **Government statement/return filing** (separate from certificate delivery):
     - [EXT] User files statutory return on government portal (e.g., quarterly TDS statement, PF return).
     - [TX] Record evidence (filing timestamp, method, response).
     - [TX] Record acknowledgement/ARN (if returned by portal).
-17. **Distinct outcomes/obligations** (separate states and evidence):
+14. **Distinct outcomes/obligations** (separate states and evidence):
     - **Payroll deduction**: Computed, posted via payroll run (frozen inputs, rule version).
     - **Bank file export**: Generated from configured preset; uploaded to bank.
     - **Bank acceptance/rejection**: Separate state; if rejected, requires corrected/new file.
@@ -1310,7 +1309,7 @@ Workflow:
 
     Do not combine or skip these steps. Each has distinct actors, timing, evidence, prerequisites, and audit requirements.
 
-18. **No unverified form/threshold assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, section numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md) and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form, section, or threshold references in workflows.
+15. **No unverified form/threshold assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, section numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md) and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form, section, or threshold references in workflows.
 
 ### 5. Late Document in Locked Period → Preview → Explicit Reopen or Current-Period Adjustment
 
@@ -1373,7 +1372,7 @@ Workflow:
    - If manual_review (outcome ambiguous): requires human judgment before finalization.
 9. **If current_state = known_success**:
    - [TX] Store/verify IRN+QR response evidence bytes; CAS known_success → evidence_recorded and append observation.
-   - Proceed to step 11 (atomic finalization).
+   - Proceed to step 12 (atomic finalization).
 10. **If current_state = known_failure**:
     - [TX] Record error in ExternalOperation; invoice remains Issuance-Pending/Frozen; reserved number preserved with gap reason (failed/abandoned).
     - Fail closed: Invoice not issuable/posted without IRN.
@@ -1391,14 +1390,15 @@ Workflow:
     - Resume-safe: If process crashes, resume sees business_finalized and does not re-finalize.
     - [REVIEW] Confirm on CA/user side if required.
 13. **Manual transport** (if IRP provisioning/idempotency unsupported OR after authoritative known_failure):
-    - Chosen BEFORE attempting IRP API (not while unknown or manual_review).
-    - [TX] Create ExternalOperation prepared with export artifact/evidence reference and outbox intent. COMMIT.
-    - [EXT] Agent exports invoice JSON; submits to IRP portal manually; obtains IRN/QR; captures provider/portal response.
-    - [TX] CAS prepared → submitted and append observation. COMMIT before import.
-    - [EXT] Import/obtain authoritative provider/portal response evidence.
-    - [TX] CAS submitted → known_success or known_failure and append observation.
+    - Selected BEFORE operation creation (not while API unknown or manual_review).
+    - [TX] Create exactly one ExternalOperation prepared with export artifact/evidence reference, outbox intent, and durable submission-intent. COMMIT.
+    - [TX] CAS prepared → submitted and append durable submission-intent observation (marking "submission may have occurred"). COMMIT.
+    - After submitted state durable: never automatically upload/re-upload; human submission may have occurred and state is immutable until authoritative portal evidence arrives.
+    - [EXT] Agent exports invoice JSON; submits to IRP portal manually; obtains IRN+QR response.
+    - [EXT] Import/obtain authoritative provider/portal response evidence (confirmation of receipt, success/error).
+    - [TX] CAS submitted → known_success or known_failure and append observation with response content.
     - If known_success: [TX] Store/verify IRN+QR response evidence; CAS known_success → evidence_recorded and append observation. Proceed to step 12 (atomic finalization).
-    - If known_failure: [TX] Record error in ExternalOperation; invoice remains frozen; no finalization.
+    - If known_failure: [TX] Record error in ExternalOperation; invoice remains frozen. A NEW explicit retry operation may be created only if operator chooses manual resubmission; no automatic fallback.
 
 ### 8. Cash/Accrual/Tagged Report Generation
 
