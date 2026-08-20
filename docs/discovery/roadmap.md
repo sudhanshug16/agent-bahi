@@ -12,6 +12,7 @@ The current focus is the native core and its first automation baseline: building
 - Document types (Invoice, Bill, Payment, Journal Entry, etc.)
 - Ledger posting mechanics and invariant constraints
 - Explicit CLI commands with deterministic validation and engine-owned permission/gate checks
+- Optional tenant-defined reporting dimensions (tags) attached at transaction or line level; tags are orthogonal to accounting and do not affect posting, balance, tax, or compliance
 
 **Exit Conditions**:
 - Core tables defined with primary/foreign key relationships
