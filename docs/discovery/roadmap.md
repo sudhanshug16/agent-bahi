@@ -26,11 +26,16 @@ Explicit follow-ups before GST implementation decisions:
 Before Phase 1 implementation begins:
 
 1. Sudhanshu reviews [Provisional Architecture Decisions](architecture-decisions.md) and confirms, adjusts, or overrides each RECOMMENDED entry.
-2. [docs/architecture.md](architecture.md) is written and passes contradiction review (no statements in conflict with discovery docs or each other).
-3. Required proof spikes validate provisional choices:
-   - Multi-dialect ORM spike: Drizzle and Kysely on SQLite, PostgreSQL, and MySQL with schema migrations passing on all three.
-   - CLI parser spike: Clipanion command registry generating schema bindings and help.
-   - Decimal math spike: Verify decimal.js precision and rounding rules for INR calculations.
+2. [docs/architecture.md](../architecture.md) is written and passes contradiction review (no statements in conflict with discovery docs or each other).
+3. Required proof spikes validate all provisional technology stack choices (STK-001 through STK-006):
+   - **Bun runtime and workspaces** (STK-001): Pin exact Bun version; verify bun:install, workspaces, and lockfile on target platforms (macOS arm64, Linux x64/arm64).
+   - **Multi-dialect ORM spike** (STK-002): Test Drizzle (primary) and Kysely (fallback) on bun-sqlite, Bun SQL PostgreSQL, and MySQL; verify schema definition, query generation, and type inference on all three dialects.
+   - **SQLite configuration** (STK-003): Verify foreign_keys=ON, WAL mode, SQLITE_BUSY handling, and transaction isolation on target filesystem.
+   - **Migration and test execution** (STK-004): Run fresh-install migrations on all three dialects; test every supported upgrade path; verify schema consistency across dialects.
+   - **Zod and schema generation** (STK-005): Verify Zod runtime validation, JSON schema generation for CLI commands, and compatibility with Clipanion/skill definitions.
+   - **Clipanion CLI adapter** (STK-005): Verify Clipanion command registry can be generated from domain-owned declarations; test parser bindings and help output.
+   - **Decimal math** (STK-005): Verify decimal.js precision, rounding rules for INR calculations (paise), currency conversion, and tax calculation; test against golden examples.
+   - **Build and distribution** (STK-006): Test ESM TypeScript build on all target platforms; verify compiled output and package/bin fallback; confirm database drivers (MySQL, PostgreSQL optional) work on all platforms.
 
 **This gate must be passed before any Phase 1 implementation code is written.**
 

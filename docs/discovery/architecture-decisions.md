@@ -19,7 +19,7 @@ Sudhanshu requested multi-position debates to be conducted as part of architectu
 
 These are confirmed by Sudhanshu or existing discovery docs and form the foundation for all RECOMMENDED entries below.
 
-- **Product identity** ([decisions.md § Confirmed](decisions.md#confirmed)): Package/product/repository name is `agent-bahi`; TypeScript + Bun direction confirmed.
+- **Product identity** ([decisions.md § Confirmed](decisions.md#confirmed)): Package/product/repository name is `agent-bahi`. Technology stack is TypeScript + Bun as the current working direction and default. Final stack choices (ORM, CLI parser, decimal math, database drivers, migrations, build/package) are RECOMMENDED (see STK-001 through STK-006) and remain gated by Phase 1 proof spikes; see [Roadmap Phase 1 Gate](roadmap.md#phase-1-gate-review-and-approval).
 
 - **Engine and skills separation** ([decisions.md § Confirmed](decisions.md#confirmed)): Deterministic accounting/compliance engine owns rules, calculations, permissions/gates, and invariants. Versioned skills orchestrate, gather evidence, propose actions, and verify work; they never embed accounting law.
 
@@ -27,7 +27,7 @@ These are confirmed by Sudhanshu or existing discovery docs and form the foundat
 
 - **Multi-GSTIN within tenant** ([decisions.md § Confirmed](decisions.md#confirmed)): One tenant may contain multiple GST registrations; GST work is GSTIN-scoped. See [gst-compliance-matrix.md § Minimum Model Requirements](gst-compliance-matrix.md#minimum-model-requirements).
 
-- **Tenant selection policy** ([decisions.md § Confirmed](decisions.md#confirmed)): If exactly one tenant exists, commands work without a `--tenant` flag. When multiple tenants exist, they require an explicit `--tenant` flag or explicit named session context. This is not negotiable.
+- **Tenant selection policy** ([decisions.md § Confirmed](decisions.md#confirmed)): If exactly one active tenant exists, commands work without a `--tenant` flag. When more than one active tenant exists, they require an explicit `--tenant` flag or explicit named session context. Inactive tenants do not create ambiguity. This is not negotiable.
 
 - **Canonical ledger, report views** ([decisions.md § Confirmed](decisions.md#confirmed)): Invoices, bills, payments, and ledger postings are stored once. Cash-basis and accrual-basis reporting are views over the same canonical data; posting is never duplicated.
 
@@ -175,9 +175,9 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Inconsistent command names, skills unable to find/invoke commands, no stable schema for external tools.
 - **Reversal trigger**: If a web API becomes primary, the same command registry can generate OpenAPI schemas alongside CLI bindings.
 
-**CLI-002: Tenant selection with explicit ambiguity resolution**
+**CLI-002: Tenant and GSTIN selection with explicit ambiguity resolution**
 
-- **Recommendation**: Auto-select tenant only when exactly one active tenant exists; when multiple exist, require `--tenant` or an explicit named session context and echo the effective tenant in output. GST-scoped commands auto-select one applicable GSTIN; multiple applicable GSTINs require `--gstin`. Never remember an ambiguous last choice silently.
+- **Recommendation**: Auto-select tenant only when exactly one active tenant exists; when more than one active tenant exists, require `--tenant` or an explicit named session context. Inactive tenants do not create ambiguity. Echo the effective tenant in output. For GST-scoped commands, auto-select when exactly one active, applicable GSTIN exists for that tenant; when more than one active, applicable GSTIN exists, require `--gstin` or explicit named session context. Echo the effective GSTIN in output. Never remember an ambiguous last choice silently.
 - **Alternative**: Implicit session state; remember last choice; optional flags.
 - **Rationale**: Explicit selection prevents silent cross-tenant mistakes. Echo in output confirms intent. Auto-select one is safe because it's unambiguous.
 - **Silent failure prevented**: Silent post-to-wrong-tenant, user unaware which tenant/GSTIN was used, unsafe replay of commands across tenants.
@@ -345,7 +345,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 **CMP-007: E-way bill default (configured API with state-specific rules OPEN RESEARCH)**
 
-- **Recommendation**: Configured API adapter for e-way bill with manual fallback. Block applicable movement/dispatch until valid EWB evidence exists. State-specific rules (applicability, thresholds, exemptions) and final transport contract remain **OPEN RESEARCH**.
+- **Recommendation**: Configured API adapter for e-way bill with manual fallback. When effective-dated applicable rules determine that an e-way bill is required, block movement/dispatch until valid EWB evidence is recorded. Thresholds, exemptions, state-specific rules, and which movements/modes require EWB remain **OPEN RESEARCH**.
 - **Alternative**: No e-way bill support; manual generation.
 - **Rationale**: EWB is mandatory for inter-state movement. API is the preferred path if implemented. State rules vary and must be researched per state.
 - **Silent failure prevented**: Movement/dispatch blocked forever because state rule is unknown, EWB issued for exempt movement.
