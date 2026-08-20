@@ -83,22 +83,22 @@ CLI command registry (human help, JSON schema, skill bindings, parser)
     ↓
 Application services (versioned command envelope, validation, authorization hooks, domain orchestration)
     ↓
-Domain modules (accounting, tax, compliance rules, ledger invariants, state machines)
+Application Ports (outbound: Repository, RuleProvider, EvidenceStore, ExternalAdapter, Clock, etc.)
     ↓
-Ports (repository interfaces, rule pack loader, evidence adapter, external API contracts)
+Domain modules (accounting, tax, compliance rules, ledger invariants, state machines)
     ↓
 Infrastructure adapters (SQL dialect implementations, evidence storage, external API calls)
 ```
 
 ### Dependency Rules
 
-**Inward constraint**: Domain and application layers import no CLI framework, ORM, network library, or runtime-specific feature. Contracts flow inward only. Adapters implement ports; the application coordinates and validates before calling domain logic.
+**Inward constraint**: Domain and application layers import no CLI framework, ORM, network library, or runtime-specific feature. Contracts flow inward only. Application owns outbound port interfaces (Repository, RuleProvider, EvidenceStore, ExternalAdapter, Clock, UnitOfWork); infrastructure implements them. Domain imports only core types.
 
 **Versioned skills**: Skills call CLI commands only via the published command registry. Skills never call domain services directly or import domain/persistence code. Skills invoke `agent-bahi` as an external process with well-defined inputs/outputs.
 
 **External calls outside transaction**: Network calls (bank APIs, IRPs, government portals) never occur inside the accounting database transaction. Durable outbox/saga patterns record requests and responses as separate state transitions.
 
-**No full event sourcing**: The system maintains relational current-state tables (accounts, entities, documents, postings) plus immutable journals, audit logs, and outbox records. Balances derive from postings; read models are non-authoritative and rebuildable. Explanation: simpler than full event sourcing, sufficient for deterministic accounting, and trades replay complexity for query efficiency.
+**No full event sourcing**: Ledger owns immutable JournalEntry/Posting records and may emit domain events/outbox messages. Current application state is relational (accounts, entities, documents, balances); it is NOT rebuilt solely by replaying events. Read models are non-authoritative and rebuildable from postings. Explanation: simpler than full event sourcing, sufficient for deterministic accounting, and trades replay complexity for query efficiency.
 
 ---
 
@@ -132,7 +132,7 @@ Logical packages (provisional names, boundaries are architectural, exact package
 ### Compliance and Tax Layer
 
 - **`domain/compliance/gst`**: GST registration, AATO, GSTR-1/GSTR-3B/GSTR-2B logic; ITC states.
-- **`domain/compliance/payroll`**: Payroll tax, TDS, Form 16/138, PF, ESI, PT, LWF rules.
+- **`domain/compliance/payroll`**: Payroll tax, statutory deductions, contributions, PF, ESI, PT, LWF; effective-dated rule selection; no hardcoded form numbers or section references.
 - **`domain/compliance/fixed-assets`**: Asset register, depreciation runs, disposal tracking.
 - **`domain/compliance/obligations`**: Obligation engine; predecessor gates; filing snapshots; amendments.
 - **`domain/compliance/rules`**: Effective-dated rule selection; versioned rule packs; fail-closed gates.
@@ -212,11 +212,19 @@ A single configured database (SQLite, PostgreSQL, or MySQL) may contain multiple
 
 ### GSTIN Resolution Everywhere
 
-**For all commands and workflows**:
+**Each command declares GSTIN context requirement: `none` or `required`.** Apply uniformly across tenant section, command lifecycle, CLI section, and workflows:
 
-- **GST-scoped operations** (invoices with GST, GSTR-1, GSTR-3B, e-invoice, e-way bill, ITC, filing obligations): Must resolve exactly one ACTIVE applicable GSTIN. Auto-select if only one; require `--gstin` or explicit session context if more than one. **None** blocks command execution (no GSTIN applicable is valid; command proceeds without GSTIN context).
+**`gst_context = none`** (Non-GST operations: expenses, payroll, journal entries, bank reconciliation, fixed assets, internal transfers):
+- Do not resolve or use a GSTIN.
+- Clear prior GSTIN context from this command onward.
+- Reject an inapplicable `--gstin` flag with explicit error.
 
-- **Non-GST operations** (expenses, payroll, journal entries, bank reconciliation, fixed assets, internal transfers): Do not require GSTIN selection. If GSTIN context exists from prior command, it is cleared; new command may or may not use GSTIN.
+**`gst_context = required`** (GST-scoped operations: invoices with GST, GSTR-1, GSTR-3B, e-invoice, e-way bill, ITC, filing obligations):
+- Resolve registrations that are ACTIVE and APPLICABLE to the command's accounting date and scope.
+- If zero ACTIVE APPLICABLE registrations: **Fail explicitly; no GSTIN applicable.**
+- If exactly one ACTIVE APPLICABLE registration: Auto-select without `--gstin` flag; echo it.
+- If more than one ACTIVE APPLICABLE registration: Require `--gstin <value>` or explicit named session context; echo the chosen GSTIN.
+- Reject operations without a resolved GSTIN when context is required.
 
 - **GSTIN applicability**: Determined by effective-dated registration profile (state, status, scheme, effective dates) and command date/scope. A registration inactive on the command date does not apply.
 
@@ -418,7 +426,7 @@ Conflicts fail visibly; never last-write-wins.
 
 ### External Operations and Blind Retry Prevention
 
-**ExternalOperation entity** (immutable audit record for every network call):
+**ExternalOperation aggregate** (mutable current-state, optimistic-concurrency versioned):
 - **Tenant and GSTIN scope** (exact GSTIN if applicable, or null for non-GST operations).
 - **Provider identity**: Bank, IRP, e-way bill gateway, GST Portal, etc.
 - **Operation type**: E-invoice IRN request, e-way bill generation, bank API call, etc.
@@ -426,10 +434,21 @@ Conflicts fail visibly; never last-write-wins.
 - **Payload hash**: Hash of complete request payload.
 - **Provider idempotency key** (if supported): Bank transaction ID, IRP correlation ID, etc.
 - **Provider request ID** (if assigned): Bank ref, IRP request number, etc.
-- **State**: Pending / Outcome-Known-Success / Outcome-Known-Failure / Outcome-Unknown / Status-Reconciled / Evidence-Recorded.
-- **Attempts**: Count and timestamps.
+- **Current State** (mutable, versioned): one of:
+  - `prepared`: Local snapshot created, not yet submitted.
+  - `submitted`: Request sent to provider.
+  - `known_success`: Provider response received, success status confirmed.
+  - `known_failure`: Provider response received, error status confirmed.
+  - `unknown`: Timeout, no response, or missing authoritative status.
+  - `status_reconciled`: Provider status queried and confirmed (from unknown).
+  - `evidence_recorded`: IRN/EWB/reference and signed response bytes persisted.
+  - `business_finalized`: Document state/ledger updated based on evidence.
+- **Attempts**: Count and timestamps per state.
 - **Response hash** and **response content** (truncated if large): What the provider returned.
-- **Reconciliation status** (if outcome unknown): Was provider queried for status? What did reconciliation find?
+
+**ExternalOperationObservation** (append-only immutable audit log):
+- Immutable record of each state transition: timestamp, actor, old state, new state, reason, evidence.
+- Enables audit trail and replay of decision logic.
 
 **Blind retry forbidden**: After timeout or unknown response, always query the provider first (by correlation ID if supported, or by reconciling existing records) before any retry. If provider offers no idempotency support, reconcile existing requests before retrying.
 
@@ -649,21 +668,26 @@ Prepared (local snapshot)
 
 ### GSTR-1 Specific States
 
-**GSTR-1 statutory states** (per GST Portal terminology, immutable sequence):
+**GSTR-1 statutory states** (per GST Portal terminology, exact sequence):
 
 ```
 Prepared (local validated JSON + preview)
   → Uploaded (file sent to portal, timestamp recorded)
-  → Portal-Processed (portal received, auto-validation complete, errors/warnings returned)
-  → Portal-Summary-Reviewed (user/CA reviews on portal, confirms or corrects discrepancies)
-  → Filed (user/CA files statement via DSC/EVC on portal)
-  → ARN-Recorded (authority issues ARN; immutable evidence of filing)
+  → Portal-Processed or Portal-Processed-With-Errors
+      ├─ Portal-Processed (no errors; valid)
+      │   → Portal-Summary-Reviewed (user/CA reviews on portal, confirms results)
+      │   → Filed (user/CA files statement via DSC/EVC on portal)
+      │   → ARN-Recorded (authority issues ARN; immutable evidence of filing)
+      └─ Portal-Processed-With-Errors (errors detected; cannot progress)
+         → Correct/Re-Upload/Reprocessed (return to Uploaded state for retry)
 ```
 
 **Non-filing states must be distinct**:
 - Uploaded ≠ Filed. Upload is file receipt; filing is authoritative submission.
 - Portal-Processed ≠ Filed. Processing is validation; filing is user/CA action.
+- Portal-Processed-With-Errors cannot progress until corrected and re-uploaded; remains blocked until re-upload.
 - ARN receipt is the canonical proof of filed status; everything before is preparation/review.
+- JSON upload is not filing; no GSP/auto-submission boundaries (manual portal only for v1).
 
 ### Payroll Bank File State Machine
 
@@ -685,12 +709,18 @@ Each requires separate evidence and status observation.
 ```
 Prepared (local snapshot)
   → Submitted (request sent)
-  → Outcome-Known-Success (response received, success)
-  → Outcome-Known-Failure (response received, error)
-  → Outcome-Unknown (timeout or no response; must query provider/reconcile status)
-  → Status-Reconciled (actual provider status confirmed via query)
-  → Evidence-Recorded (hash, timestamp, IRN/EWB number, provider confirmation)
-  → Business-Finalization (document state updated based on evidence)
+  → one of:
+    ├─ Known-Success (response received, success)
+    ├─ Known-Failure (response received, error)
+    └─ Unknown (timeout or no response; must query provider/reconcile status)
+       → Status-Reconciled (actual provider status confirmed via query)
+         → one of:
+           ├─ Known-Success (confirmed success)
+           ├─ Known-Failure (confirmed failure)
+           └─ Manual-Review (human judgment required)
+
+Known-Success → Evidence-Recorded (hash, timestamp, IRN/EWB number, provider confirmation)
+             → Business-Finalization (document state updated based on evidence)
 ```
 
 **No blind retry**: Unknown outcome → reconciliation skill must query provider status (by correlation ID if supported) and record actual state before any retry or finalization decision. If provider offers no idempotency support, reconcile existing requests before retrying.
@@ -753,11 +783,12 @@ GSTR-3B auto-population from ledger/GSTR-1/GSTR-2B is assistance, not authoritat
 
 **GSTR-1A** (optional, same-period additions/amendments only):
 - **Applicability**: Available only after GSTR-1 is filed and before the same-period GSTR-3B is filed.
-- **Amendments**: GSTR-1A allows additions or corrections for invoices/credit notes/debit notes in months 1 and 2 of the period.
+- **Amendments**: GSTR-1A allows additions or corrections for invoices/credit notes/debit notes in the same return period (exact portal rules and effective-date restrictions are settled via gst-compliance-matrix.md and portal research; not embedded in this architecture).
 - **Prior-period amendments**: Amendments to periods before the current GSTR-1 are not filed via GSTR-1A; they flow through later GSTR-1 tables.
 - **After GSTR-3B**: Once GSTR-3B for the period is filed, GSTR-1A becomes unavailable; no further same-period amendments via GSTR-1A.
 - **Product**: Prepare same-period amendment/addition working papers linked to original GSTR-1 lines; validation checks predecessor (GSTR-1 filed and within window).
 - **Recording**: Agent-bahi records GSTR-1A preparation, validation, upload, and filing evidence separately from GSTR-1.
+- **Transport boundary**: Filing-specific OPEN RESEARCH; portal upload/filing mechanics not settled globally.
 
 - **Product**: Produces GST Portal-compatible JSON after local validation plus human-readable reconciliation and preview.
 - **Workflow**: User or CA uploads, reviews, and files on GST Portal with DSC/EVC.
@@ -911,7 +942,7 @@ Stable, structured exit codes for orchestration and retry logic:
 
 | Code | Meaning | Retry? |
 |------|---------|--------|
-| 0 | Success | No |
+| 0 | Success (all items committed/processed) | No |
 | 1 | Validation error (bad input) | No |
 | 2 | Ambiguity/selection required (e.g., >1 tenant) | User action |
 | 3 | Conflict/lock (concurrent mutation, period locked) | Eventual retry |
@@ -920,6 +951,13 @@ Stable, structured exit codes for orchestration and retry logic:
 | 6 | External terminal (auth, permanent error) | No |
 | 7 | Permission denied (RBAC v2+) | No |
 | 8 | Internal error (ledger corruption, bug) | No |
+| 99 | Partial success (some items committed, some failed/retryable) | Retry safe subset |
+
+**Partial success (exit code 99)**:
+- At least one item succeeded and committed; at least one item failed or is retryable.
+- JSON output includes per-item states: committed, retryable, terminal.
+- Safe retry set identified (retryable items only).
+- Exit code is non-zero (not success, enables shell automation to detect and handle retry).
 
 Never exit zero for partial or failed work.
 
@@ -986,6 +1024,11 @@ Domain and application layers import no ORM. Persistence contracts (ports) are d
 
 ### SQLite Default Configuration
 
+**Filesystem requirement**: SQLite default is supported on local filesystems only.
+- Detect and refuse known network filesystem paths (NFS, SMB, iCloud, network mounts) with explicit error.
+- Direct users to PostgreSQL or MySQL for networked/remote deployments.
+- Tests verify rejection; do not test or imply WAL support on network filesystems.
+
 **Foreign keys**: `PRAGMA foreign_keys = ON` (referential integrity enforced).
 
 **WAL mode**: Write-Ahead Logging for local filesystems (concurrent readers).
@@ -1022,7 +1065,7 @@ Separate, parallel migration paths:
 
 **Future adapters**: S3 or other cloud object storage via port implementation (no code changes).
 
-**Backup/restore**: Evidence manifest and hashes included; restore verifies content integrity before activation.
+**Backup/restore**: Backup includes actual evidence bytes (or verified remote-object snapshot/version ID, e.g., S3 object version) plus DB, manifest, hashes, rule/skill versions. Restore verifies every referenced byte/object is accessible and consistent (hashes match, counts reconcile) before activation.
 
 ### Secrets Redaction
 
@@ -1107,30 +1150,31 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
    - All required documents (tax invoice, delivery note) attached/sourced?
    - Reverse charge or import condition applicable per effective rules?
    - GSTR-2B match or supplier communication already available?
-   - If ANY prerequisite absent or unknown: **Post gross/non-claimable-pending default.**
-4. [TX] Finalize bill → allocate number → post deterministic journal:
-   - **Always post**: Expense/asset debit (gross amount) | AP credit (invoice total).
-   - **ITC treatment (non-ledger candidate, not yet claimable ledger entry)**:
-     - If all prerequisites confirmed: Mark as Eligible candidate (non-ledger, ready for reconciliation).
+   - If ANY prerequisite absent or unknown: **Do not assume posting path; decide by policy: keep bill blocked/draft, or post gross expense/asset with marked non-claimable ITC state.**
+4. [TX] Finalize bill → allocate number → post balanced journal:
+   - **Always post (if finalized)**: Dr. Expense/Asset (gross amount) | Cr. AP (invoice total).
+   - **ITC treatment (non-ledger tracking state; not yet claimable ledger debit)**:
+     - If all prerequisites confirmed AND no policy-barred evidence exception: Mark as Eligible candidate (non-ledger).
      - If reverse charge/import detected: Mark as RCM/Import candidate (rule-driven, non-ledger).
-     - If any prerequisite missing/unknown: Mark as Pending-Evidence candidate (non-ledger, visible exception).
-   - No ITC Recoverable ledger debit yet.
+     - If lawful evidence exception approved: Mark as Exception-Approved candidate (actor/reason/evidence gap logged non-ledger); book the gross and AP; no claimable ITC yet.
+     - If any legal communication/match prerequisite pending: Mark as NON-LEDGER ITC Candidate (pending evidence, not yet eligible, not yet ineligible).
 5. [EXT] Portal/vendor statement provides GSTR-2B autofill (evidence gathered).
 6. Agent/skill reconciles GSTR-2B with booked bills.
-7. [REVIEW] ITC eligibility reconciliation:
+7. [REVIEW] ITC eligibility reconciliation (only after all effective-rule prerequisites pass):
    - Document exists, valid, and statutory particulars complete? (Yes/No/Exception)
    - Supplier GSTIN present and matched in GSTR-2B? (Yes/No/Unknown)
    - Reverse charge or import applicable per effective rule? (Yes/No/Exception; rule-driven, not heuristic)
    - All required evidence sources present (invoice, proof, communication)?
 8. [TX] Transition ITC candidate state (non-ledger) to final classification:
-   - Pending-Evidence → Eligible (all prerequisites met) OR Ineligible-with-reason (missing evidence or rule bar).
+   - Pending-Evidence / Candidate → Eligible (all prerequisites and evidence/2B conditions met) OR Ineligible-with-reason (missing evidence or rule bar).
    - RCM/Import → Reclassify per rule outcome: recoverable or blocked.
    - Matched: Link to GSTR-2B line entry as evidence.
-9. [TX] Only after eligible classification confirmed: Post ledger ITC entry (if not already auto-posted by step 8 policy):
-   - Dr. ITC Recoverable | Cr. ITC Pending Receivable (or immediate Dr. ITC Recoverable | Cr. nil if auto-claiming).
+9. [TX] Only after eligible classification confirmed AND every effective-rule prerequisite/evidence/2B condition passes: Post reclassification journal:
+   - Dr. ITC Recoverable | Cr. the original expense/asset cost account(s) for the same allocated tax portion.
+   - Never credit nil; always reconcile to the gross amount allocated at posting.
 10. Payment due date arrives.
 11. [TX] Post payment journal: Dr. AP | Cr. Bank/Cash (AP decreases; bank decreases).
-12. GST return prep reflects ITC claim sourced from eligible booked bill + matching evidence (never portal-only, never GSTR-2B-alone).
+12. GST return prep reflects ITC claim sourced from eligible booked bill + matching evidence (never portal-only, never GSTR-2B-alone). Claim/utilization state is separate from eligibility/reclassification; Portal 2B alone never proves eligibility.
 
 ### 3. Statement Import → Proposed Match → Explicit Persistence
 
@@ -1147,51 +1191,59 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
 
 ### 4. Payroll Inputs → Compute → Review/Finalize → Journal → Payslip → Bank CSV → Debit/Reconcile → Statutory Evidence
 
-1. Agent/user configures: employer registration (TAN, EPFO/ESIC), establishment (type, location, jurisdiction, headcount).
+**Prerequisites before any statutory deduction/finalization**:
+- Effective employer/establishment registrations (required, unknown blocks).
+- Work location/jurisdiction (required, unknown blocks).
+- Applicable statutory registration (PT/LWF if applicable per state/rules; required if applicable, unknown blocks).
+- ESI coverage order/registration and employee coverage facts (if applicable per rules; required if applicable, unknown blocks).
+- EPF establishment/member facts (if applicable; required if applicable, unknown blocks).
+- Rule versions (effective-dated; required, unknown blocks).
+
+Workflow:
+1. Agent/user configures: employer registration, establishment (type, location, jurisdiction, headcount).
 2. [REVIEW] Validate employee coverage facts:
-   - Employer registration, establishment type, location/work state → EPF/ESI/PT applicability.
-   - Employee work location (may differ from home state) → determine applicable PT/LWF.
-   - Employee existing PAN/tax identity, UAN/EPF member status, coverage elections.
-   - Tax year and governing Act/rule version (old-law through 31-Mar-2026; new-law from 1-Apr-2026; Form 16 vs. Form 130).
-   - **BLOCK if**: Employer registration, establishment type, headcount history, employee work location, or applicable rule version unknown. Do not infer or guess.
+   - Employer registration, establishment type, location/work state → statutory registration applicability.
+   - Employee work location (may differ from home state) → determine applicable statutory registrations.
+   - Employee existing identity, member status, coverage elections.
+   - Effective tax year and rule version (frozen at run time).
+   - **BLOCK if**: Any prerequisite registration, fact, or rule version unknown. Do not infer or guess.
 3. Agent inputs payroll period, pay days, loss-of-pay days, approved overtime amounts/hours (from HR system or manual).
 4. [TX] Create payroll run (draft, versioned inputs from step 1–3, frozen rule snapshot).
-5. [TX] Compute:
+5. [TX] Compute statutory obligations per frozen rule version:
    - Gross per component (salary, bonus, etc.).
-   - TDS deduction per section 192 (old-law through Mar-2026) or section 392(1) (new-law from Apr-2026); use frozen rule version.
-   - PF contribution (if established covered): employee 12% baseline + employer 12% (or applicable allocation); never shift employer to employee.
-   - ESI (if applicable per jurisdiction/establishment): employee + employer baselines and allocations per frozen rule version.
-   - PT (if applicable per establishment work state): frozen rule version.
-   - LWF (if applicable per establishment work state): frozen rule version.
-   - Net pay (gross - TDS - PF/ESI/PT/LWF deductions).
+   - Employee and employer statutory deductions/contributions per frozen rule (TDS, PF, ESI, PT, LWF).
+   - Never shift employer contributions to employee; keep distinct.
+   - Net pay (gross earnings minus employee deductions).
 6. [REVIEW] Show payroll summary per employee; review deductions; approve finalization.
 7. [TX] Finalize run → post balanced journal:
-   - Payroll expense debit (gross per component, by account).
-   - Employee TDS payable credit (per employee, per section/form).
-   - Employee/employer PF/ESI payables credit (per employee, per fund).
-   - PT/LWF payables credit (by state, if applicable).
-   - Net-pay employee payable credit.
+   - Dr. Gross salary/wage expense (per component account) | Multiple entries.
+   - Dr. Employer-contribution expense (PF, ESI, PT, LWF per applicable account) | Multiple entries.
+   - Cr. Employee-deduction liabilities (TDS, PF, ESI, PT, LWF per applicable account) | Multiple entries.
+   - Cr. Employer-contribution liabilities (PF, ESI, PT, LWF per applicable account) | Multiple entries.
+   - Cr. Net-pay employee payable.
+   - Balanced: Debits (gross + employer contributions) = Credits (employee deductions + employer liabilities + net pay).
    - Entry links frozen inputs, rule versions, and audit metadata.
+   - Do not reference statutory form names, section numbers, or thresholds; use effective rule pack versions.
 8. [TX] Generate payslips + bank CSV export from configured preset version.
 9. [EXT] User uploads bank file to bank portal (export ≠ payment; export ≠ debit).
 10. [EXT] Bank processes ACH, debits account, returns statement.
 11. [TX] Bank reconciliation skill matches statement debit to export record.
 12. [TX] Post clearing entry (net-pay payable cleared) linked to bank match evidence.
-13. [TX] Calculate TDS deposit liability (date-scoped per rule; not deduction date but deposit deadline).
-14. [EXT] User remits TDS to government via bank challan (separate from payroll posting); records evidence.
-15. [TX] Generate tax certificates (Form 16 for old-law periods through Mar-2026; Form 130 for new-law from Apr-2026) from frozen payroll data + TDS deposit evidence.
-16. [EXT] User files quarterly TDS statement (Form 138 new-law; Form 24Q old-law) and certificates on income-tax portal; records filing evidence and ARN.
+13. [TX] Calculate statutory deposit liability (date-scoped per rule version; not deduction date but deposit/filing deadline).
+14. [EXT] User remits statutory amounts to government via bank challan (separate from payroll posting); records evidence.
+15. [TX] Generate statutory documents (certificates, declarations) from frozen payroll data + deposit/filing evidence; do not embed form names or section references.
+16. [EXT] User files statutory returns and uploads certificates on government portals; records filing evidence and acknowledgement numbers.
 17. **Distinct outcomes/obligations**: Each is separate state and evidence:
     - **Deduction**: Computed and posted via payroll run (frozen inputs, rule version).
     - **Government deposit/remittance**: Bank payment to government account; separate from deduction (different date, timing).
-    - **Return/statement filing**: Quarterly Form 138 or Form 24Q on income-tax portal; separate from deposit (filing may occur after or before deposit).
+    - **Return/statement filing**: Submission on government portal; separate from deposit (filing may occur after or before deposit).
     - **Acceptance/rejection**: Portal response to filed return; separate from filing action.
-    - **Certificate generation/delivery**: Form 130 or Form 16 issued to employee; separate from filing (due date differs, may occur after filing).
-    - **Employee claim/evidence**: Form 124 declarations or investment proofs; separate from payroll run (input prior to computation, not output).
+    - **Certificate generation/delivery**: Statutory documents issued to employee; separate from filing (due date differs, may occur after filing).
+    - **Employee claim/evidence**: Employee declarations or investment proofs; separate from payroll run (input prior to computation, not output).
 
     Do not combine or omit these steps. Each has distinct actors, timing, evidence, and audit requirements.
 
-18. **No unverified form assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See Payroll Compliance Matrix and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form references in workflows.
+18. **No unverified form/threshold assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, section numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md) and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form, section, or threshold references in workflows.
 
 ### 5. Late Document in Locked Period → Preview → Explicit Reopen or Current-Period Adjustment
 
@@ -1232,8 +1284,8 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
 2. [REVIEW] Validate applicability: effective-dated rules determine if IRN required (AATO threshold, invoice type, exemptions).
 3. If not applicable: [TX] Validate → Post atomically → Settled workflow.
 4. If applicable:
-   1. [TX] Validate → Freeze issuance-pending candidate (immutable number reservation with "awaiting-IRN" gap reason).
-   2. [REVIEW] Preview shows: invoice content, applicability rule version, IRN placeholder.
+   1. [TX] Validate → Freeze issuance-pending candidate (reserve statutory invoice number ONCE with "awaiting-IRN" gap reason).
+   2. [REVIEW] Preview shows: invoice content, applicability rule version, reserved invoice number.
    3. [EXT] Skill or agent calls IRP adapter: POST to generate IRN (outside DB transaction).
    4. [EXT] Response outcome: success (IRN received), failure (error), or unknown (timeout).
    5. [TX] Record ExternalOperation: tenant, GSTIN, provider ID, request hash, provider correlation ID (if supported), outcome state.
@@ -1241,16 +1293,16 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
       - [EXT] Query IRP by correlation ID: `GET /status`. If provider offers no correlation/idempotency, reconcile existing requests first.
       - [TX] Record status-reconciled state with actual provider response.
    7. If successful or status-reconciled-success:
-      - [TX] Atomic finalization TX: Record IRN/signed QR evidence → Update ExternalOperation.outcome to success → Finalize invoice + number allocation → Post balanced journal → Audit record.
+      - [TX] Atomic finalization TX: Record IRN/signed QR evidence → Update ExternalOperation.outcome to success → Finalize invoice (reuse reserved number, do not allocate again) → Post balanced journal → Audit record.
       - [REVIEW] Confirm on CA/user side if required.
    8. If failed or status-reconciled-failure:
-      - [TX] Record error in ExternalOperation; invoice remains in Issuance-Pending/Frozen state.
+      - [TX] Record error in ExternalOperation; invoice remains in Issuance-Pending/Frozen state; reserved number preserved with gap reason (failed/abandoned).
       - Fail closed: Invoice not issuable/posted without IRN.
    9. Fallback (IRP unavailable/offline):
       - [REVIEW] Agent chooses: (a) export invoice JSON + wait for IRP online, or (b) manual submission to IRP portal.
       - [EXT] Agent submits manually; obtains IRN/QR from portal or email.
       - [TX] Agent invokes `record e-invoice evidence --invoice <ID> --irn <value> --response <file>` to upload evidence and finalize.
-      - [TX] Atomic finalization: IRN/QR evidence → finalize + post.
+      - [TX] Atomic finalization: IRN/QR evidence → finalize (reuse reserved number) + post.
 
 ### 8. Cash/Accrual/Tagged Report Generation
 
@@ -1484,16 +1536,16 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 | Multi-GSTIN within tenant | decisions.md, gst-compliance-matrix.md | §1, §5, §6 |
 | Tenant context on every command | ARC-002, CLI-002 | §5, §13 |
 | No RBAC v1, hooks for v2 | SEC-002 | §17 |
-| Deterministic accounting | multiple | §7, §8, §9 |
+| Deterministic accounting | ARC-001, ARC-003, ARC-004 | §7, §8, §9 |
 | Immutable corrections (reversal+replacement) | data-model-requirements.md, ARC-004 | §6, §10 |
 | Cash/accrual basis reporting | decisions.md, cli-contract.md | §13, §15 |
-| Explicit bank match (not AI guess) | data-model-requirements.md, CLI, SKL | §10, §12, §16 |
+| Explicit bank match (not AI guess) | data-model-requirements.md, cli-contract.md, skill-architecture.md | §10, §12, §16 |
 | Locked periods prevent mutation | data-model-requirements.md, CLI-contract.md | §5, §8, §10 |
 | E-invoice IRN before finalization | gst-compliance-matrix.md, CMP-006 | §11, §16 |
 | GSTR-1 JSON + manual portal + ARN | decisions.md, gst-compliance-matrix.md, CMP-004, CMP-009 | §11, §16 |
 | Payroll full model, no HRMS | decisions.md, payroll-compliance-matrix.md | §1, §9 |
 | Bank export only, no auto-pay | decisions.md | §4, §9 |
-| Versioned skill manifests | SKL-001 | §12 |
+| Versioned skill manifests | SKL-001, skill-architecture.md | §12 |
 | Rule packs immutable + versioned | CMP-001, CMP-002 | §11 |
 | Stale/missing rules fail closed | CMP-002 | §11, §16 |
 | External calls outside transaction | ARC-014 | §8 |
