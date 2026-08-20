@@ -17,8 +17,14 @@ exception rather than silently guessing.
 
 - Own the canonical data model and ledger state.
 - Apply accounting rules and tax calculations deterministically.
+- Own base-currency conversion, immutable document rate snapshots, settlement
+  application rates, realized exchange gain/loss, bank-fee separation, and
+  auditable period-end revaluation adjustments.
+- Own the asset register, automatic depreciation postings, disposal tracking,
+  and the policy/configuration boundary for still-undecided depreciation
+  methods and book-versus-tax schedules.
 - Enforce permissions, safety gates, document state rules, and ledger
-  invariants.
+  invariants, including inclusive global or module-specific period locks.
 - Expose authoritative validation results and durable audit metadata.
 
 ### CLI
@@ -26,6 +32,10 @@ exception rather than silently guessing.
 - Provide the explicit command surface used by people and skills.
 - Parse and validate command inputs before asking the engine to mutate state.
 - Make previews, requested changes, validation, and outcomes inspectable.
+- Validate and persist explicit bank-reconciliation matches, including tenant,
+  account, currency, amount, status, idempotency, and provenance checks.
+- Expose lock, unlock, and bounded partial-unlock previews and require the
+  reason and actor metadata needed by the engine.
 - Return stable success, failure, and exception information for callers.
 
 The CLI is a boundary and an interface, not an owner of accounting policy.
@@ -38,6 +48,12 @@ The CLI is a boundary and an interface, not an owner of accounting policy.
 - Verify the engine's result against the skill's validation checklist.
 - Stop and route an exception when the automation gate is not satisfied.
 - Return outputs and audit metadata tied to the skill version.
+- For bank reconciliation, gather evidence and propose candidate matches; a
+  proposal may be non-deterministic, but acceptance is an explicit validated
+  CLI operation rather than a hidden engine decision.
+- For late documents in a locked period, guide the user through controlled
+  reopen/original-date posting or a current-period adjustment; never choose
+  automatically.
 
 ### Agent
 
@@ -62,6 +78,9 @@ Every skill run must make the following visible:
 - **Versioning**: the skill definition and the run identify the skill version.
 - **Audit metadata**: the run records relevant actor, entity, timestamps,
   evidence references, commands, validation, and outcome metadata.
+- **Deterministic posting**: once a match or accounting choice is explicit and
+  validated, posting behavior is deterministic. A skill's candidate ranking
+  cannot alter ledger rules.
 
 These requirements make a skill a bounded, reviewable workflow rather than an
 instruction for an agent to improvise accounting behavior.
@@ -109,6 +128,28 @@ of invented procedures:
 - Compliance calendar
 - Audit preparation
 - Management reporting
+
+### Bank reconciliation boundary
+
+The bank-reconciliation skill is invoked by a scheduler or user. Its ordered
+workflow is to gather bank statement evidence and open-item evidence, produce
+one or more candidate matches, show the evidence and uncertainty, and invoke
+the explicit CLI persistence operation only after the match is selected or
+otherwise authorized by the workflow. The CLI validates tenant, bank account,
+currency, amount, status, and idempotency, then persists the match and
+provenance. Replaying the same idempotent request must not create a second
+match. The engine never silently chooses a match or runs an AI decision inside
+posting.
+
+### Period-close and locking boundary
+
+The skill may prepare a lock or a late-document decision, but the engine owns
+the inclusive `locked-through` rule. Create, edit, delete, and void operations
+inside the locked range fail. Unlock and bounded partial unlock require a
+reason, actor, audit record, and impact preview. A late document is routed to
+an explicit controlled-reopen/original-date-posting choice or a
+current-period-adjustment choice; no skill may turn that choice into an
+automatic posting policy.
 
 Zoho Books automation parity is the minimum initial automation baseline. It is
 the baseline for deciding whether these skills cover the first useful set of
