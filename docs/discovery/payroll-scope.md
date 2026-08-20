@@ -8,6 +8,12 @@ Zoho Payroll India help and pricing pages. It is a product target, not a claim
 that every listed Zoho behavior, integration, or edge case has been confirmed
 as identical. No Zoho MCP was used.
 
+The statutory research baseline is [Payroll Compliance Matrix](payroll-compliance-matrix.md).
+It is research documentation, not legal advice and not implementation. The
+matrix uses a research cutoff of 20 August 2026 and separates confirmed
+official facts, product validation policy, tenant configuration, and open
+research.
+
 ## CONFIRMED OFFICIAL BASELINE
 
 The official Zoho pages establish the following baseline capabilities and
@@ -46,7 +52,8 @@ The target includes the complete India payroll workflow:
 - payslips, wage registers, attendance/overtime/deduction registers, reports,
   and employee self-service outputs;
 - bank advice and payment-file export;
-- payroll TDS, declarations, investment proofs, Form 16, and quarterly TDS
+- payroll TDS, declarations, investment proofs, a certificate selected as
+  Form 16 or Form 130 by governing period and rule version, and quarterly TDS
   statements;
 - PF, ESI, professional tax (PT), and labour welfare fund (LWF) modules; and
 - full-and-final settlement, including final payables, deductions, leave
@@ -71,40 +78,59 @@ ledger remains the source of truth for accounting outcomes.
 ### Transition and statutory implementation decisions
 
 The notified [Income-tax Rules, 2026](https://www.incometax.gov.in/iec/foportal/sites/default/files/2026-03/En-Notified-IT-Rules-2026-20-03-2026.pdf)
-come into force on 1 April 2026. For tax year 2026-27, salary TDS is handled
-under section 392(1) of the Income-tax Act, 2025. The Income Tax Department's
+come into force on 1 April 2026. Salary paid through March 2026 remains under
+section 192 of the Income-tax Act, 1961. Salary paid from April 2026 for Tax
+Year 2026-27 is under section 392(1) of the Income-tax Act, 2025. The
 [TDS compliance guidance](https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/tds-compliance)
-and
-[Form 138 user manual](https://www.incometax.gov.in/iec/foportal/newformpage/forms/form138-um)
-describes Form 138 for quarterly TDS reporting, replacing the prior-period
-Form 24Q for the new regime; the [official Form 24Q page](https://www.incometax.gov.in/iec/foportal/node/309)
-remains relevant to old-period handling. This is a cautious implementation
-boundary: old tax periods, corrections, and transition cases remain
-versioned, and the engine must not apply a 2026 rule to an earlier period.
-Form 16 remains a required employee output, with the [official Form 16 page](https://www.incometax.gov.in/iec/foportal/newformpage/form16)
-as the format reference.
+states that salary TDS follows the date of payment: March 2026 salary uses
+the old Act and April 2026 salary uses the new Act.
 
-PF, ESI, PT, and LWF are jurisdiction modules, not global constants. As a
-starting PF rule set, the official EPFO material indicates generally 20 or
-more employee coverage, a ₹15,000 membership-wage ceiling, and a 12% employee
-plus 12% employer baseline; encode exceptions, voluntary coverage, wage-base
-definitions, and effective dates rather than hard-code these values globally.
-See the [official EPFO FAQ](https://www.epfindia.gov.in/site_en/FAQ.php/FAQ.php)
+The engine must select the governing Act, rule version, forms, rates, and
+effective dates from the payroll period and salary payment event. The employee
+certificate is selected by that period: Form 16 is the old-law certificate for
+periods governed by the 1961 Act, while Form 130 is the certificate for salary
+TDS under the 2025 Act/2026 Rules. The new-law certificate is due on 15 June
+immediately following the tax year. New-law employee investment/evidence
+claims use Form 124 under Rule 205; no old-form mapping is assumed here.
+
+Form 138, earlier Form 24Q, is the quarterly salary TDS statement for the new
+framework. Its Q1/Q2/Q3/Q4 due dates are 31 July, 31 October, 31 January, and
+31 May respectively. It requires a valid TAN and the current RPU/FVU
+workflow. TDS payment, statement filing, acceptance/rejection, and
+acknowledgement are separate tracked outcomes. See the [Form 138 user
+manual](https://www.incometax.gov.in/iec/foportal/newformpage/forms/form138-um)
+and the full [payroll compliance matrix](payroll-compliance-matrix.md) for
+the transition table and gates.
+
+PF, ESI, PT, and LWF are jurisdiction modules, not global constants. EPF
+establishment coverage generally begins at 20 employees; this is not a
+company-versus-sole-proprietorship shortcut. The ₹15,000 figure is a
+membership/contribution wage-ceiling baseline with exceptions and
+existing/voluntary coverage, not the headcount trigger. The baseline EPF
+contributions are 12% employee and 12% employer, with allocation and
+exceptions selected by effective-dated rules; the employer share cannot be
+deducted from the employee. Monthly ECR/payment is due by the 15th after
+month close, and filing plus fund transfer remain separate outcomes. See the
+[official EPFO FAQ](https://www.epfindia.gov.in/site_en/FAQ.php/FAQ.php),
+[Employer Information Booklet](https://www.epfindia.gov.in/site_docs/PDFs/MiscPDFs/Employer_Information_Booklet.pdf),
 and [official EPFO parliamentary answer](https://www.epfindia.gov.in/site_docs/PDFs/PQ_PDFs/PQ_WinterSession_2019_RS_English.pdf).
 
-For ESI, the establishment threshold can be 10 or 20 depending on
-jurisdiction and establishment type, and the employee wage ceiling is ₹21,000.
-Do not state contribution percentages until verified from a current official
-source. PT and LWF require state/jurisdiction-specific modules and effective
-rules. The [official ESIC publication](https://www.esic.gov.in/attachments/publicationfile/c6a6b058ec91e276a9dbd750326d5598.pdf)
-is the source to use when encoding ESI rules.
+For ESI, the establishment threshold can be 10 or 20 depending on jurisdiction
+and establishment type, and the employee wage ceiling baseline is ₹21,000.
+Leave rates, exact due dates, returns, and exceptions remain open until
+independently confirmed from the official source. PT and LWF are
+state-specific: there is no pan-India rate, frequency, due date, or form. The
+[official ESIC publication](https://www.esic.gov.in/attachments/publicationfile/c6a6b058ec91e276a9dbd750326d5598.pdf)
+is the source boundary for ESI research; the matrix lists missing tenant
+inputs that must block a deterministic run.
 
 Payslip, wage, attendance, overtime, and deduction-register support is in
-scope. Payroll records have a five-year product-retention target based on
-current [Labour Ministry guidance](https://www.labour.gov.in/static/uploads/2026/02/83978455025732b99b0165def80ab171.pdf?v=20260609051130),
-subject to any longer applicable statutory retention requirement. The [Code on
-Wages](https://labour.gov.in/sites/default/files/code_on_wages.pdf) remains a
-jurisdiction and effective-date source for wage-rule implementation.
+scope. The current [Labour Ministry Compliance Handbook](https://www.labour.gov.in/static/uploads/2026/02/83978455025732b99b0165def80ab171.pdf)
+is employer guidance: it says attendance/muster, wage, overtime, and
+fines/deductions registers must be maintained, wage slips issued on or before
+wage payment, and records preserved five years. The handbook says the
+governing code/rules prevail, so a longer or different obligation may apply.
+Five years is not an instruction to delete older records.
 
 ## OPEN RESEARCH
 
