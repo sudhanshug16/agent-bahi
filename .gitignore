@@ -1,0 +1,9 @@
+# Accounting data and fixtures
+# External backup archives must never be committed to Git
+*.zip
+
+# Private configuration and credentials
+private/
+
+# Private fixtures containing sensitive accounting data
+fixtures/private/
