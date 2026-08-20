@@ -436,22 +436,25 @@ Conflicts fail visibly; never last-write-wins.
 - **Payload hash**: Hash of complete request payload.
 - **Provider idempotency key** (if supported): Bank transaction ID, IRP correlation ID, etc.
 - **Provider request ID** (if assigned): Bank ref, IRP request number, etc.
-- **current_state** (mutable, versioned): one of:
-  - `prepared`: Local snapshot created, not yet submitted.
-  - `submitted`: Request sent to provider.
-  - `known_success`: Provider response received, success status confirmed.
-  - `known_failure`: Provider response received, error status confirmed.
-  - `unknown`: Timeout, no response, or missing authoritative status.
-  - `status_reconciled`: Provider status queried and confirmed (from unknown).
-  - `evidence_recorded`: IRN/EWB/reference and signed response bytes persisted.
-  - `business_finalized`: Document state/ledger updated based on evidence.
-- **version**: Incremented on each state transition via CAS. Final transaction: WHERE id=? AND tenant=? AND version=expected, increments version, or fails/rolls back.
+- **Outbox intent**: What business action triggers if/when evidence_recorded; used for async resumption.
+- **current_state** (mutable, versioned via CAS): Exactly one of:
+  - `prepared`: ExternalOperation persisted BEFORE any network call. Request hash, tenant, GSTIN, provider, document correlation, and outbox intent recorded. Ready to transmit.
+  - `submitted`: Sender CASes prepared → submitted and appends observation before transmitting request to provider.
+  - `known_success`: Provider response received; status confirmed success. CAS from submitted → known_success with append-only observation.
+  - `known_failure`: Provider response received; status confirmed failure. CAS from submitted → known_failure with observation. A NEW separate retry operation may be created only if provider policy allows.
+  - `unknown`: Timeout, no response, or missing authoritative provider status. Quarantined; not allowed to retry API or switch to manual submission while unknown.
+  - `manual_review`: Authoritative lookup impossible or outcome ambiguous; requires human judgment to decide next step.
+  - `cancelled`: Operation cancelled by user or policy before submission or after explicit policy-allowed cancellation.
+  - `evidence_recorded`: Evidence (IRN, QR, EWB number, etc.) and signed response bytes persisted and verified accessible. Idempotent; re-reading and re-persisting evidence doesn't change state.
+  - `business_finalized`: Domain business transaction (e.g., invoice issue-and-post) executed idempotently based on evidence_recorded; mutated aggregate versions incremented. Resume-safe: seeing business_finalized does not re-finalize.
+- **version**: Incremented on each CAS state transition. Final transaction: WHERE id=? AND tenant=? AND version=expected, increments version, commits atomically, or rolls back on conflict.
 - **Attempts**: Count and timestamps per state.
 - **Response hash** and **response content** (truncated if large): What the provider returned.
 
 **ExternalOperationObservation** (append-only immutable audit log):
 - Immutable record of each state transition: timestamp, actor, request_hash, response_hash, old state, new state, reason, evidence references.
-- Enables audit trail and compliance verification. Never alters current_state directly.
+- State transitions and observations are separate: every CAS state change appends a corresponding observation. Observations do not mutate state.
+- Enables audit trail and compliance verification.
 
 **Direct automated transport enabled only if**:
 - Provider supports a usable idempotency/correlation contract (e.g., correlation ID for status lookup), OR
@@ -651,7 +654,7 @@ Draft → Validated → Issuance-Pending/Frozen (immutable candidate, number res
 
 **Forbidden shortcuts**: Never skip validation. Never mutate posted documents; only reversal + replacement. Pre-post documents may be voided; posted documents require reversal lineage.
 
-**Issuance concept**: Only applies when an external authority (IRP, portal) must issue a reference (IRN, ARN, EWB number) before ledger posting. Non-applicable documents bypass the freeze and post directly after validation.
+**Issuance concept**: Only applies to actions gated by effective external-authority rules. IRN gates e-invoice issuance/posting when effective rules require it. EWB gates goods movement when effective rules require it. ARN is post-filing acknowledgement evidence only; it never gates ledger posting. Each external reference gates only the exact action defined by its effective rule. Non-applicable documents bypass the gate and post directly after validation.
 
 ### Bank Statement Line State Machine
 
@@ -942,8 +945,15 @@ Versioned job skills without embedded accounting rules:
 
 ### Tenant and GSTIN Selection
 
-- **Auto-select**: One active tenant or GSTIN; explicit selection for more than one.
-- **Echo effective context**: Every output includes effective tenant and GSTIN (where applicable).
+**Tenant selection** (applied to every command):
+- One active tenant: auto-select without `--tenant` flag.
+- More than one active tenant: require `--tenant <name>` or named session context; fail explicitly on ambiguity.
+- Echo effective tenant in all output.
+
+**GSTIN selection** (conditional on command metadata `gst_context`):
+- If `gst_context = none`: Do not resolve GSTIN; clear prior session GSTIN; reject `--gstin` flag; do not echo GSTIN in output.
+- If `gst_context = required`: Resolve ACTIVE+APPLICABLE registrations for command date/scope. Zero registrations: fail explicitly (no GSTIN applicable). One registration: auto-select without `--gstin` flag. Multiple registrations: require `--gstin <value>` or named session context; fail explicitly on ambiguity. Echo effective GSTIN in output.
+
 - **No silent defaults**: Ambiguity fails explicitly; no hidden last-choice memory.
 
 ### Human and JSON Output
@@ -1252,44 +1262,43 @@ Workflow:
    - Entry links frozen inputs, rule versions, and audit metadata.
    - Do not reference statutory form names, section numbers, or thresholds; use effective rule pack versions.
 8. [TX] Generate payslips + bank CSV export from configured preset version.
-9. [EXT] User uploads bank file to bank portal (export ≠ payment; export ≠ debit).
-10. [EXT] Bank processes ACH, debits account, returns statement.
-11. [TX] Bank reconciliation skill matches statement debit to export record.
-12. [TX] Post clearing entry: Dr. Net-Pay Employee Payable | Cr. Bank (payroll payment cleared) linked to bank match evidence.
-13. [TX] Calculate statutory deposit liability (date-scoped per rule version; not deduction date but deposit/filing deadline).
-14. [EXT] **Bank file export and debit**:
-    - [TX] Generate bank file (CSV export) from configured preset version.
-    - [EXT] User uploads to bank portal (export ≠ payment).
-    - [EXT] Bank processes, debits account, returns statement.
-    - [TX] Bank reconciliation matches statement debit to export record.
-    - [TX] Salary payable cleared; bank reconciliation posted.
-15. [EXT] **Government deposit/remittance** (separate from bank file):
-    - User remits statutory amounts via bank challan or portal.
-    - [TX] Record evidence (transaction, receipt, timestamp).
-16. [EXT] **Employee certificate generation and delivery** (separate from government filing):
+9. [EXT] **Bank file and payroll payment**:
+    - User uploads bank file to bank portal (export ≠ payment; export ≠ debit).
+    - Bank processes ACH/transfer, debits account, returns statement.
+    - [TX] Bank reconciliation skill matches statement debit to export record.
+    - [TX] Record accepted_by_bank or rejected_by_bank state in bank file (separate from payment posting).
+    - After debit observed: [TX] Post exactly one balanced clearing entry: Dr. Net-Pay Employee Payable | Cr. Bank (no second submission/clearing).
+10. [TX] Calculate statutory deposit liability (date-scoped per rule version; not deduction date but deposit/filing deadline).
+11. [EXT] **Government deposit/remittance** (separate from bank payment):
+    - User prepares and remits statutory amounts per effective obligation (e.g., TDS, PF, ESI) via bank challan or portal.
+    - [EXT] Payment/debit evidence observed (transaction ID, receipt timestamp).
+    - [TX] After actual government payment/debit confirmed: Post exactly one balanced entry Dr. [applicable statutory liability account] | Cr. Bank.
+    - [TX] Record challan/portal evidence and reconcile to payment evidence.
+12. [EXT] **Employee certificate generation and delivery** (separate from government filing):
     - [TX] Generate statutory documents (form/certificate/declaration) from frozen payroll data + deposit evidence.
     - [EXT] Verify receipt by employee (where required).
     - [EXT] Deliver to employee (email, portal, etc.).
     - Certificates are NEVER uploaded/filed to government portal as "certificates"; they are delivered to employee.
     - Certificates do NOT receive ARN; they are employee deliverables, not government filings.
-17. [EXT] **Government statement/return filing** (separate from certificate delivery):
-    - [EXT] User files statutory return on government portal.
+13. [EXT] **Government statement/return filing** (separate from certificate delivery):
+    - [EXT] User files statutory return on government portal (e.g., quarterly TDS statement, PF return).
     - [TX] Record evidence (filing timestamp, method, response).
     - [TX] Record acknowledgement/ARN (if returned by portal).
-18. **Distinct outcomes/obligations** (separate states and evidence):
+14. **Distinct outcomes/obligations** (separate states and evidence):
     - **Payroll deduction**: Computed, posted via payroll run (frozen inputs, rule version).
     - **Bank file export**: Generated from configured preset; uploaded to bank.
-    - **Bank debit**: Observed via bank reconciliation.
-    - **Government deposit/remittance**: Separate bank payment; tracked by receipt/evidence.
+    - **Bank debit**: Observed via bank reconciliation; separate state from payment posting.
+    - **Payroll payment**: Balanced journal Dr Net-Pay Payable / Cr Bank after debit observed.
+    - **Government deposit/remittance**: Separate bank remittance per effective obligation; posted after debit confirmed.
     - **Employee certificate generation**: Derived from frozen payroll + deposit evidence; delivered to employee.
-    - **Employee certificate delivery**: Employee receives document; no government upload.
+    - **Employee certificate delivery**: Employee receives document; no government upload; no ARN.
     - **Government return/statement filing**: Separate portal submission; not same as certificate delivery.
-    - **Filing acknowledgement/ARN**: Portal response to filed return (e.g., quarterly TDS statement).
+    - **Filing acknowledgement/ARN**: Portal response to filed return only.
     - **Employee claim/evidence**: Employee declarations or investment proofs; input prior to payroll run.
 
     Do not combine or skip these steps. Each has distinct actors, timing, evidence, prerequisites, and audit requirements.
 
-18. **No unverified form/threshold assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, section numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md) and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form, section, or threshold references in workflows.
+15. **No unverified form/threshold assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, section numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md) and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form, section, or threshold references in workflows.
 
 ### 5. Late Document in Locked Period → Preview → Explicit Reopen or Current-Period Adjustment
 
@@ -1591,7 +1600,7 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 | Immutable corrections (reversal+replacement) | data-model-requirements.md, ARC-004 | §6, §10 |
 | Cash/accrual basis reporting | decisions.md, cli-contract.md | §13, §15 |
 | Explicit bank match (not AI guess) | data-model-requirements.md, cli-contract.md, skill-architecture.md | §10, §12, §16 |
-| Locked periods prevent mutation | data-model-requirements.md, CLI-contract.md | §5, §8, §10 |
+| Locked periods prevent mutation | data-model-requirements.md, cli-contract.md | §5, §8, §10 |
 | E-invoice IRN before finalization | gst-compliance-matrix.md, CMP-006 | §11, §16 |
 | GSTR-1 JSON + manual portal + ARN | decisions.md, gst-compliance-matrix.md, CMP-004, CMP-009 | §11, §16 |
 | Payroll full model, no HRMS | decisions.md, payroll-compliance-matrix.md | §1, §9 |
