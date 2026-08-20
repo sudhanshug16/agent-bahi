@@ -721,11 +721,14 @@ Generated → Uploaded → Accepted-by-Bank / Rejected-by-Bank → Debited → R
 **Distinct states** (bank-specific terminology where the bank provider explicitly defines these states):
 - Generated (file created)
 - Uploaded (sent to bank)
-- Accepted-by-Bank or Rejected-by-Bank (bank provider confirmation of receipt/validity)
+- Accepted-by-Bank (format/receipt confirmed; payment not yet executed) OR Rejected-by-Bank (format error; payment blocked)
+  - If Rejected-by-Bank: preserve rejection evidence; require corrected/new file. No debit, no payment posting, no reconciliation.
+  - If Accepted-by-Bank: wait for debit execution.
 - Debited (bank confirms account debit execution)
-- Reconciled (matched to bank statement)
+- After debit observed: [TX] Post exactly one balanced entry Dr Salary Payable | Cr Bank (no duplicate submissions/clearings).
+- Reconciled (payment matched to bank statement)
 
-Each requires separate evidence and status observation.
+Each state requires separate evidence and status observation.
 
 ### E-Invoice/E-Way External Request State Machine
 
@@ -961,7 +964,7 @@ Versioned job skills without embedded accounting rules:
 - **Default**: Human-readable for TTY.
 - **Explicit JSON**: `--json` flag returns stable versioned envelope.
 - **Stderr/stdout**: Errors and progress on stderr; results on stdout.
-- **Returned metadata**: Tenant, GSTIN (applicable), report basis, period/date range, request ID, rule versions, warnings/exceptions, evidence references.
+- **Returned metadata**: tenant_id (always included); gstin_id (nullable: selected GSTIN if gst_context=required, or null if gst_context=none or no GSTIN applicable); report basis, period/date range, request ID, rule versions, warnings/exceptions, evidence references. Human output: "GSTIN: <value>" or "GSTIN: not applicable" per command context.
 
 ### Exit-Code Taxonomy
 
@@ -1339,28 +1342,48 @@ Workflow:
 
 **Applicable invoices (B2B, exports, AATO-based thresholds per effective rules)**:
 
-1. [TX] Validate → Freeze issuance-pending candidate (reserve statutory invoice number ONCE with "awaiting-IRN" gap reason).
-2. [REVIEW] Preview shows: invoice content, applicability rule version, reserved invoice number.
-3. [EXT] Skill/agent initiates IRP submission. Provider idempotency/correlation support required; if unsupported, manual export/upload/import-response only.
-4. [EXT] Skill or agent calls IRP adapter: POST to generate IRN (outside DB transaction).
-5. [EXT] Response outcome: success (IRN received), failure (error), or unknown (timeout).
-6. [TX] Record ExternalOperation (mutable, CAS-versioned): tenant, GSTIN, provider ID, request hash, provider correlation ID (if supported), current_state.
-7. If unknown outcome (timeout / no response):
-   - [TX] Quarantine: Do not retry API; do not switch to manual submission. ExternalOperation remains in 'unknown' state.
-   - [EXT] Reconciliation skill queries provider status (by correlation ID if supported) OR authoritative lookup/portal check.
-   - [TX] Record ExternalOperationObservation: status query request/response; update ExternalOperation.current_state based on authoritative result (known_success, known_failure, or manual_review).
-8. If current_state=known_success or status_reconciled→success:
-   - [TX] Atomic finalization TX: Record IRN/signed QR evidence → Record ExternalOperationObservation (evidence_recorded) → Finalize invoice (reuse reserved number, do not allocate again) → Post balanced journal (Dr AR; Cr Revenue + Output Tax) → Audit record.
-   - [REVIEW] Confirm on CA/user side if required.
-9. If current_state=known_failure or status_reconciled→failure:
-   - [TX] Record error in ExternalOperation; invoice remains in Issuance-Pending/Frozen state; reserved number preserved with gap reason (failed/abandoned).
-   - Fail closed: Invoice not issuable/posted without IRN.
-10. If current_state=unknown (after reconciliation timeout):
-    - [REVIEW] Manual intervention required: Agent reviews authoritative provider/portal status and decides next step (retry, manual submission, reversal).
-11. Fallback (IRP not provisioned / unsupported idempotency):
-    - Manual export/upload/import-response: Agent exports invoice JSON; submits to IRP portal manually; obtains IRN/QR.
-    - [TX] Agent invokes `record e-invoice evidence --invoice <ID> --irn <value> --response <file>` to upload evidence.
-    - [TX] Atomic finalization: IRN/QR evidence → finalize (reuse reserved number) + post balanced journal.
+1. [TX] Validate → Freeze issuance-pending candidate + reserve statutory invoice number ONCE with "awaiting-IRN" gap reason.
+2. [TX] Create ExternalOperation aggregate:
+   - current_state = `prepared` (not yet submitted).
+   - Tenant, GSTIN, provider (IRP), operation type (IRN request).
+   - Invoice correlation (invoice ID, reserved number).
+   - Request payload hash (frozen at creation).
+   - Provider idempotency key (if supported by provider; e.g., correlation ID).
+   - Outbox intent (durable record that this operation must finalize invoice + post).
+   - **COMMIT transaction before any network call.**
+3. [REVIEW] Preview shows: invoice content, applicability rule version, reserved invoice number.
+4. [TX] Outbox sender: CAS ExternalOperation prepared → submitted (with provider idempotency/correlation data). Append immutable submitted observation (timestamp, actor). **COMMIT before transmission.**
+5. [EXT] Transmit IRP request using persisted correlation/idempotency data (outside DB transaction).
+6. [EXT] Immediate response outcome: success (IRN+QR received), failure (error from provider), or unknown (timeout/no response).
+7. [TX] Based on immediate response: CAS ExternalOperation submitted → one of (known_success, known_failure, unknown). Append observation with response hash/content (if available).
+8. **If current_state = unknown** (timeout/no response; quarantined):
+   - Do NOT retry API while unknown.
+   - Do NOT switch to manual submission while unknown.
+   - [EXT] Authoritative status lookup only: Query provider by persisted correlation ID (if supported) or portal document reference.
+   - [TX] Based on authoritative lookup: CAS unknown → one of (known_success, known_failure, manual_review). Append observation with lookup request/response.
+   - If manual_review (outcome ambiguous): requires human judgment before finalization.
+9. **If current_state = known_success**:
+   - [TX] Store/verify IRN+QR response evidence bytes; CAS known_success → evidence_recorded and append observation.
+   - Proceed to atomic finalization (step 11).
+10. **If current_state = known_failure**:
+    - [TX] Record error in ExternalOperation; invoice remains Issuance-Pending/Frozen; reserved number preserved with gap reason (failed/abandoned).
+    - Fail closed: Invoice not issuable/posted without IRN.
+    - New linked retry operation may be created ONLY if provider policy (e.g., rate-limit, temporary error) permits. Manual transport (export/upload/import) may be chosen AFTER authoritative known_failure or never_retry outcome, not while unknown.
+11. **If current_state = manual_review** (after authoritative lookup): Pause; require human decision and explicit next-step command.
+12. **Atomic finalization** (requires current_state = evidence_recorded):
+    - [TX] Single transaction:
+      - Verify IRN+QR evidence accessible (not orphaned).
+      - Finalize invoice: reuse reserved number (do not re-allocate).
+      - Post balanced journal: Dr Accounts Receivable (total) | Cr Revenue (net) + Cr Output Tax (if applicable).
+      - CAS evidence_recorded → business_finalized and append observation.
+      - Increment ExternalOperation version atomically (CAS succeeds or rolls back entirely).
+    - Resume-safe: If process crashes, resume sees business_finalized and does not re-finalize.
+    - [REVIEW] Confirm on CA/user side if required.
+13. **Manual transport fallback** (if IRP provisioning/idempotency unsupported):
+    - Manual export/upload/import-response chosen BEFORE attempting IRP API (not while unknown).
+    - Agent exports invoice JSON; submits to IRP portal manually; obtains IRN/QR.
+    - [TX] Agent invokes `record e-invoice evidence --invoice <ID> --irn <value> --response <file>`.
+    - [TX] Atomic finalization: Verify evidence, finalize invoice (reserved number), post journal, CAS → business_finalized.
 
 ### 8. Cash/Accrual/Tagged Report Generation
 
