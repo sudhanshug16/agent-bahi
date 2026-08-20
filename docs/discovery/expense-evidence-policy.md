@@ -94,7 +94,7 @@ Rule 36(1) identifies the documentary basis for ITC eligibility. The main prescr
 - **(e) ISD invoice, credit note, and Rule 54 ISD document**: Input service distributor invoices, credit notes, or documents issued under Rule 54 where ISD framework applies.
 
 **NOT prescribed ITC bases:**
-- Bill of supply (issued by composition-liable suppliers; no ITC eligibility for recipient).
+- Bill of supply (issued under applicable CGST provisions for exempt supplies or by composition taxpayers; not a positive Rule 36 ITC document for recipient).
 - Ordinary credit note (not issued by supplier as s34 debit/credit note adjustment; adjustment via bill of entry equivalent mechanisms may apply).
 - Generic customs invoice (bill of entry or equivalent assessment is the prescribed document, not an invoice from a private party).
 - Shop receipt, sales receipt, ordinary bill, or receipt without statutory particulars (supports bookkeeping-support or business-purpose lanes; does NOT satisfy Rule 36 prescription).
@@ -162,7 +162,7 @@ Evidence packet for home office or mixed-use allocation (e.g., internet, electri
 
 ### Current Law: Income Tax Act 2025 s34 (General Deduction Conditions)
 
-**Verified fact (effective tax years from 2026-04-01)**: Income Tax Act 2025 s34 identifies general conditions for allowable deductions. An expenditure is deductible if it is (i) residual to the expenditure categories listed by s34 itself, (ii) not capital in nature, (iii) not personal in nature, (iv) laid out wholly and exclusively for the purposes of business or profession, and (v) not a prescribed excluded category. Excluded categories include unlawful or prohibited expenditure, corporate social responsibility (CSR) expenses as described in the Act, political-party souvenir or brochure advertising, and other expenditure expressly disallowed by effective text. The business-purpose and wholly-exclusively test does not prescribe one universal receipt format or document type.
+**Verified fact (effective tax years from 2026-04-01)**: Income Tax Act 2025 s34 identifies general conditions for allowable deductions. An expenditure is deductible if it is (i) residual—not of the nature specified in sections 28-33, 44-49, 51, and 52; (ii) not capital in nature; (iii) not personal in nature; (iv) laid out wholly and exclusively for the purposes of business or profession; and (v) not in a prescribed excluded category. Excluded categories include unlawful or prohibited expenditure, corporate social responsibility (CSR) expenses as described in the Act, political-party souvenir or brochure advertising, and other expenditure expressly disallowed by effective text. The business-purpose and wholly-exclusively test does not prescribe one universal receipt format or document type.
 
 **Clarification**:
 - S34 is a **legal test on character, category, and business purpose**, not an evidence-format requirement.
@@ -178,14 +178,16 @@ Evidence packet for home office or mixed-use allocation (e.g., internet, electri
 
 **Verified fact**: Income Tax Act 2025 s62 requires maintenance of books and documents. Income Tax Rules 2026 Rule 46 implements this requirement across two regulatory tiers:
 
-- **Rule 46(1)**: Applies to persons required to maintain books/documents under s62(1)(b), including ordinary business and non-specified professions, through books and documents enabling income computation.
-- **Rule 46(2)-(6)**: Adds prescribed-document requirements and small-value transaction thresholds for specified professions (e.g., advocates, chartered accountants, medical practitioners).
+- **Rule 46(1)**: Applies to persons required to maintain books/documents under s62(1)(b), subject to s62(2) conditions, including ordinary business and non-specified professions. Books and documents must enable income computation.
+- **Rule 46(2)-(6)**: Applies to persons specified in s62(1)(a), adding prescribed-document requirements and small-value transaction thresholds for specified professions (e.g., advocates, chartered accountants, medical practitioners).
 
 **Clarification**:
-- Rule 46(1) is **universal** for businesses maintaining books; Rule 46(2)-(6) **specified-profession additions** add stricter small-value voucher/document thresholds only for those professions.
-- Small-value document thresholds from the specified-profession part (Rule 46(2)-(6)) must **NOT be generalized** to ordinary business or all company expenses.
-- Maintenance failure (missing books, incomplete records) is an evidence/compliance exception and input to tax review, not automatic gross-posting failure or automatic expense disallowance.
-- Gross expense posting proceeds; tax treatment (compliance determination, potential disallowance under Rule 46 if applicable to the transaction) is separately reviewed.
+- Rule 46 is a **books-and-documents maintenance rule**, not a deduction/disallowance rule itself.
+- Rule 46(1) applies to s62(1)(b) persons subject to s62(2) conditions, not universally to all businesses.
+- Rule 46(2)-(6) specified-profession additions prescribe small-value voucher/document thresholds only for those professions.
+- Small-value document thresholds from Rule 46(2)-(6) must **NOT be generalized** to ordinary business or all company expenses.
+- Maintenance failure (missing books, incomplete records) is an evidence/compliance exception triggering compliance review, not automatic gross-posting failure or automatic tax disallowance.
+- Gross expense posting proceeds; tax treatment (compliance determination, and downstream deduction/disallowance if applicable) is separately reviewed.
 - Do **NOT** hard-code Rule 46 thresholds or profession scope. Expert/CA review per transaction date and applicable person/profession/activity is required.
 
 **Official reference**: [Income Tax Act 2025 s62](https://www.incometaxindia.gov.in/w/section-62-134), [Income Tax Rules 2026 Rule 46](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf).
@@ -194,15 +196,15 @@ Evidence packet for home office or mixed-use allocation (e.g., internet, electri
 
 **Verified fact**: Cash-payment mode deductibility rules exist under Income Tax law as effective-dated provisions applicable across professions and business types. These are separate from books/documents requirements and evidence-format expectations.
 
-**Current law (tax years from 2026-04-01)**: Income Tax Act 2025 s36(4)-(7) establishes cash-payment deductibility conditions. Income Tax Rules 2026 Rule 26 specifies documentation and exceptions. Scope, thresholds, exceptions, and applicability vary by transaction type and entity class and must be reviewed per effective rule for each transaction.
+**Current law (tax years from 2026-04-01)**: Income Tax Act 2025 s36(4)-(7) establishes cash-payment deductibility conditions. As researched on 2026-08-20, applicable thresholds include ₹10,000 per-person-per-day and ₹35,000 goods-carriage limits, subject to exemptions and entity-specific applicability. Income Tax Rules 2026 Rule 26 prescribes circumstances where s36(4)/(5) do not apply (exceptions and exemptions), not documentation requirements. Scope, thresholds, exceptions, applicability, and effective dates vary by transaction type and entity class and must be resolved per effective-dated rule for each transaction at runtime. Hard-code thresholds in this policy only as historical snapshot; do not use as implementation default.
 
 **Legacy (tax years prior to 2026-04-01)**: Income Tax Act 1961 s40A(3) and Rule 6DD apply only through savings provisions under Act 2025 s536 for earlier tax years and related proceedings.
 
 **Clarification**:
 - Cash-payment mode deductibility is a **distinct effective-dated rule family** separate from general deduction conditions (s34), books/documents requirements (s62/Rule 46), and evidence retention.
 - Do **NOT** state or generalize a universal cash threshold in this evidence policy. Cash-payment deductibility scopes, thresholds, entity-type applicability, transaction-type applicability, exceptions, and effective dates are complex and must be reviewed by expert/CA for each transaction.
-- Failing a cash-payment deductibility rule disallows the tax deduction but does not invalidate the bookkeeping posting. The gross expense posts; tax treatment (deductibility) is separately determined.
-- Gross posting and cash-payment mode assessment are independent lanes.
+- Failing a cash-payment deductibility rule disallows the tax deduction but does not invalidate the bookkeeping posting. The gross expense posts with exception_open (where bookkeeping facts are sufficient); tax treatment (deductibility) is separately determined by applicable rule review.
+- Gross posting and cash-payment mode assessment are independent lanes. Gross posting always proceeds exception_open; only tax treatment classification is gated.
 
 **Official reference**: [Income Tax Act 2025 s36](https://www.incometaxindia.gov.in/documents/d/guest/income_tax_act_2025_as_amended_by_fa_act_2026-pdf), [Income Tax Rules 2026 Rule 26](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf), [Act 2025 s536 (savings)](https://www.incometaxindia.gov.in/w/section-536-1). Expert/CA review required for current applicability to transaction date and entity type.
 
