@@ -1,4 +1,4 @@
-# AgentBahi
+# agent-bahi
 
 The goal is an open-source, agent-native accounting and India-compliance CLI. This project is currently in discovery phase.
 

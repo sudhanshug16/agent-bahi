@@ -2,8 +2,7 @@
 
 ## Confirmed
 
-- **Product name**: AgentBahi, selected 2026-08-20
-- **Repository/package slug**: agent-bahi, selected 2026-08-20
+- **Product/repository/package/CLI name**: agent-bahi, selected 2026-08-20
 - **Migration source**: Zoho Books is the current migration source, confirmed by Sudhanshu on 2026-08-20
 
 ## Working defaults
