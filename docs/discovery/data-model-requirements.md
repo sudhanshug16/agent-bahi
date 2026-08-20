@@ -6,6 +6,21 @@ Stored invoices, payments, bills, and ledger postings are the canonical accounti
 
 Every tenant must have a default report basis whose value is either `cash` or `accrual`. A basis-aware report uses that tenant default when no explicit basis is supplied. The effective basis and the report date range are report output metadata, so both human-readable and machine-readable results can be interpreted without relying on the caller's request context.
 
+## Tenant Isolation and Immutable Corrections
+
+Every tenant is fully independent. There is no tenant relationship or
+intercompany table, no common-ownership model, and no cross-tenant transaction
+invariant. Every accounting command accepts exactly one tenant context and all
+records, accounts, evidence, locks, and postings belong to that tenant. An
+external agent may orchestrate separate commands for separate tenants, but the
+ledger never creates a hidden cross-tenant effect or paired entry.
+
+A posted document is never edited in place. A correction creates an explicit
+reversal posting and a new corrected document version. The original document,
+reversal, replacement, reason, actor, timestamp, and resulting postings are
+immutably linked in a correction/reversal lineage. Reports and audit views must
+be able to follow the full lineage without losing the original posted state.
+
 ## Multi-Currency and Settlement
 
 Every tenant has one base currency. Documents in the base currency need no
@@ -76,11 +91,77 @@ for a locked period, a skill may guide the user through either a controlled
 reopen followed by original-date posting or a current-period adjustment. The
 system never chooses between those treatments automatically.
 
-## Intercompany
+## Evidence and Attachments
 
-Paired intercompany posting is explicitly undecided. The model must not assume
-that one side can be posted without a future decision about pairing,
-coordination, and failure handling.
+An evidence/attachment record belongs to exactly one tenant and can be linked
+to the document, claim, advance, reimbursement, card statement, or payroll
+record it supports. It must preserve:
+
+- document type, issuer, issuer reference or number, and document date;
+- content checksum and immutable storage reference;
+- tax eligibility and the tax types or claims it supports;
+- validation status, validator, validated-at timestamp, and validation result;
+- the rule source, rule version, and rule effective start/end dates used for
+  validation; and
+- a reasoned exception record, including actor, reason, authority, scope,
+  timestamp, and expiry or review date, where the applicable law permits an
+  exception.
+
+Evidence retention and tax eligibility are separate from a tenant's workflow
+threshold. The model must preserve missing, invalid, superseded, and
+exception-approved evidence rather than silently treating it as valid.
+
+## Employee Expenses, Advances, Reimbursements, and Cards
+
+The model must include an employee/claimant, expense claim, employee advance,
+reimbursement, corporate card account, card statement, card liability, and
+settlement links. Each record is tenant-scoped and links to its supporting
+evidence and explicit ledger outcome.
+
+Required deterministic outcomes include:
+
+- An employee-paid expense debits the expense account and credits employee
+  reimbursement payable.
+- An advance credits the bank or cash account and debits employee advance;
+  later expense settlement or repayment clears the employee advance with an
+  explicit link to the advance and claim.
+- A company-card expense debits the expense account and credits the card
+  liability; the statement is reconciled to card transactions, and the card
+  liability is later paid through a bank transaction.
+
+GST input tax is a separate posting component and must be blocked unless a
+valid statutory document and all applicable eligibility checks are present.
+
+## Payroll Domain
+
+Payroll is a first-class, tenant-scoped domain. The model must include:
+
+- employee statutory profile;
+- salary structure, salary component, formula, and effective-dated version;
+- payroll period, payroll input, pay run, payroll line, and payslip;
+- employee tax and contribution deductions;
+- employer contributions;
+- payable, remittance, and filing references;
+- bank payment batch;
+- leave and loss-of-pay (LOP) input; and
+- full-and-final settlement.
+
+Payroll inputs, rules, rates, thresholds, contribution ceilings, filing forms,
+and calculations must be effective-dated and jurisdiction-scoped. A posted
+pay run freezes the input snapshot and rule/rate versions used. Its journal
+must be balanced, reproducible from those frozen inputs and versions, and
+linked to every payroll line, payable, remittance, filing reference, and bank
+payment batch it produces. Corrections follow the same explicit reversal plus
+new corrected version lineage as other posted documents.
+
+The standard posting shape is explicit and reproducible: gross compensation
+debits the configured payroll expense accounts; employee tax, contribution,
+and other deductions credit their corresponding statutory or employee
+payables; net pay credits the employee payroll payable; employer contributions
+debit employer-cost accounts and credit statutory payables; remittance debits
+the applicable payable and credits bank; and a bank payment batch clears the
+net-pay payable through the selected bank account. Any jurisdiction-specific
+component must use the same effective-dated rule and frozen-input links.
 
 ## Optional Reporting Tags/Dimensions
 

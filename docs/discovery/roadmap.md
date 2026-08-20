@@ -1,6 +1,6 @@
 # Discovery Roadmap
 
-The current focus is the native core and its first automation baseline: building agent-bahi as a self-contained accounting system without external dependencies or importers in the active phase.
+The current focus is the native core and its first automation baseline: building agent-bahi as a self-contained accounting system without external dependencies or importers in the active phase. Every tenant remains independent; no cross-tenant relationship feature is planned.
 
 ## Phase 1: Canonical Data Model and CLI Safety Foundation
 
@@ -8,7 +8,7 @@ The current focus is the native core and its first automation baseline: building
 
 **Scope**:
 - Chart of accounts with account types, hierarchies, and India GL standards
-- Entity structure with multi-entity support designed but inactive
+- Tenant-scoped entity and account boundaries with no tenant relationship or intercompany model
 - Document types (Invoice, Bill, Payment, Journal Entry, etc.)
 - Ledger posting mechanics and invariant constraints
 - Explicit CLI commands with deterministic validation and engine-owned permission/gate checks
@@ -58,7 +58,7 @@ The current focus is the native core and its first automation baseline: building
 **Scope**:
 - Invoice and bill creation, aging tracking
 - Payment matching and clearing
-- Expense recording and categorization
+- Expense recording and categorization, including native evidence, employee claims, advances, reimbursements, and corporate-card workflows
 - Manual journal entries
 
 **Exit Conditions**:
@@ -66,7 +66,25 @@ The current focus is the native core and its first automation baseline: building
 - User can book a typical day's transactions end-to-end
 - No Zoho Books reference needed for daily work
 
-## Phase 5: Bank Reconciliation, Close, and Financial Reporting
+## Phase 5: Payroll and Employee Compliance
+
+**Goal**: Implement full India payroll as a deterministic, first-class workstream after the core ledger foundations.
+
+**Scope**:
+- Employee statutory profiles, salary structures/components/formulas, and effective-dated rules
+- Pay schedules, payroll periods, attendance, leave, overtime, and LOP inputs
+- Regular, bonus, arrears, correction, and off-cycle runs with draft, approval, posting, and locking
+- Reimbursements, perquisites, loans, advances, payslips, wage/attendance/overtime/deduction registers, and reports
+- Payroll TDS, declarations/proofs, Form 16, quarterly TDS statements, PF, ESI, PT, LWF, and statutory filing/remittance references
+- Bank advice/export and payment batches
+- Full-and-final settlement and auditable reversal/correction lineage
+
+**Exit Conditions**:
+- Pay runs are balanced and reproducible from frozen inputs and effective-dated jurisdiction rules
+- Every payroll output, payable, remittance, filing, and bank payment has an auditable source link
+- Unresolved statutory ambiguity blocks or routes to explicit review; no skill invents amounts or silently posts
+
+## Phase 6: Bank Reconciliation, Close, and Financial Reporting
 
 **Goal**: Enable month/quarter/year-end close and basic financial statements.
 
@@ -81,7 +99,7 @@ The current focus is the native core and its first automation baseline: building
 - Reconciliation identifies uncleared items
 - Financial reports match manual verification
 
-## Phase 6: Effective-Dated India Compliance Calculations, Calendars, Review Gates, and Official-Format Exports
+## Phase 7: Effective-Dated India Compliance Calculations, Calendars, Review Gates, and Official-Format Exports
 
 **Goal**: Implement India-specific compliance and statutory reporting with time-aware calculations.
 
@@ -97,22 +115,20 @@ The current focus is the native core and its first automation baseline: building
 - Effective-dated rules handle retroactive adjustments
 - All required filings can be generated and validated
 
-## Phase 7: Multi-Entity Behavior and Database Adapters
+## Phase 8: Database Adapters and Tenant Isolation
 
-**Goal**: Support multi-entity operations and pluggable storage backends.
+**Goal**: Support pluggable storage backends while preserving independent tenant operation.
 
 **Scope**:
-- Consolidation and inter-entity transactions
 - PostgreSQL and MySQL adapters (SQLite remains default)
-- Cross-entity reporting and reconciliation
-- Data isolation and audit trails per entity
+- Tenant-scoped data isolation and audit trails
+- Explicit single-tenant command validation across adapters
 
 **Exit Conditions**:
-- All three legal entities operate in a single system with correct isolation
-- Consolidation reports are accurate
+- Each tenant operates independently with correct isolation
 - Database adapter tests pass on all supported backends
 
-## Phase 8: Zoho Books Import—Validated Against the Already Documented Private Fixture
+## Phase 9: Zoho Books Import—Validated Against the Already Documented Private Fixture
 
 **Goal**: Safely migrate historical data from Zoho Books as a final step.
 
@@ -129,7 +145,7 @@ The current focus is the native core and its first automation baseline: building
 - Post-import balances match source
 - System operates normally with imported data
 
-**Note**: No importer implementation is in the current phase. The native core and skills layer (Phases 1–7) must be complete and tested before any Zoho Books data is loaded. Import validation requirements are pre-specified in `zoho-backup-fixture.md` and will not be modified during development.
+**Note**: No importer implementation is in the current phase. The native core and skills layer (Phases 1–8) must be complete and tested before any Zoho Books data is loaded. Import validation requirements are pre-specified in `zoho-backup-fixture.md` and will not be modified during development.
 
 ## Deferred / Future
 

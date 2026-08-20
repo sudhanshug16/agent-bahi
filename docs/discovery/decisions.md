@@ -19,7 +19,11 @@
 - **Fixed assets**: An asset register, automatic depreciation, and disposal tracking are in scope. Exact depreciation methods and book-versus-tax schedules remain undecided.
 - **Bank reconciliation boundary**: A scheduler or user invokes a bank-reconciliation skill. The skill gathers evidence and may propose non-deterministic matches. The CLI validates tenant, account, currency, amount, status, and idempotency, then persists the match and its provenance. The engine contains no hidden AI matching decision.
 - **Period locking**: A tenant may have a global or module-specific inclusive `locked-through` date. Create, edit, delete, and void operations within the locked range are rejected. Unlock and bounded partial unlock require a reason, actor, audit record, and impact preview. A late document uses a skill-guided choice between controlled reopen/original-date posting and a current-period adjustment; neither path is automatic.
-- **Intercompany paired posting**: Whether paired intercompany postings are required and how they are coordinated remains undecided.
+- **Tenant independence**: Every tenant is fully independent. agent-bahi does not model common ownership, intercompany relationships, or cross-tenant paired entries. Every accounting command operates on exactly one tenant. An external agent may orchestrate separate commands, but the ledger never creates hidden cross-tenant effects.
+- **Posted-document correction**: A posted document is corrected through an explicit reversal plus a new corrected version. The original, reversal, replacement, and reason remain immutably linked in the correction history.
+- **Expense evidence**: Statutory evidence rules always apply first. A tenant-configured amount threshold may add stricter workflow only where law is silent; it can never weaken a document, voucher, retention, or GST ITC requirement.
+- **Employee expenses**: Employee expense claims, employee advances, reimbursements, and corporate-card expenses are in scope and must produce deterministic accounting outcomes.
+- **India payroll**: Full India payroll is in scope. The current Zoho Payroll India feature breadth is the parity baseline: statutory employee master, salary structures/components/formulas, pay schedule, attendance/LOP, bonuses/arrears/off-cycle runs, reimbursements/perquisites/loans/advances, draft/approval/posting, payslips, bank advice/export, payroll TDS, declarations/proofs, Form 16, quarterly TDS statements, PF/ESI/PT/LWF, full-and-final settlement, and reports. No Zoho MCP was used or assumed.
 
 ## Working defaults
 
