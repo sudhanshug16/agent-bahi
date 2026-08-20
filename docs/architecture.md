@@ -438,10 +438,10 @@ Conflicts fail visibly; never last-write-wins.
 - **Provider request ID** (if assigned): Bank ref, IRP request number, etc.
 - **Outbox intent**: What business action triggers if/when evidence_recorded; used for async resumption.
 - **current_state** (mutable, versioned via CAS): Exactly one of:
-  - `prepared`: ExternalOperation persisted BEFORE any network call. Request hash, tenant, GSTIN, provider, document correlation, and outbox intent recorded. Ready to transmit.
-  - `submitted`: Sender CASes prepared → submitted and appends observation before transmitting request to provider.
-  - `known_success`: Provider response received; status confirmed success. CAS from submitted → known_success with append-only observation.
-  - `known_failure`: Provider response received; status confirmed failure. CAS from submitted → known_failure with observation. A NEW separate retry operation may be created only if provider policy allows.
+  - `prepared`: ExternalOperation persisted BEFORE any external side effect. Request or artifact hash, tenant, GSTIN, provider, document correlation, and outbox intent recorded. Ready for its selected transport.
+  - `submitted`: Sender durably CASes prepared → submitted and appends a pre-side-effect submission-intent observation. The external request or upload has been or may be attempted; `submitted` is not proof that it was sent or succeeded. For API, this CAS happens before dispatch; for manual, it happens before human upload and never permits automatic re-upload.
+  - `known_success`: Authoritative provider or portal evidence confirms success. CAS from submitted, unknown, or manual_review → known_success with append-only observation.
+  - `known_failure`: Authoritative provider or portal evidence confirms failure. CAS from submitted, unknown, or manual_review → known_failure with observation. A NEW separate retry operation may be created only for that same statutory obligation when explicitly authorized.
   - `unknown`: Timeout, no response, or missing authoritative provider status. Quarantined; not allowed to retry API or switch to manual submission while unknown.
   - `manual_review`: Authoritative lookup impossible or outcome ambiguous; requires human judgment to decide next step.
   - `cancelled`: Operation cancelled by user or policy before submission or after explicit policy-allowed cancellation.
@@ -462,14 +462,14 @@ Conflicts fail visibly; never last-write-wins.
 
 If neither exists, direct automation is disabled; only manual export/upload/import-response workflow may be used.
 
-**Unknown outcome handling** (timeout, no response, provider unreachable):
-- [TX] Quarantine: ExternalOperation remains in 'unknown' state; neither API retry nor manual submission is allowed.
-- [EXT] Reconciliation must query provider by correlation ID/reference, or perform authoritative portal/external lookup.
-- [TX] Record authoritative result (success/failure/still-pending); update ExternalOperation.current_state via CAS.
+**Reconciliation action/checkpoint** (timeout, no response, provider unreachable, or ambiguous manual evidence):
+- [TX] Quarantine an `unknown` outcome; neither API retry nor manual submission is allowed while it is unresolved.
+- [EXT] Reconciliation queries the provider by correlation/idempotency identity or performs an authoritative portal/external lookup. For manual transport, the authoritative evidence must bind to the operation and its frozen artifact hash.
+- [TX] Append the reconciliation request/response as an observation, then CAS `submitted`, `unknown`, or `manual_review` directly to `known_success` or `known_failure` only when authoritative evidence exists. `manual_review` may remain pending for human direction; it is not a replacement current state for reconciliation.
 - Local pending state is not proof; only authoritative provider/portal confirmation resolves the outcome.
-- Only after reconciliation completes may finalization or retry decision proceed.
+- Only after reconciliation completes may obligation-specific evidence recording, finalization/gating, or an explicit terminal-failure retry decision proceed.
 
-**Reconciliation protocol**: Unknown outcome → (1) Quarantine; (2) Query provider/portal by idempotency key or reference; (3) Record actual state (success/failure/manual-review); (4) Only then finalize or decide retry.
+Reconciliation is an action/checkpoint and append-only observation, not a `current_state` value.
 
 ---
 
@@ -733,23 +733,21 @@ Each state requires separate evidence and status observation.
 ### E-Invoice/E-Way External Request State Machine
 
 ```
-Prepared (local snapshot)
-  → Submitted (request sent)
+prepared
+  → submitted (durable pre-side-effect submission intent; request/upload has been or may be attempted)
   → one of:
-    ├─ Known-Success (response received, success)
-    ├─ Known-Failure (response received, error)
-    └─ Unknown (timeout or no response; must query provider/reconcile status)
-       → Status-Reconciled (actual provider status confirmed via query)
-         → one of:
-           ├─ Known-Success (confirmed success)
-           ├─ Known-Failure (confirmed failure)
-           └─ Manual-Review (human judgment required)
+    ├─ known_success (authoritative success)
+    ├─ known_failure (authoritative failure)
+    └─ unknown (timeout or no response)
+       ── reconciliation action/checkpoint ──→ known_success | known_failure | manual_review
 
-Known-Success → Evidence-Recorded (hash, timestamp, IRN/EWB number, provider confirmation)
-             → Business-Finalization (document state updated based on evidence)
+manual_review ── authoritative evidence and explicit human action ──→ known_success | known_failure
+
+known_success → evidence_recorded (hash, timestamp, IRN/EWB number, provider confirmation)
+              → obligation-specific business finalization or movement gate
 ```
 
-**No blind retry**: Unknown outcome → reconciliation skill must query provider status (by correlation ID if supported) and record actual state before any retry or finalization decision. If provider offers no idempotency support, reconcile existing requests before retrying.
+**Transport ordering**: API CASes `prepared → submitted` before dispatch and relies on provider idempotency for safe retry; manual CASes before human upload and never automatically re-uploads. Reconciliation is the action/checkpoint and observation that resolves `submitted`, `unknown`, or `manual_review`; `Status-Reconciled` is not a current state. No blind retry: authoritative evidence must be recorded before finalization, movement gating, or an explicit terminal-failure retry.
 
 ---
 
@@ -1264,7 +1262,7 @@ Workflow:
    - Balanced: Debits (gross + employer contributions) = Credits (employee deductions + employer liabilities + net pay).
    - Entry links frozen inputs, rule versions, and audit metadata.
    - Do not reference statutory form names, section numbers, or thresholds; use effective rule pack versions.
-8. [TX] Generate payslips + bank CSV export from configured preset version.
+8. [TX] Generate payslips + bank CSV export from configured preset version. Payslips are separate from statutory employee certificates and are not delayed by the later filing or certificate gate.
 9. [EXT] **Bank file workflow**:
     - User uploads bank file to bank portal (export ≠ payment; export ≠ debit).
     - [TX] Record accepted_by_bank OR rejected_by_bank state (bank provider confirmation of receipt/validity).
@@ -1283,16 +1281,16 @@ Workflow:
     - [EXT] Payment/debit evidence observed (transaction ID, receipt timestamp).
     - [TX] After actual government payment/debit confirmed: Post exactly one balanced entry Dr. [applicable statutory liability account] | Cr. Bank.
     - [TX] Record challan/portal evidence and reconcile to payment evidence.
-15. [EXT] **Employee certificate generation and delivery** (separate from government filing):
-    - [TX] Generate statutory documents (form/certificate/declaration) from frozen payroll data + deposit evidence.
+15. [EXT] **Government statement/return filing** (separate from employee certificate delivery):
+    - [EXT] User files statutory return on government portal (e.g., quarterly TDS statement, PF return).
+    - [TX] Record filing evidence (timestamp, method, response).
+    - [TX] Record acknowledgement/ARN and authoritative processing evidence, if returned or required by the portal/authority.
+16. [EXT] **Employee certificate generation and delivery** (after the required government statement is acknowledged/processed; separate from filing):
+    - [TX] After the required filed statement is acknowledged/processed, generate statutory documents (form/certificate/declaration) from frozen payroll data + deposit evidence and use the portal/authority artifact where required.
     - [EXT] Verify receipt by employee (where required).
     - [EXT] Deliver to employee (email, portal, etc.).
     - Certificates are NEVER uploaded/filed to government portal as "certificates"; they are delivered to employee.
     - Certificates do NOT receive ARN; they are employee deliverables, not government filings.
-16. [EXT] **Government statement/return filing** (separate from certificate delivery):
-    - [EXT] User files statutory return on government portal (e.g., quarterly TDS statement, PF return).
-    - [TX] Record evidence (filing timestamp, method, response).
-    - [TX] Record acknowledgement/ARN (if returned by portal).
 17. **Distinct outcomes/obligations** (separate states and evidence):
     - **Payroll deduction**: Computed, posted via payroll run (frozen inputs, rule version).
     - **Bank file export**: Generated from configured preset; uploaded to bank.
@@ -1301,10 +1299,10 @@ Workflow:
     - **Payroll payment**: Balanced journal Dr Net-Pay Payable / Cr Bank after debit observed (posted once).
     - **Bank reconciliation**: Matches debit to export record.
     - **Government deposit/remittance**: Separate bank remittance per effective obligation; posted after debit confirmed.
-    - **Employee certificate generation**: Derived from frozen payroll + deposit evidence; delivered to employee.
-    - **Employee certificate delivery**: Employee receives document; no government upload; no ARN.
     - **Government return/statement filing**: Separate portal submission; not same as certificate delivery.
     - **Filing acknowledgement/ARN**: Portal response to filed return only.
+    - **Employee certificate generation**: Derived from frozen payroll + deposit evidence after required filing acknowledgement/processing; use the portal/authority artifact where required.
+    - **Employee certificate delivery**: Employee receives document; no government upload; no ARN.
     - **Employee claim/evidence**: Employee declarations or investment proofs; input prior to payroll run.
 
     Do not combine or skip these steps. Each has distinct actors, timing, evidence, prerequisites, and audit requirements.
@@ -1340,41 +1338,46 @@ Workflow:
 11. [TX] Agent records filing (timestamp, signer method, ARN received).
 12. GSTR-3B preparation later can reference filed GSTR-1 ARN as prerequisite satisfied.
 
-### 7. Applicable E-Invoice IRN Flow with API + Manual Fallback, Unknown Outcome Handling
+### 7. Applicable E-Invoice IRN and E-Way Bill Flow with API + Manual Transport, Unknown Outcome Handling
 
-**Applicability check happens BEFORE issue/post for all invoices. The following is one sequential flow; the applicable branch is not renumbered separately:**
+**Applicability check happens BEFORE issue/post or dispatch. It returns an obligation set: IRN/e-invoice required, EWB required, both, or neither. The following is one sequential flow; each statutory obligation is handled independently:**
 
 1. Agent/user creates invoice draft (items, tax).
-2. [REVIEW] Determine applicability using effective-dated rules (AATO threshold, invoice type, exemptions, and any applicable e-invoice/e-way-bill requirement).
-3. If NOT applicable: [TX] Validate → finalize invoice (allocate number) → post the balanced journal atomically (no external-issuance gate) → Settled. Stop.
-4. If APPLICABLE: [TX] Validate → freeze the issuance-pending candidate + reserve the statutory invoice number ONCE with an "awaiting-IRN" gap reason.
-5. [REVIEW] Preview the invoice content, applicability rule version, and reserved invoice number.
-6. [REVIEW] Select exactly one transport (`api` or `manual`) before creating any `ExternalOperation`, based on effective provider capability and policy. This selection is part of the operation identity and cannot change for that operation.
-7. [TX] Create exactly one `ExternalOperation` for the selected transport:
-   - `current_state = prepared` (not yet submitted).
-   - Tenant, GSTIN, provider (IRP), operation type (IRN request), invoice correlation (invoice ID and reserved number), and `transport_type`.
-   - For `api`: frozen request payload hash and provider idempotency identity/request. For `manual`: exported artifact hash/reference and portal submission identity when available.
-   - Exactly one durable outbox/submission intent for this operation: finalize this invoice and post only after `evidence_recorded`.
-   - **COMMIT before any API call or human portal upload.**
-8. **API branch using the same operation** (only when step 6 selected `api`):
-   - [TX] The outbox sender CASes `prepared → submitted` and appends the immutable submission observation with the persisted idempotency identity/request. **COMMIT before transmission.**
-   - [EXT] Transmit the IRP request outside the database transaction.
-   - [TX] CAS `submitted → known_success`, `known_failure`, or `unknown`, appending the response hash/content when available.
-   - If `known_success` (immediate or after authoritative lookup): [TX] verify and store IRN+QR evidence, then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 11.
-   - If `known_failure`: record the error, preserve the frozen invoice and reserved-number gap reason, and stop. The failed operation never finalizes.
-   - If `unknown`: quarantine; do not retry, switch transport, fall back, or create another operation. [EXT] Perform only an authoritative status lookup by the persisted correlation/idempotency identity or portal document reference, then [TX] CAS to `known_success`, `known_failure`, or `manual_review` and append the lookup observation. `manual_review` stops for explicit human direction and cannot fall back or start another operation.
-9. **Manual branch using the same operation** (only when step 6 selected `manual`):
-   - [TX] CAS `prepared → submitted` and append the durable submission-intent observation **before** any human portal upload. **COMMIT.** The `submitted` state means upload may already have happened.
-   - After `submitted` is durable, never auto-upload or auto-reupload. [EXT] Export the invoice artifact and let the human submit it through the IRP portal.
-   - [EXT]/[TX] Reconcile authoritative portal evidence and CAS `submitted → known_success` or `known_failure`, appending the response evidence. If authoritative evidence is unavailable or ambiguous, stop in `manual_review`; do not fall back or create another operation.
-   - If `known_success`: [TX] verify and store IRN+QR evidence, then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 11.
-   - If `known_failure`: record the error, preserve the frozen invoice and reserved-number gap reason, and stop. The failed operation never finalizes.
-10. **Explicit retry after terminal `known_failure` only**:
-   - A retry is allowed only as a NEW child/retry `ExternalOperation` explicitly authorized by the operator and linked to the failed parent. No other state may spawn a fallback or retry.
-   - Select `api` or `manual` before creating the child operation. The child gets its own exactly-one outbox/submission intent and its own transport-specific idempotency identity/request or artifact hash, then repeats steps 7–9. The failed parent never finalizes.
-11. **Atomic finalization** (requires `current_state = evidence_recorded` on the same operation):
-   - [TX] In one transaction, verify IRN+QR evidence is accessible and not orphaned; finalize the invoice using the reserved number (do not re-allocate); post the balanced journal: Dr Accounts Receivable (total) | Cr Revenue (net) + Cr Output Tax (if applicable); CAS `evidence_recorded → business_finalized` and append the observation; and honor the operation's exactly-one outbox intent atomically. Any CAS or validation failure rolls back the entire finalization.
-   - Resume-safe: if the process crashes, resume sees `business_finalized` and does not re-finalize.
+2. [REVIEW] Determine the obligation set using effective-dated rules (AATO threshold, invoice type, exemptions, movement facts, and applicable e-invoice/e-way-bill rules).
+3. If the obligation set is **neither**: [TX] Validate → finalize invoice (allocate number) → post the balanced journal atomically → Settled. Stop.
+4. If IRN is required: [TX] Validate → freeze the issuance-pending candidate + reserve the statutory invoice number ONCE with an "awaiting-IRN" gap reason. If IRN is not required, do not create an IRN gate or reserve an IRN gap; invoice issue/posting may proceed without IRN.
+5. [REVIEW] Preview the invoice content, obligation set, rule versions, reserved invoice number (if IRN applies), and dispatch requirements (if EWB applies).
+6. For **each required obligation separately**, select exactly one transport (`api` or `manual`) before creating its operation. A provider capability or policy decision for IRN does not select transport for EWB.
+7. For each selected obligation and attempt, create exactly one `ExternalOperation` — one operation per statutory obligation attempt, not one operation per invoice:
+   - `operation_kind = irn` or `ewb`, `current_state = prepared`, the applicable tenant/GSTIN/provider/document correlation, and `transport_type`.
+   - Persist the operation's idempotency identity (internal operation/request identity and any provider/portal identity when assigned).
+   - For `api`, freeze the complete request payload and persist its hash. For `manual`, in the same transaction first freeze and durably store the exact manual export artifact bytes and compute its hash, then create the prepared operation bound to that artifact/hash.
+   - Persist exactly one durable outbox/submission intent scoped to that obligation: IRN evidence permits invoice finalization; EWB evidence permits dispatch/goods movement. Do not combine the intents.
+   - **COMMIT each operation before any API dispatch or human portal upload.**
+8. **API branch using the same obligation operation** (only when its step 6 selection was `api`):
+   - [TX] The outbox sender CASes `prepared → submitted` and appends the durable pre-side-effect submission-intent observation with the persisted idempotency identity. **COMMIT before dispatch.**
+   - [EXT] Transmit the frozen request outside the database transaction; provider idempotency governs safe retry of that request.
+   - [TX] Record the response and CAS `submitted → known_success`, `known_failure`, or `unknown`.
+   - If `known_success` (immediate or after reconciliation): [TX] verify and store evidence for this operation_kind, then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 12 for the obligation-specific gate.
+   - If `known_failure`: record the authoritative error for this obligation and stop this operation. No fallback or other obligation operation is created; a failed operation never finalizes or gates success.
+   - If `unknown`: quarantine; do not retry, switch transport, fall back, or create another operation. [EXT] Reconcile only through an authoritative provider lookup by the persisted idempotency/correlation identity or document reference, then [TX] CAS to `known_success`, `known_failure`, or `manual_review` and append the observation. `manual_review` stops for explicit human direction and cannot fall back or start another operation.
+9. **Manual branch using the same obligation operation** (only when its step 6 selection was `manual`):
+   - [TX] CAS `prepared → submitted` and append the durable submission-intent observation **before** permitting human portal upload. **COMMIT.** The `submitted` state means upload may already have happened.
+   - After `submitted` is durable, upload only the exact frozen artifact bound to this operation. Never generate, mutate, auto-upload, or auto-reupload a different artifact under uncertainty.
+   - [EXT] The human uploads the bound artifact. [EXT]/[TX] Reconcile authoritative portal evidence; it must bind to this operation and match its artifact hash. A mismatch or absent/ambiguous evidence remains `manual_review` and is not success.
+   - With authoritative evidence, CAS `submitted → known_success` or `known_failure` and append the response observation. If `known_success`, [TX] verify/store this operation_kind's evidence, then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 12 for the obligation-specific gate.
+   - If `known_failure`: record the authoritative error for this obligation and stop this operation. The failed operation never finalizes or gates success.
+10. **Explicit retry after terminal `known_failure`, per obligation only**:
+   - A retry is allowed only as a NEW child/retry `ExternalOperation` for the same `operation_kind`, explicitly authorized by the operator and linked to the failed parent. No `unknown`, `manual_review`, or other state may spawn a fallback or retry.
+   - Select `api` or `manual` for the child before creating it. The child gets its own frozen request/artifact hash, idempotency identity, exactly-one outbox/submission intent, and operation-specific evidence. The failed parent never finalizes; repeat steps 6–9 for the child.
+11. If a provider returns IRN and EWB results in one exchange, persist distinct outcomes and evidence for the distinct IRN and EWB operations. Never infer one obligation's success or failure from the other.
+12. **Apply the obligation-specific gate** after that operation reaches `evidence_recorded`:
+   - If IRN is required, the invoice's IRN evidence is required before invoice issue/business finalization; proceed to step 13.
+   - If EWB is required, its EWB evidence gates dispatch/goods movement only. If IRN is not required, [TX] finalize/post the invoice independently without waiting for EWB evidence or creating an IRP/IRN operation, then hold dispatch until the EWB operation reaches `evidence_recorded`.
+   - If both are required, enforce both obligations independently: IRN evidence gates invoice finalization and EWB evidence gates dispatch. Neither evidence substitutes for the other.
+13. **Atomic invoice finalization for an IRN-required invoice** (requires the IRN operation's `current_state = evidence_recorded`):
+   - [TX] In one transaction, verify the IRN/QR evidence is accessible and bound to the IRN operation; finalize the invoice using the reserved number (do not re-allocate); post the balanced journal: Dr Accounts Receivable (total) | Cr Revenue (net) + Cr Output Tax (if applicable); CAS that operation `evidence_recorded → business_finalized` and append the observation; and honor only its exactly-one IRN intent atomically. Any CAS or validation failure rolls back the entire finalization.
+   - Resume-safe: if the process crashes, resume sees `business_finalized` and does not re-finalize. An EWB operation remains a separate dispatch gate.
    - [REVIEW] Confirm on CA/user side if required.
 
 ### 8. Cash/Accrual/Tagged Report Generation
