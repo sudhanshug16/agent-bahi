@@ -1184,19 +1184,21 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
 
 1. Agent/user creates bill draft (items, tax invoice particulars).
 2. [REVIEW] Validate bill (vendor, tax invoice number, HSN if required).
-3. [REVIEW] Check ITC prerequisite facts at posting time:
+3. [REVIEW] Check ITC eligibility facts at posting time:
    - Statutory particulars present (invoice date, number, GSTIN)?
-   - All required documents (tax invoice, delivery note) attached/sourced?
+   - Rule 36(1) prescribed document present (supplier s31 invoice, recipient s31(3)(f), s34 debit note, bill of entry, ISD invoice, etc.)?
    - Reverse charge or import condition applicable per effective rules?
    - GSTR-2B match or supplier communication already available?
-   - If ANY prerequisite absent or unknown: **Do not assume posting path; decide by policy: keep bill blocked/draft, or post gross expense/asset with marked non-claimable ITC state.**
-4. [TX] Finalize bill → allocate number → post balanced journal:
-   - **Always post (if finalized)**: Dr. Expense/Asset (gross amount) | Cr. AP (invoice total).
-   - **ITC treatment (non-ledger tracking state; not yet claimable ledger debit)**:
-     - If all prerequisites confirmed AND no policy-barred evidence exception: Mark as Eligible candidate (non-ledger).
-     - If reverse charge/import detected: Mark as RCM/Import candidate (rule-driven, non-ledger).
-     - If lawful evidence exception approved: Mark as Exception-Approved candidate (actor/reason/evidence gap logged non-ledger); book the gross and AP; no claimable ITC yet.
-     - If any legal communication/match prerequisite pending: Mark as NON-LEDGER ITC Candidate (pending evidence, not yet eligible, not yet ineligible).
+   - Other effective-rule conditions (tax payment date, time bar, advance payment terms)?
+4. [TX] Finalize bill → allocate number → post balanced journal **DETERMINISTICALLY**:
+   - **Always post**: Dr. Expense/Asset (gross amount) | Cr. AP (invoice total). Never block the gross posting due to missing evidence.
+   - **ITC lane state (non-ledger, separate from gross posting)**: Mark state independent of gross posting decision:
+     - If all Rule 36(1) prescribed-document and effective-rule conditions confirmed: Mark as Eligible candidate (subject to later 2B match and time bar verification).
+     - If Rule 36 prescribed document missing: Mark as Pending-Prescribed-Document (ITC lane remains pending; no claim yet; gross posts).
+     - If prescribed document present but other conditions incomplete (tax payment, time limit, reverse-charge determination): Mark as Pending-Other-Conditions (ITC lane remains pending).
+     - If reverse charge or import detected and conditions are candidates (document present, payment pending): Mark as Pending-Conditions; ITC lane remains candidate under RCM/import specific rules.
+     - If evidence exception approved (e.g., receipt promised/delayed): Mark as Exception-Open; ITC lane remains pending/ineligible; gross posts with exception record.
+     - If Rule 36 condition failed (no prescribed document, time bar, blocked supply): Mark as Ineligible (gross posts; ITC claim never occurs).
 5. [EXT] Portal/vendor statement provides GSTR-2B autofill (evidence gathered).
 6. Agent/skill reconciles GSTR-2B with booked bills.
 7. [REVIEW] ITC eligibility reconciliation (only after all effective-rule prerequisites pass):
