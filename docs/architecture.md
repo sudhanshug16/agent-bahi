@@ -776,6 +776,36 @@ For drafts and unrelated bookkeeping:
 - Continue with explicit visible exception/warning.
 - Never silently use newest or previous rule.
 
+### Approved Mixed-Use Allocation Rules (Tenant-Scoped, Versioned, Immutable)
+
+**Purpose**: For recurring expenses with both business and personal use (e.g., home-office rent, utilities), an **approved allocation rule** records the settled, evidence-backed business/personal split. The rule is immutable once approved, versioned per change, and reusable only within the same tenant for matching vendor/category/premises/conditions.
+
+**Rule structure** (persisted separately from statutory rule packs):
+- **Tenant**: Which legal entity owns this rule.
+- **Premises**: Specific address or property.
+- **Expense/Vendor/Category**: Matched items (e.g., "Rent for 123 Main St," "Electricity supplier MSEDCL").
+- **Method/Formula**: Allocation basis (e.g., "dedicated-room area ratio," "hours business use per week").
+- **Percentage or Cap**: Business-attributable share (e.g., "60% business, 40% personal").
+- **Evidence**: Reference to supporting allocation workpaper or CA recommendation.
+- **Valid Dates**: Effective from/to dates.
+- **Approver**: Actor authorizing the rule (name, date).
+- **Version**: Immutable version ID (e.g., "v1", "v2").
+
+**Reuse and triggers**:
+- Future matching transactions for the same expense type and premises within valid dates reuse the rule without reapproval.
+- Material changes (premises move, rate plan change, usage-pattern change, payee-classification change, tax-rule-version change) require reapproval and a new rule version.
+
+**Independence from tax treatment**:
+- An approved allocation rule documents the split only; it does NOT determine tax deductibility, depreciation treatment, or GST ITC eligibility.
+- Tax treatment is assessed separately against effective statutory rules (Income Tax Act 2025 s28(2), s33(3)(b), s34, s62; CGST Act s16/s17, Rule 36) by CA review.
+- Allocation approval is not automatic tax approval; the CA may disallow, partially allow, or modify the tax claim regardless of the approved rule.
+
+**Sole proprietor vs. company posting**:
+- **Sole proprietor**: Books the business share to the relevant expense account and the personal share to drawings (not business expense).
+- **Company**: Records only the approved business-share amount as company expense or reimbursement, routed through appropriate compliance framework for possible perquisite/payroll/related-party implications (CA review required).
+
+**Storage**: Approved rules are stored separately from versioned statutory rule packs. They are tenant-scoped and immutable (new version created on change, never overwrite). Queries filter by tenant, premises, vendor, and valid-date range to reuse applicable rules.
+
 ### Obligation Engine
 
 **Components**:

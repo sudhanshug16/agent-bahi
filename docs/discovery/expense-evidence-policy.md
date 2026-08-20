@@ -120,6 +120,44 @@ The engine never auto-claims ITC. Explicit reclassification journal (Dr. ITC Rec
 
 **Official reference**: [CBIC CGST Act s16](https://cbic-gst.gov.in/hindi/CGST-bill-e.html), [CBIC Rule 36 and related Rules (GST Rules 2017, subject to effective amendments)](https://cbic-gst.gov.in/pdf/01012022-CGST-Rules-2017-amended_Part-A.pdf). These are subject to effective-date refresh and state-specific variations; confirm the rule version and amendments applicable to the transaction date and claim date.
 
+## Approved Mixed-Use Allocation Rules (Immutable, Versioned, Tenant-Scoped)
+
+**Concept**: For expenses involving both business and personal use (e.g., home-office rent, utilities, internet), agent-bahi may store an **approved allocation rule** representing a settled, evidence-backed business/personal split. This rule is immutable once approved, versioned, and reusable **only within the same tenant for matching vendor/category/premises/conditions**. Any material change requires reapproval and a new rule version.
+
+**Rule fields**:
+- **Tenant**: Which legal entity owns this rule.
+- **Premises**: Specific address, property, or location (e.g., "123 Main St, office room 2").
+- **Expense/Vendor/Category**: Matched items (e.g., "Rent for 123 Main St," "Electricity supplier MSEDCL," "Internet provider Airtel").
+- **Method/Formula**: Documented allocation basis (e.g., "dedicated-room area ratio," "hours business use per week," "utility metering").
+- **Percentage or Cap**: Business-attributable share (e.g., "60% business, 40% personal") or capped amount.
+- **Evidence**: Reference to supporting allocation workpaper, invoice split schedule, or CA recommendation.
+- **Valid Dates**: Effective from and to dates (e.g., "2026-04-01 to 2027-03-31").
+- **Approver**: Name/entity authorizing the rule (e.g., "Sudhanshu, 2026-08-20").
+- **Version**: Immutable version ID (e.g., "v1", "v2").
+
+**Reuse conditions**:
+- Rule applies only to the same tenant, premises, and expense/vendor/category match.
+- Future matching transactions for the same expense type and premises within valid dates reuse the rule without reapproval.
+- A rule is NOT global or shared between tenants; each tenant maintains its own rule set.
+
+**Material-change triggers** (require reapproval and new version):
+- Move to different premises or change premises characteristics (e.g., office area expands, move to new building).
+- Change in tariff, plan, or rate structure (e.g., supplier rate revision, metering change).
+- Change in business usage pattern (e.g., work-from-home percentage changes, repurposing of space).
+- Change in payee/vendor classification or relationship (e.g., new landlord, vendor merger, related-party status change).
+- Change in tax rule version applicable to the jurisdiction or entity (e.g., new section 28(2) ruling, updated depreciation schedules).
+
+**Tax treatment and CA review**:
+- The approved rule documents the allocation only; it does not automatically determine tax deductibility, depreciation treatment, or GST ITC eligibility.
+- Year-end, the company's CA must review the applied rules and actual allocation methodology to confirm compliance with effective tax law (current law: Income Tax Act 2025 s28(2), s33(3)(b), s34, s62; see details below).
+- Tax treatment outcome (allowed, disallowed, partial) is recorded separately from the rule itself and may differ from the allocation share.
+
+**Sole proprietor vs. private limited company posting**:
+- **Sole proprietor**: Books the business share to the relevant expense account (rent, utilities, telecom) and the personal share to drawings/personal account (not business expense). No separate reimbursement mechanism; the split is in the books.
+- **Private limited company**: Records only the approved business-share amount as company expense or reimbursement. Director/employee reimbursement, perquisite classification, and TDS/payroll implications route through appropriate compliance rule and CA review. Receipt-backed reimbursement is not automatically tax-free; tax treatment depends on effective compliance rules and approvals.
+
+---
+
 ## Home-Office and Mixed-Use Expenses
 
 Evidence packet for home office or mixed-use allocation (e.g., internet, electricity, rent for mixed residence/office):
@@ -127,16 +165,64 @@ Evidence packet for home office or mixed-use allocation (e.g., internet, electri
 - **Entity/premises relationship**: Ownership or lease agreement, residency proof, business registration for the address.
 - **Period and usage**: Months/years, percentage business use, or documented allocation basis.
 - **Invoices and payment proof**: Utility bills, rent invoice, payment receipts (bank or cheque).
-- **Allocation basis and calculation**: Area method (sq. ft. office / sq. ft. total), time method (hours/days business use per period), usage method (e.g., devices), or documented rationale with supporting schedule.
+- **Allocation basis and calculation**: Area method (sq. ft. office / sq. ft. total), time method (hours/days business use per period), usage method (e.g., dedicated devices), or documented rationale with supporting schedule.
 - **Business vs. personal share**: Explicit split (e.g., "60% business, 40% personal").
 - **Agreement/expense claim/approval**: Supporting policy, manager approval, director sign-off, or CA recommendation where relevant to the allocation.
 
-**Product rules:**
+**Product rules**:
 - Never auto-approve home-office deductibility, allocation percentage, or GST ITC based on one evidence item.
 - Require explicit human/CA review for final tax treatment and ITC eligibility.
 - Account separately for each legal entity; do not cross-tenant inference (no "Group office" shared between two separate tenants).
-- Document the allocation basis and reviewer decision as immutable evidence.
+- For recurring home-office expenses, document the allocation basis as an **approved rule** (immutable, versioned, tenant-scoped) so that matching future transactions reuse the same split without repeated reapproval.
+- When evidence is weak (e.g., user explanation without supporting workpaper/measurement), mark the tax treatment as **review_required** for CA judgment before finalization.
 - Applicable income-tax law (current: Act 2025 s34 general-deduction conditions; historical: Act 1961 s37 under savings) plus GST rules (s16/Rule 36 plus home-office applicability under state rules) must be applied per rule version and reviewed by expert.
+
+**Current Income Tax Law: Act 2025 s28(2), s33(3)(b), s34, s62**
+
+**s28(2) — Premises Deduction Fair-Proportionate Limit**:
+- Deductions for premises, building, machinery, plant, or furniture are limited to a fair, proportionate part having regard to the extent to which such premises, building, machinery, plant, or furniture is used for business purposes.
+- **Clarification**: There is **no universal statutory percentage**. The company does not receive a fixed government-set amount. The allocation must be reasoned and evidence-backed per the specific facts (area, usage, time, etc.).
+- **Reference**: [Income Tax Act 2025 s28(2)](https://www.incometaxindia.gov.in/documents/d/guest/income_tax_act_2025_as_amended_by_fa_act_2026-pdf).
+
+**s33(3)(b) — Depreciation Fair-Proportionate Limit**:
+- Similarly, depreciation on mixed-use premises/assets is limited to the proportion relating to business use.
+- **Reference**: [Income Tax Act 2025 s33(3)(b)](https://www.incometaxindia.gov.in/documents/d/guest/income_tax_act_2025_as_amended_by_fa_act_2026-pdf).
+
+**s34 — General Deduction Conditions (Wholly/Exclusively Business Use)**:
+- An expenditure is deductible if it is (i) residual (not specified in ss 28–33, 44–49, 51, 52); (ii) not capital in nature; (iii) not personal in nature; (iv) laid out wholly and exclusively for the purposes of business or profession; and (v) not in a prescribed excluded category.
+- **Clarification**: "Wholly and exclusively" is a legal test on business purpose and character, not a receipt-format requirement. An internal memo or workpaper plus bank statement may suffice if business purpose and personal non-character are evident. Conversely, a formal tax-invoice does not guarantee s34 compliance if the expense is personal, capital, prohibited, or excluded. **Never infer deductibility from one evidence item alone.**
+- **Reference**: [Income Tax Act 2025 s34](https://www.incometaxindia.gov.in/w/section-34-175).
+
+**s62 — Books and Documents Maintenance**:
+- Persons required to maintain books/documents under s62 must keep records enabling income computation. Rule 46 implements this requirement with two tiers: ordinary business (Rule 46(1)) and specified professions (Rule 46(2)–(6)).
+- **Clarification**: This is a record-keeping and books-maintenance requirement, not a pre-posting receipt-blocking requirement. Gross postings proceed; tax treatment assessment and compliance verification are separate.
+- **Reference**: [Income Tax Act 2025 s62](https://www.incometaxindia.gov.in/w/section-62-134), [Income Tax Rules 2026 Rule 46](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf).
+
+**Official sources (effective 2026-04-01 onwards)**:
+- [Income Tax Act 2025 as amended by Finance Act 2026](https://www.incometaxindia.gov.in/documents/d/guest/income_tax_act_2025_as_amended_by_fa_act_2026-pdf)
+- [Income Tax Act 2025 s34 detail page](https://www.incometaxindia.gov.in/w/section-34-175)
+- [Income Tax Act 2025 s62 detail page](https://www.incometaxindia.gov.in/w/section-62-134)
+
+**GST Treatment: CGST Act s16 and s17**
+
+For GST purposes, input-tax credit (ITC) is eligible only for the business-attributable share of the expense, subject to separate document and other Rule 36 conditions. **Do NOT equate approval of expense allocation with automatic ITC eligibility.** ITC determination remains independent:
+
+- **s16 — Input Tax Credit Eligibility**: Registered persons are eligible to claim ITC on qualifying inward supplies used or intended to be used in the course or furtherance of business.
+- **s17 — Conditions for ITC**: ITC is available only if (a) the supply is received for business purposes; (b) the required prescribed document (e.g., supplier tax invoice per s31) is held; (c) tax is actually paid (or reverse-charge liability discharged); and (d) other conditions per effective rules are satisfied.
+- **Home-office/mixed-use scope**: If premises or utilities are partly personal, the ITC portion claimable is limited to the business-attributable share, and that share must still satisfy s17 prescribed-document and other Rule 36 conditions. No percentage allocation approval substitutes for Rule 36 document requirements.
+- **Reference**: [CGST Act s16 and s17 (CBIC official)](https://cbic-gst.gov.in/hindi/CGST-bill-e.html).
+
+**Sole proprietor vs. private limited company**:
+- **Sole proprietor**: Posts the business share to the relevant expense account and the personal share to drawings. No separate reimbursement or payroll/TDS implications. GST ITC (if registered) applies only to the business-attributable share and must satisfy Rule 36 conditions.
+- **Private limited company**: Books the approved business-share amount as company expense. If the company reimburses a director or employee, route the reimbursement through the effective compliance framework (possible perquisite classification, payroll TDS implications, related-party concerns). A reimbursement agreement does not automatically make the amount non-taxable in the hands of the recipient; effective tax treatment requires CA review and possible payroll/TDS posting.
+
+**Things NOT to claim or assume**:
+- **No universal statutory percentage**: There is no fixed government-set percentage (e.g., "always 30% deductible"). Allocation is fact-based and evidence-backed.
+- **No automatic ITC from allocation approval**: Approval of the business/personal allocation does NOT auto-approve GST ITC. ITC remains subject to Rule 36 prescribed documents, tax payment, GSTR-2B match, and other conditions.
+- **No Companies Act s188 blanket application**: Section 188 (related-party transactions) does not automatically apply to all director/employee reimbursements; its applicability is fact-based (related-party status, transaction value, contract existence, shareholder approval).
+- **No 5% GST rule or safe harbor**: There is no universal 5% GST compliance floor or safe-harbor percentage. GST and income-tax compliance are evidence- and rule-based per the specific transaction, tenant, and effective law.
+
+**Missing-receipt rule preserved**: Missing supplier receipts do not block gross expense postings. Post the gross amount and attach a visible evidence exception per existing policy.
 
 ## Companies Act 2013 — Section 128 (Books and Voucher Retention)
 
