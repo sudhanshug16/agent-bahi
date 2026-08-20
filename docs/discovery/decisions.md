@@ -3,7 +3,8 @@
 ## Confirmed
 
 - **Product/repository/package/CLI name**: agent-bahi, selected 2026-08-20
-- **Migration source**: Zoho Books is the current migration source, confirmed by Sudhanshu on 2026-08-20
+- **Migration source**: Zoho Books is the eventual migration source, confirmed by Sudhanshu on 2026-08-20
+- **Zoho import phase**: Intentionally deferred to the final phase and must not drive the canonical accounting model; Zoho remains the validated migration source
 
 ## Working defaults
 
