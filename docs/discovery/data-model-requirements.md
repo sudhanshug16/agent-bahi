@@ -142,26 +142,42 @@ Payroll is a first-class, tenant-scoped domain. The model must include:
 - employee tax and contribution deductions;
 - employer contributions;
 - payable, remittance, and filing references;
-- bank payment batch;
-- leave and loss-of-pay (LOP) input; and
+- deterministic bank export artifact with preset/version provenance;
+- approved summarized payroll inputs, including payable days, loss-of-pay
+  (LOP) days, and approved overtime amounts or hours; and
 - full-and-final settlement.
+
+The payroll model must not include attendance, leave-balance, shift, HRMS, or
+attendance-import entities. A summarized input may arrive manually or through
+external CSV/API evidence, but it remains an approved payroll input and does
+not make agent-bahi the system of record for attendance or leave. There is no
+employee self-service portal; employee outputs are generated for secure
+delivery outside agent-bahi, and claims/evidence enter through operator/agent
+workflows.
+
+The export artifact must keep export, upload, bank acceptance, debit, and
+reconciliation as distinct states or evidence outcomes. Only export is in
+product scope at this stage; an export must not clear the net-pay payable or be
+treated as proof of payment.
 
 Payroll inputs, rules, rates, thresholds, contribution ceilings, filing forms,
 and calculations must be effective-dated and jurisdiction-scoped. A posted
 pay run freezes the input snapshot and rule/rate versions used. Its journal
 must be balanced, reproducible from those frozen inputs and versions, and
 linked to every payroll line, payable, remittance, filing reference, and bank
-payment batch it produces. Corrections follow the same explicit reversal plus
+export artifact it produces. Corrections follow the same explicit reversal plus
 new corrected version lineage as other posted documents.
 
 The standard posting shape is explicit and reproducible: gross compensation
 debits the configured payroll expense accounts; employee tax, contribution,
 and other deductions credit their corresponding statutory or employee
 payables; net pay credits the employee payroll payable; employer contributions
-debit employer-cost accounts and credit statutory payables; remittance debits
-the applicable payable and credits bank; and a bank payment batch clears the
-net-pay payable through the selected bank account. Any jurisdiction-specific
-component must use the same effective-dated rule and frozen-input links.
+debit employer-cost accounts and credit statutory payables. A remittance or
+actual salary payment is recorded only from its explicit, validated external
+evidence; the bank export itself never debits bank, clears the net-pay payable,
+or proves payment. Bank statement matching/reconciliation records actual salary
+payment before an explicit clearing entry. Any jurisdiction-specific component
+must use the same effective-dated rule and frozen-input links.
 
 ## Optional Reporting Tags/Dimensions
 
@@ -185,10 +201,10 @@ Reporting tags are optional, tenant-scoped metadata that can be attached to tran
 
 2. **Tenant-Scoped**: Tag definitions and values are specific to each tenant. One tenant's "Project" tags are isolated from another tenant's "Project" tags.
 
-3. **Attachment Points**: Tags can be attached at:
-   - Transaction level (applying to the entire document)
-   - Document line level (applying to individual line items)
-   - Both levels (tag hierarchies or filtering at multiple levels)
+3. **Attachment Points**: Tags can be attached at transaction level or
+   document-line level for reporting. A transaction-level tag does not replace
+   the required line-level representation when a source amount is allocated
+   across tags.
 
 4. **Reporting Applications**: Tags enable:
    - Filtering revenue by location, project, or department
@@ -208,11 +224,14 @@ Tags **do not** affect:
 
 Tags are purely reporting metadata and remain orthogonal to the engine's accounting and compliance functions.
 
-### Undecided Aspects
+### Allocation invariant
 
-The following aspects are explicitly **not settled** and remain for future design:
+When a source amount is allocated across reporting tags, represent it as
+explicit split document lines. For example, ₹60,000 Project A and ₹40,000
+Project B are two lines whose totals reconcile to the original ₹100,000 amount.
+Each split line has one unambiguous tag assignment. Do not add a percentage
+allocation object or multiple additive tags to one line. The split must
+reconcile before posting or export.
 
-- **Multi-Tag Allocation**: How (or if) to allocate a single transaction across multiple tags simultaneously (e.g., splitting an expense across projects).
-- **Mandatory Tag Policies**: Whether (or when) tenants can enforce that certain documents or lines must have a tag attached.
-
-These will be addressed when reporting and allocation workflows are defined.
+Whether tenants may require tags on other documents or lines remains a separate
+mandatory-tag policy decision.

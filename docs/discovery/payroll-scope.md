@@ -34,6 +34,22 @@ surfaces:
 These pages are evidence for the parity baseline only. They do not prove
 agent-bahi has implemented or behaviorally matched each feature.
 
+## PRODUCT BOUNDARY
+
+The observed Zoho capabilities above must not be copied into the agent-bahi
+product boundary. agent-bahi does not include attendance tracking, leave
+management, shifts, an HRMS, or an attendance-import domain. Payroll may accept
+approved summarized inputs needed for computation, including payable days,
+loss-of-pay (LOP) days, and approved overtime amounts or hours, through manual
+input or external CSV/API evidence. These inputs are payroll evidence only;
+they must not create attendance entities or leave balances, and agent-bahi is
+not their system of record.
+
+There is no employee self-service portal. Payslips and requested employee
+outputs may be generated for secure delivery outside agent-bahi. Expense
+claims and payroll evidence enter through operator/agent workflows, not an
+employee login.
+
 ## PRODUCT DECISIONS
 
 ### Parity modules
@@ -45,19 +61,21 @@ The target includes the complete India payroll workflow:
 - salary structures, components, allowances, deductions, perquisites, loans,
   advances, formulas, effective-dated versions, and salary revisions;
 - pay schedules and payroll periods;
-- attendance, leave, overtime, holidays, and loss-of-pay (LOP) inputs;
+- approved summarized payroll inputs, including payable days, loss-of-pay (LOP)
+  days, and approved overtime amounts or hours;
 - regular, bonus, arrears, correction, and off-cycle pay runs;
 - employee reimbursements and perquisites;
 - draft, validation, approval, posting, locking, and controlled correction;
-- payslips, wage registers, attendance/overtime/deduction registers, reports,
-  and employee self-service outputs;
-- bank advice and payment-file export;
+- payslips, wage/overtime/deduction reports, and requested employee outputs for
+  secure delivery outside agent-bahi;
+- deterministic bank-import CSV export using versioned bank presets;
 - payroll TDS, declarations, investment proofs, a certificate selected as
   Form 16 or Form 130 by governing period and rule version, and quarterly TDS
   statements;
 - PF, ESI, professional tax (PT), and labour welfare fund (LWF) modules; and
-- full-and-final settlement, including final payables, deductions, leave
-  settlement, and statutory references.
+- full-and-final settlement based on approved inputs, including final payables,
+  deductions, any approved leave-settlement amount, and statutory references;
+  no leave balance tracking is created.
 
 ### Deterministic engine responsibilities
 
@@ -66,8 +84,8 @@ effective-date selection, journal generation, validation, approval gates,
 posting, locking, and audit history belong in deterministic code. The engine
 must freeze the payroll inputs and rule/rate versions for a pay run, generate a
 balanced journal, and reproduce the same result from that frozen snapshot.
-Every payable, deduction, employer contribution, remittance, filing,
-payslip, and bank batch must link back to the pay run and its audit history.
+Every payable, deduction, employer contribution, remittance, filing, payslip,
+and bank export artifact must link back to the pay run and its audit history.
 
 Skills and integrations may gather or normalize evidence, interpret supplied
 documents, resolve ambiguity with the user, and propose actions. They cannot
@@ -124,13 +142,43 @@ state-specific: there is no pan-India rate, frequency, due date, or form. The
 is the source boundary for ESI research; the matrix lists missing tenant
 inputs that must block a deterministic run.
 
-Payslip, wage, attendance, overtime, and deduction-register support is in
-scope. The current [Labour Ministry Compliance Handbook](https://www.labour.gov.in/static/uploads/2026/02/83978455025732b99b0165def80ab171.pdf)
-is employer guidance: it says attendance/muster, wage, overtime, and
-fines/deductions registers must be maintained, wage slips issued on or before
-wage payment, and records preserved five years. The handbook says the
-governing code/rules prevail, so a longer or different obligation may apply.
-Five years is not an instruction to delete older records.
+Payslip, wage, overtime, and deduction-report support is in scope. The current
+[Labour Ministry Compliance Handbook](https://www.labour.gov.in/static/uploads/2026/02/83978455025732b99b0165def80ab171.pdf)
+also describes employer attendance/muster records, but that observed
+requirement does not create an agent-bahi attendance domain: agent-bahi accepts
+approved summarized payroll inputs only. Wage slips are issued on or before
+wage payment, and records are preserved five years under the handbook guidance.
+The handbook says the governing code/rules prevail, so a longer or different
+obligation may apply. Five years is not an instruction to delete older records.
+
+### Salary disbursement export boundary
+
+Salary disbursement is export-only at this stage. The product generates a
+deterministic bank-import CSV; it does not initiate a transfer, auto-pay, or
+bank upload. A generated file is not proof of payment. Export, upload, bank
+acceptance, debit, and reconciliation are distinct states, and only export is
+in scope. Bank statement matching/reconciliation records the actual payment.
+
+Each bank preset must be versioned and document, without inventing a specific
+bank format yet:
+
+- preset and version identifier;
+- source-field to output-field mapping;
+- date and amount formatting rules;
+- encoding, delimiter, and header rules;
+- input and output validation rules;
+- deterministic regeneration from the frozen pay run and preset version; and
+- export provenance linking the artifact to the pay run, preset version,
+  actor, timestamp, and validation result.
+
+### Filing submission boundary
+
+Preparation, export, upload, bank acceptance, debit, filing submission,
+acknowledgement, correction, and reconciliation are not interchangeable
+outcomes. Government submission is decided separately for each filing type.
+Until that filing-specific decision is accepted, agent-bahi may prepare and
+validate an output or submission package but must not imply automatic
+submission.
 
 ## OPEN RESEARCH
 

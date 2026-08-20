@@ -12,7 +12,7 @@ The current focus is the native core and its first automation baseline: building
 - Document types (Invoice, Bill, Payment, Journal Entry, etc.)
 - Ledger posting mechanics and invariant constraints
 - Explicit CLI commands with deterministic validation and engine-owned permission/gate checks
-- Optional tenant-defined reporting dimensions (tags) attached at transaction or line level; tags are orthogonal to accounting and do not affect posting, balance, tax, or compliance
+- Optional tenant-defined reporting dimensions (tags) attached at transaction or line level; allocations use explicit split document lines with one tag per split line and totals that reconcile to the source amount; tags are orthogonal to accounting and do not affect posting, balance, tax, or compliance
 
 **Exit Conditions**:
 - Core tables defined with primary/foreign key relationships
@@ -72,16 +72,17 @@ The current focus is the native core and its first automation baseline: building
 
 **Scope**:
 - Employee statutory profiles, salary structures/components/formulas, and effective-dated rules
-- Pay schedules, payroll periods, attendance, leave, overtime, and LOP inputs
+- Pay schedules, payroll periods, and approved summarized payroll inputs such as payable days, LOP days, and overtime amounts/hours; no attendance, leave, shift, HRMS, or attendance-import domain
 - Regular, bonus, arrears, correction, and off-cycle runs with draft, approval, posting, and locking
-- Reimbursements, perquisites, loans, advances, payslips, wage/attendance/overtime/deduction registers, and reports
+- Reimbursements, perquisites, loans, advances, payslips, wage/overtime/deduction reports, and requested employee outputs for secure external delivery; no employee self-service portal
 - Payroll TDS, declarations/proofs, Form 16, quarterly TDS statements, PF, ESI, PT, LWF, and statutory filing/remittance references
-- Bank advice/export and payment batches
+- Deterministic bank-import CSV export using versioned bank presets; no bank transfer initiation or auto-pay
 - Full-and-final settlement and auditable reversal/correction lineage
 
 **Exit Conditions**:
 - Pay runs are balanced and reproducible from frozen inputs and effective-dated jurisdiction rules
-- Every payroll output, payable, remittance, filing, and bank payment has an auditable source link
+- Every payroll output, payable, remittance, filing, and bank export artifact has an auditable source link
+- Bank export, upload, bank acceptance, debit, and reconciliation are distinct states; only export is in scope, and a generated file is not proof of payment
 - Unresolved statutory ambiguity blocks or routes to explicit review; no skill invents amounts or silently posts
 
 ## Phase 6: Bank Reconciliation, Close, and Financial Reporting
@@ -89,7 +90,7 @@ The current focus is the native core and its first automation baseline: building
 **Goal**: Enable month/quarter/year-end close and basic financial statements.
 
 **Scope**:
-- Bank statement import and reconciliation
+- Bank statement import and reconciliation, including evidence of actual salary payment after export
 - Period close procedures and freeze
 - Trial balance, P&L, and balance sheet generation
 - Variance analysis and close checklists
@@ -107,13 +108,13 @@ The current focus is the native core and its first automation baseline: building
 - Effective-dated calculations for tax, withholding, and filing compliance
 - GST/TDS/TCS computation and reconciliation
 - Compliance calendars and filing deadlines
-- Statutory export formats (GST, CMA, income tax, etc.)
-- Review gates for compliance before submission
+- Filing-specific statutory output formats (GST, CMA, income tax, etc.)
+- Filing-specific review and submission decisions; no global government-submission policy
 
 **Exit Conditions**:
 - Statutory reports match compliance software output
 - Effective-dated rules handle retroactive adjustments
-- All required filings can be generated and validated
+- Filing outputs can be generated and validated; submission is not implied until its filing-specific decision is accepted
 
 ## Phase 8: Database Adapters and Tenant Isolation
 
