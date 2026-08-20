@@ -28,7 +28,7 @@ Before Phase 1 implementation begins:
 1. Sudhanshu reviews [Provisional Architecture Decisions](architecture-decisions.md) and confirms, adjusts, or overrides each RECOMMENDED entry.
 2. [docs/architecture.md](../architecture.md) is written and passes contradiction review (no statements in conflict with discovery docs or each other).
 3. Required proof spikes validate all provisional technology stack choices (STK-001 through STK-006):
-   - **Bun runtime and workspaces** (STK-001): Pin exact Bun version; verify bun:install, workspaces, and lockfile on target platforms (macOS arm64, Linux x64/arm64).
+   - **Bun runtime and workspaces** (STK-001): Pin exact Bun version; verify `bun install`, workspaces, and lockfile on target platforms (macOS arm64, Linux x64/arm64).
    - **Multi-dialect ORM spike** (STK-002): Test Drizzle (primary) and Kysely (fallback) on bun-sqlite, Bun SQL PostgreSQL, and MySQL; verify schema definition, query generation, and type inference on all three dialects.
    - **SQLite configuration** (STK-003): Verify foreign_keys=ON, WAL mode, SQLITE_BUSY handling, and transaction isolation on target filesystem.
    - **Migration and test execution** (STK-004): Run fresh-install migrations on all three dialects; test every supported upgrade path; verify schema consistency across dialects.

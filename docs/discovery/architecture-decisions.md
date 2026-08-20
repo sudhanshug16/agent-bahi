@@ -347,7 +347,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 - **Recommendation**: Configured API adapter for e-way bill with manual fallback. When effective-dated applicable rules determine that an e-way bill is required, block movement/dispatch until valid EWB evidence is recorded. Thresholds, exemptions, state-specific rules, and which movements/modes require EWB remain **OPEN RESEARCH**.
 - **Alternative**: No e-way bill support; manual generation.
-- **Rationale**: EWB is mandatory for inter-state movement. API is the preferred path if implemented. State rules vary and must be researched per state.
+- **Rationale**: API is the preferred path if implemented. Applicability, thresholds, exemptions, and state-specific rules are determined by effective-dated compliance rules and remain unresolved; research is required per state and applicability scenario.
 - **Silent failure prevented**: Movement/dispatch blocked forever because state rule is unknown, EWB issued for exempt movement.
 - **Reversal trigger**: Once state rules are researched and keyed (e.g., by origin state, destination state, value), implement as a compliance rule package with effective dates.
 
