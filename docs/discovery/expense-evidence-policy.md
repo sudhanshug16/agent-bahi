@@ -56,7 +56,7 @@ Every transaction maintains separate, independent state for:
 
 ### 4. GST ITC Eligibility (CGST Act s16(2) + Rule 36)
 - **Not-Applicable**: Transaction has no ITC lane under resolved rule pack (e.g., exempt supply input, salary, advance, personal use, domestic passenger air travel under blocking rule).
-- **Reverse-Charge Candidate**: Reverse-charge inward supply (taxpayer liable for tax under applicable rule); remains an independent ITC lane requiring supplier s31 invoice, tax payment, receipt/use, and effective-dated RCM conditions. Not not_applicable.
+- **Reverse-Charge Candidate**: Reverse-charge inward supply (taxpayer liable for tax under applicable rule); remains an independent ITC lane requiring the applicable prescribed document per effective rule (supplier s31 invoice where applicable, OR recipient-issued s31(3)(f) invoice subject to tax payment where applicable), plus receipt/use, tax payment, and other effective-dated RCM conditions. Not not_applicable.
 - **Import Candidate**: IGST import (taxpayer liable on importation); remains an independent ITC lane requiring bill of entry or Customs assessment document, tax payment, receipt/use, and effective-dated import conditions. Not not_applicable.
 - **Pending-Prescribed-Document**: A Rule 36(1) prescribed document is required but not yet attached; no ITC claim yet.
 - **Pending-Other-Conditions-or-Match**: Prescribed document present but condition check incomplete (tax payment date, GSTR-2B match, time limit, reverse-charge determination, receipt/use verification).
@@ -103,7 +103,7 @@ Rule 36(1) identifies the documentary basis for ITC eligibility. The main prescr
 **Conditions (effective-dated per rule version)**:
 - Prescribed document must be in compliance with statutory particulars and validation rules as effective on the supply date and claimed date.
 - Receipt/invoice date, time of payment (for tax payment conditions), place of supply, and reverse-charge applicability must be verified per effective rules.
-- Reverse-charge inward supply or import transaction: not_applicable classification is **incorrect**. These transactions remain **candidates** requiring their prescribed documents (e.g., supplier s31 invoice for RCM supply, bill of entry for import), payment of tax, receipt/use within effective timelines, and other applicability-specific conditions. RCM and import supplies retain independent ITC lanes.
+- Reverse-charge inward supply or import transaction: not_applicable classification is **incorrect**. These transactions remain **candidates** requiring their applicable prescribed documents per effective rule (supplier s31 invoice or recipient-issued s31(3)(f) invoice subject to tax payment for RCM supply; bill of entry for import), payment of tax, receipt/use within effective timelines, and other applicability-specific conditions. RCM and import supplies retain independent ITC lanes.
 - GSTR-2B auto-population or explicit supplier communication may provide evidence of the supply being reported; it never replaces the prescribed document requirement.
 - Time bar, amendments, and procedural conditions affect eligibility.
 
@@ -140,19 +140,19 @@ Evidence packet for home office or mixed-use allocation (e.g., internet, electri
 
 ## Companies Act 2013 — Section 128 (Books and Voucher Retention)
 
-**Statutory fact**: Section 128 of the Companies Act, 2013 requires a company to maintain books of account and **all relevant vouchers** for at least **eight financial years immediately preceding a financial year**, together with longer retention if Central Government directs investigation or prosecution. See [official MCA Companies Act PDF](https://www.mca.gov.in/Ministry/pdf/CompaniesAct2013.pdf) for exact statutory language and exceptions.
+**Statutory fact**: Section 128 of the Companies Act, 2013 requires every company to keep books of account as required by law and maintain those books and **all relevant vouchers** together in good order for **not less than eight financial years immediately preceding a financial year**. Where a company exists for less than eight years, retention extends to all preceding years. The Central Government may direct longer retention periods where investigation is ordered under applicable law. See [official MCA Companies Act PDF](https://www.mca.gov.in/Ministry/pdf/CompaniesAct2013.pdf) for exact statutory language and exceptions.
 
 **Statutory clarification (what this does NOT mean)**:
 - Section 128 is **not** a documented pre-posting requirement for receipt attachment. It is a post-posting retention and proof requirement.
 - A company may post the gross expense/asset to the ledger even if the voucher is not attached at posting time. Subsequent retention of vouchers within the statutory window is the obligation.
 - "Vouchers relevant to entries" is determined by auditor/investigator/reviewer judgment and context, not by a checklist of approved document types. No single voucher format is mandated.
-- Electronic evidence (scanned invoice, email proof, bank statement, digital receipt) may constitute a "relevant voucher" if it is authentic, verifiable, accessible, complete, and retained with appropriate backup/integrity measures. Legal sufficiency of electronic evidence depends on applicable information technology laws (IT Act, Digital Signature Act, e-commerce rules) and auditor judgment, not merely on cryptographic hashing.
+- Electronic evidence (scanned invoice, email proof, bank statement, digital receipt) may constitute a "relevant voucher" if it is authentic, verifiable, accessible, complete, and retained with appropriate backup/integrity measures. Legal sufficiency of electronic evidence depends on applicable information technology laws (Information Technology Act, 2000, e-commerce rules) and auditor judgment, not merely on cryptographic hashing.
 - Missing evidence at posting time does not invalidate the ledger entry. The entry remains posted; future audit/investigation examines whether the retained voucher (if produced later) satisfies statutory sufficiency.
 
 **Product policy**:
-- Retain each financial year's books and evidence until it falls outside the statutory rolling retention window (8 FYs plus current FY = typically 9 years).
-- Extend retention beyond the statutory window while investigation, assessment, legal hold, or litigation applies.
-- Retention timeline is governed by effective statute and investigation direction, not by transaction date or voucher creation date alone.
+- Compute the statutory retention window from the effective-dated Companies Act section 128 language: books and vouchers retained for not less than 8 FYs immediately preceding a FY (or longer if the company existed less than 8 years).
+- Extend retention beyond the statutory minimum window while investigation direction, assessment, legal hold, or litigation applies.
+- Retention timeline is governed by effective statute, investigation direction, and legal hold, not by heuristic formulas. Do not publish derived heuristics (e.g., "8 + 1 years typically") as law.
 
 **Applies to**: Indian private and public limited companies as per the Companies Act 2013.
 
@@ -162,42 +162,49 @@ Evidence packet for home office or mixed-use allocation (e.g., internet, electri
 
 ### Current Law: Income Tax Act 2025 s34 (General Deduction Conditions)
 
-**Verified fact (effective tax years from 2026-04-01)**: Income Tax Act 2025 s34 identifies general conditions for allowable deductions. An expense is deductible if it is not covered by specific charging sections, not capital in nature, not personal, and not in a prescribed prohibited category. The business-purpose test does not prescribe one universal receipt format or document type.
+**Verified fact (effective tax years from 2026-04-01)**: Income Tax Act 2025 s34 identifies general conditions for allowable deductions. An expenditure is deductible if it is (i) residual to the expenditure categories listed by s34 itself, (ii) not capital in nature, (iii) not personal in nature, (iv) laid out wholly and exclusively for the purposes of business or profession, and (v) not a prescribed excluded category. Excluded categories include unlawful or prohibited expenditure, corporate social responsibility (CSR) expenses as described in the Act, political-party souvenir or brochure advertising, and other expenditure expressly disallowed by effective text. The business-purpose and wholly-exclusively test does not prescribe one universal receipt format or document type.
 
 **Clarification**:
-- S34 is a **legal test on character and category**, not an evidence-format requirement.
-- An expense may satisfy s34 with a simple internal memo, bank statement, or internal voucher if accompanied by business context and purpose evidence. Conversely, a formal printed invoice does not guarantee s34 compliance if the expense is personal, capital, or prohibited.
-- S34 assessment is **manual judgment**: amount, type, business context, and decision-maker (tax officer, CA, appellate authority) judgment required. No single evidence item automatically proves or disproves s34 compliance.
-- Do not infer deductibility merely from one evidence item. Combine amount, type, context, and expert judgment.
+- S34 is a **legal test on character, category, and business purpose**, not an evidence-format requirement.
+- An expense may satisfy s34 with a simple internal memo, bank statement, or internal voucher if accompanied by business context and purpose evidence. Conversely, a formal printed invoice does not guarantee s34 compliance if the expense is personal, capital, prohibited, or excluded.
+- S34 assessment is **manual judgment**: amount, type, business context, applicable exclusions, and decision-maker (tax officer, CA, appellate authority) judgment required. No single evidence item automatically proves or disproves s34 compliance.
+- Do not infer deductibility merely from one evidence item or evidence format. Combine amount, type, context, exclusion analysis, and expert judgment.
 
-**Historical reference (tax years prior to 2026-04-01)**: Income Tax Act 1961 s37 applies to tax years/proceedings governed by the savings transition under [Income Tax Act 2025 s536](https://www.incometaxindia.gov.in/w/section-536-1).
+**Historical reference (tax years prior to 2026-04-01)**: Income Tax Act 1961 s37 applies to tax years and proceedings governed by the savings transition under [Income Tax Act 2025 s536](https://www.incometaxindia.gov.in/w/section-536-1), which preserves the repealed Act as applicable to pending proceedings and proceedings initiated on or after 2026-04-01 concerning tax years beginning before that date, plus other statutory savings. Rule applicability keys on tax year and proceeding type.
 
 **Official reference (current)**: [Income Tax Act 2025 s34](https://wmstatic-prd.incometaxindia.gov.in/web/guest/w/section-34-175), [Income Tax Rules 2026 (effective 2026-04-01)](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf).
 
 ### Books and Documents Requirement: Income Tax Act 2025 s62 and Rules 2026 Rule 46
 
-**Verified fact**: Income Tax Act 2025 s62 requires maintenance of books and documents. Income Tax Rules 2026 Rule 46 specifies books/documents requirements for specified professions (e.g., advocates, chartered accountants, medical practitioners) and certain small-value transaction thresholds.
+**Verified fact**: Income Tax Act 2025 s62 requires maintenance of books and documents. Income Tax Rules 2026 Rule 46 implements this requirement across two regulatory tiers:
+
+- **Rule 46(1)**: Applies to persons required to maintain books/documents under s62(1)(b), including ordinary business and non-specified professions, through books and documents enabling income computation.
+- **Rule 46(2)-(6)**: Adds prescribed-document requirements and small-value transaction thresholds for specified professions (e.g., advocates, chartered accountants, medical practitioners).
 
 **Clarification**:
-- Rule 46 is a **specified-profession and specified-activity books/documents rule**, not a universal business rule or cash-payment disallowance.
-- Rule 46 prescribes documentation and books-maintenance conditions for eligible professions and specific activities; these thresholds must **NOT be generalized** to ordinary business or company expenses.
-- The books/documents rule affects deductibility determination and taxpayer compliance, not accounting posting validity. An expense failing Rule 46 (if applicable to the transaction) is subject to tax disallowance but remains posted in the books.
-- Gross expense posting proceeds; tax treatment (deductibility under Rule 46 if applicable) is separately reviewed.
-- Do **NOT** hard-code Rule 46 thresholds or profession scope. Expert/CA review per transaction date and applicable profession/activity is required.
+- Rule 46(1) is **universal** for businesses maintaining books; Rule 46(2)-(6) **specified-profession additions** add stricter small-value voucher/document thresholds only for those professions.
+- Small-value document thresholds from the specified-profession part (Rule 46(2)-(6)) must **NOT be generalized** to ordinary business or all company expenses.
+- Maintenance failure (missing books, incomplete records) is an evidence/compliance exception and input to tax review, not automatic gross-posting failure or automatic expense disallowance.
+- Gross expense posting proceeds; tax treatment (compliance determination, potential disallowance under Rule 46 if applicable to the transaction) is separately reviewed.
+- Do **NOT** hard-code Rule 46 thresholds or profession scope. Expert/CA review per transaction date and applicable person/profession/activity is required.
 
 **Official reference**: [Income Tax Act 2025 s62](https://www.incometaxindia.gov.in/w/section-62-134), [Income Tax Rules 2026 Rule 46](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf).
 
-### Cash-Payment Disallowance (Separate Effective-Dated Rule Family)
+### Cash-Payment Mode Deductibility (Separate Effective-Dated Rule Family)
 
-**Verified fact**: Cash-payment disallowance rules exist under Income Tax law as effective-dated provisions for specified professions and transactions. These are separate from books/documents requirements and evidence-format expectations.
+**Verified fact**: Cash-payment mode deductibility rules exist under Income Tax law as effective-dated provisions applicable across professions and business types. These are separate from books/documents requirements and evidence-format expectations.
+
+**Current law (tax years from 2026-04-01)**: Income Tax Act 2025 s36(4)-(7) establishes cash-payment deductibility conditions. Income Tax Rules 2026 Rule 26 specifies documentation and exceptions. Scope, thresholds, exceptions, and applicability vary by transaction type and entity class and must be reviewed per effective rule for each transaction.
+
+**Legacy (tax years prior to 2026-04-01)**: Income Tax Act 1961 s40A(3) and Rule 6DD apply only through savings provisions under Act 2025 s536 for earlier tax years and related proceedings.
 
 **Clarification**:
-- Cash-payment disallowance rules are a **distinct effective-dated rule family** separate from general deduction conditions, books/documents requirements, and evidence retention.
-- Do **NOT** state a universal cash threshold in this evidence policy. Cash-payment disallowance scopes, thresholds, profession applicability, and effective dates are complex and must be reviewed by expert/CA.
-- Failing a cash-payment disallowance rule (e.g., cash payment above threshold in a covered transaction) disallows the tax deduction but does not invalidate the bookkeeping posting. The gross expense posts; tax treatment is separately determined.
-- Gross posting and cash-payment disallowance assessment are independent lanes.
+- Cash-payment mode deductibility is a **distinct effective-dated rule family** separate from general deduction conditions (s34), books/documents requirements (s62/Rule 46), and evidence retention.
+- Do **NOT** state or generalize a universal cash threshold in this evidence policy. Cash-payment deductibility scopes, thresholds, entity-type applicability, transaction-type applicability, exceptions, and effective dates are complex and must be reviewed by expert/CA for each transaction.
+- Failing a cash-payment deductibility rule disallows the tax deduction but does not invalidate the bookkeeping posting. The gross expense posts; tax treatment (deductibility) is separately determined.
+- Gross posting and cash-payment mode assessment are independent lanes.
 
-**Official reference**: Effective-dated rules under Income Tax law (Act 2025 and Rules 2026 or prior savings provisions). Expert/CA review required for current applicability.
+**Official reference**: [Income Tax Act 2025 s36](https://www.incometaxindia.gov.in/documents/d/guest/income_tax_act_2025_as_amended_by_fa_act_2026-pdf), [Income Tax Rules 2026 Rule 26](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf), [Act 2025 s536 (savings)](https://www.incometaxindia.gov.in/w/section-536-1). Expert/CA review required for current applicability to transaction date and entity type.
 
 ## Zoho Books Official Documentation Review
 
