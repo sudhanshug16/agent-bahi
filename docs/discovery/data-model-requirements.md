@@ -21,6 +21,47 @@ reversal, replacement, reason, actor, timestamp, and resulting postings are
 immutably linked in a correction/reversal lineage. Reports and audit views must
 be able to follow the full lineage without losing the original posted state.
 
+## GST Registration, Return, and Portal Evidence
+
+The [GST Compliance Matrix — Verified Research Baseline](gst-compliance-matrix.md)
+defines the current GST discovery boundary for regular Indian GST taxpayers.
+The model must represent a legal-entity tenant with one or more GSTIN
+registrations without creating cross-tenant relationships. GST amounts,
+obligations, evidence, decisions, and portal observations are scoped to the
+tenant and selected GSTIN.
+
+Minimum GST requirements are:
+
+- effective-dated GST registration profiles with GSTIN, state, registration
+  type, status, scheme, filing frequency, and effective dates;
+- PAN-level AATO facts with source period, source rule, effective dates, and a
+  GSTIN-level applicability decision for thresholds and exemptions;
+- effective-dated e-invoice and e-way-bill applicability, exemptions, state
+  rules, and movement facts;
+- tax documents and evidence with document identity, dates, content hashes,
+  validation outcome, retention reference, and original-document lineage;
+- return obligations with period, cadence, due-date rule/version, source,
+  predecessor links, and any filing/extension evidence;
+- immutable preparation and filing snapshots, with local product states kept
+  distinct from portal-observed states;
+- reconciliation-line provenance across books, ledger, GSTR-1, GSTR-2B,
+  annual-return inputs, and portal observations;
+- explicit ITC states and transitions, including eligible, pending evidence,
+  pending match, ineligible, claimed, reversed, and re-eligible, each linked to
+  the applicable document, rule, and evidence;
+- amendments linked to original documents or return lines with period, reason,
+  and correction lineage;
+- portal artifacts preserving artifact type, hash, GSTIN/period, upload and
+  processing timestamps, signer method, filing timestamp, ARN, response/error
+  details, and provenance for every portal observation; and
+- an audit trail for preparation, validation, upload observation, portal
+  processing, summary review, filing observation, ARN recording, amendments,
+  exceptions, and decisions.
+
+Amounts and decisions must remain tenant/GSTIN scoped. These are abstraction-
+level requirements only; the GST matrix does not authorize a schema, migration,
+CLI behavior, or submission transport.
+
 ## Multi-Currency and Settlement
 
 Every tenant has one base currency. Documents in the base currency need no
@@ -69,13 +110,13 @@ Bank reconciliation is a bounded workflow across skills, CLI, and engine:
    matches. Proposal generation may be non-deterministic.
 3. The CLI validates the tenant, bank account, currencies, amounts, eligible
    status and state transition, and idempotency key before persistence.
-4. The accepted match and its provenance are persisted together. The engine
+4. The validated match and its provenance are persisted together. The engine
    applies only the explicit, validated match; it does not make a hidden AI
    decision.
 
 Provenance must identify the evidence, proposal, skill version, actor or
 scheduler, validation outcome, and idempotency key well enough to reproduce why
-the match was accepted.
+the match was validated.
 
 ## Period Locking
 

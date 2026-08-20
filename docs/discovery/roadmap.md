@@ -2,6 +2,25 @@
 
 The current focus is the native core and its first automation baseline: building agent-bahi as a self-contained accounting system without external dependencies or importers in the active phase. Every tenant remains independent; no cross-tenant relationship feature is planned.
 
+## Cross-cutting discovery milestone: verified GST baseline (2026-08-20)
+
+The [GST Compliance Matrix — Verified Research Baseline](gst-compliance-matrix.md)
+records the researched regular-taxpayer GST baseline, the GSTR-1-specific
+output boundary, effective-dated model requirements, silent failure gates, and
+open research. This documentation milestone does not approve implementation or
+submission transport.
+
+Explicit follow-ups before GST implementation decisions:
+
+- research the composition taxpayer path (CMP-08, GSTR-4, and related rules);
+- confirm whether a stable official GSTR-3B artifact comparable to GSTR-1
+  exists;
+- confirm the FY 2025-26 GSTR-9 exemption notification;
+- decide e-invoice transport (direct IRP API versus export/upload/import-
+  response); and
+- decide e-way-bill transport and research effective-dated state rules and
+  exceptions.
+
 ## Phase 1: Canonical Data Model and CLI Safety Foundation
 
 **Goal**: Establish the authoritative schema, rules, and explicit safe command surface that all phases depend on.
@@ -110,11 +129,13 @@ The current focus is the native core and its first automation baseline: building
 - Compliance calendars and filing deadlines
 - Filing-specific statutory output formats (GST, CMA, income tax, etc.)
 - Filing-specific review and submission decisions; no global government-submission policy
+- GST-specific predecessor gates, portal evidence, and effective-dated rule
+  selection after the research follow-ups above are separately settled
 
 **Exit Conditions**:
 - Statutory reports match compliance software output
 - Effective-dated rules handle retroactive adjustments
-- Filing outputs can be generated and validated; submission is not implied until its filing-specific decision is accepted
+- Filing outputs can be generated and validated; submission is not implied until its filing-specific decision is explicitly settled
 
 ## Phase 8: Database Adapters and Tenant Isolation
 
