@@ -1,5 +1,7 @@
 # Discovery Decisions
 
+**Note**: This document records Sudhanshu's confirmed decisions. For RECOMMENDED architecture choices awaiting review, see [Provisional Architecture Decisions](architecture-decisions.md). RECOMMENDED entries in that docket are working defaults, not yet SETTLED user decisions.
+
 ## Confirmed
 
 - **Product/repository/package/CLI name**: agent-bahi, selected 2026-08-20

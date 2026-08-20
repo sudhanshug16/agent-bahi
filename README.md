@@ -4,4 +4,10 @@ The goal is an open-source, agent-native accounting and India-compliance CLI. Th
 
 Default storage is local SQLite, with future PostgreSQL/MySQL adapters.
 
-Implementation is intentionally not started until discovery decisions are recorded.
+**Implementation is intentionally not started.** No code exists yet. All work is discovery documentation.
+
+## Design Status
+
+- [Discovery Decisions](docs/discovery/decisions.md): Confirmed and working defaults (product name, system boundary, tenant independence, multi-GSTIN, etc.).
+- [Provisional Architecture Decisions](docs/discovery/architecture-decisions.md): RECOMMENDED architecture choices for review by Sudhanshu before implementation. Includes SETTLED constraints, RECOMMENDED core/CLI/compliance decisions, OPEN RESEARCH facts, and DEFERRED modules. No RECOMMENDED entry implies implementation authorization.
+- [Discovery Roadmap](docs/discovery/roadmap.md): Phased implementation plan with cross-cutting research milestones and explicit gates before Phase 1.

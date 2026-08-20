@@ -21,6 +21,19 @@ Explicit follow-ups before GST implementation decisions:
 - decide e-way-bill transport and research effective-dated state rules and
   exceptions.
 
+## Phase 1 Gate: Review and Approval
+
+Before Phase 1 implementation begins:
+
+1. Sudhanshu reviews [Provisional Architecture Decisions](architecture-decisions.md) and confirms, adjusts, or overrides each RECOMMENDED entry.
+2. [docs/architecture.md](architecture.md) is written and passes contradiction review (no statements in conflict with discovery docs or each other).
+3. Required proof spikes validate provisional choices:
+   - Multi-dialect ORM spike: Drizzle and Kysely on SQLite, PostgreSQL, and MySQL with schema migrations passing on all three.
+   - CLI parser spike: Clipanion command registry generating schema bindings and help.
+   - Decimal math spike: Verify decimal.js precision and rounding rules for INR calculations.
+
+**This gate must be passed before any Phase 1 implementation code is written.**
+
 ## Phase 1: Canonical Data Model and CLI Safety Foundation
 
 **Goal**: Establish the authoritative schema, rules, and explicit safe command surface that all phases depend on.
