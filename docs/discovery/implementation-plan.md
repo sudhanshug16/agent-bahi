@@ -8,16 +8,18 @@
 
 ## Tentative Decisions (All NOT OWNER-APPROVED; Gate Phase 1 on Owner Confirmation)
 
-- **T-001**: External statutory submissions fallback (prepare/validate/export + manual portal for filings without approved boundary). See [Tentative Decisions](tentative-decisions.md#entry-t-001).
-- **T-002**: Frappe Books as reference only (no code reuse; license decision deferred). See [Tentative Decisions](tentative-decisions.md#entry-t-002).
-- **T-003**: Fixed-asset depreciation method default (SLM; reversible; not implementation authorization). See [Tentative Decisions](tentative-decisions.md#entry-t-003).
-- **T-004**: ORM selection (Drizzle primary, Kysely fallback; gates proof spike STK-002).
-- **T-005**: CLI parser selection (Clipanion primary; gates proof spike STK-005).
-- **T-006**: Numeric approval thresholds DEFERRED; tests must not assume specific values.
-- **T-007**: Effective-dated rule-pack manifest structure and immutability.
-- **T-008**: Skill allowlist-based loading and version compatibility enforcement.
-- **T-009**: Statutory export and filing transport boundaries per-filing decision (no global auto-submit assumption).
-- **T-010**: Multi-dialect schema conformance strategy (logical-ID matching, not binary equality).
+See [Tentative Decisions](tentative-decisions.md) for full details. All entries below await owner review and confirmation.
+
+- **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#entry-t-001).
+- **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; Apache-2.0 recommended; no code reuse). See [Tentative Decisions](tentative-decisions.md#entry-t-002).
+- **T-003**: Fixed-asset depreciation policy (separate book/tax schedules; SLM method parameterized and reversible; not implementation authorization).
+- **T-004**: FX provider and fallback selection (provisional; gates Phase 5 spike).
+- **T-005**: Regular-GST V1 profile baseline (AATO applicability, effective-dated rules, GSTR-1 output; composition scheme deferred).
+- **T-006**: Batch partial-success numeric proposal (exit code for partially-committed multi-item operations; tests must not assume specific numeric value).
+- **T-007**: Advance-tax estimate input and liability gating (s392 advance-tax computation inputs; application and exceptions).
+- **T-008**: Retroactive depreciation correction policy (immutability and reversal pattern).
+- **T-009**: Form140/141 statutory export research and transport boundary (TDS/TCS forms; T-009 blocks export/filing transport pending research).
+- **T-010**: Post-filing correction and revised-return boundary (amended returns, form corrections after filing).
 
 ---
 
@@ -38,25 +40,25 @@
 
 ## Phase 1: Foundation, Tenant Model, and Migrations
 
-**Duration**: 4–6 weeks. Deliverables: schema (core tables), tenant/GSTIN isolation, command registry, idempotency.
+**Duration**: 4–6 weeks. Deliverables: conceptual aggregates (tenant/GSTIN context, command registry), migration infrastructure, isolation enforcement.
 
 **Prerequisites**: Gate0 proof spikes pass; owner approves architecture.
 
 **Scope**:
 - Tenant and GSTIN context (auto-select, explicit fail on ambiguity).
-- Core aggregates: Account, Document, Posting, Contact, Currency, Evidence, Audit.
-- Document state machine skeleton (Draft → Posted); reversal lineage hooks.
-- Ledger invariants (debit=credit after rounding in base currency; original currency stored separately).
-- Idempotency record schema (request ID deduplication).
+- Conceptual aggregates: Account, Document, Posting, Contact, Currency, Audit (no physical schema authorization; RFC required later).
+- Document state machine skeleton (Draft → Posted); reversal lineage hooks (contracts only).
+- Ledger invariants contract (debit=credit after rounding in base currency; original currency stored separately).
+- Request ID deduplication semantics (no schema; logic-level contract).
 - CLI command registry (domain-owned; not ORM-generated).
-- Schema migrations (separate for SQLite, PostgreSQL, MySQL; logical IDs + checksums).
+- Migration infrastructure testing (separate for SQLite, PostgreSQL, MySQL; logical IDs + checksums; proof-spikes validate mechanics).
 - Production migrations explicit/reviewed; local/dev may auto-initialize; mismatch fails closed.
 
-**Tests**: Unit tests per aggregate; schema migration tests (fresh install + all upgrade paths on all dialects); idempotency replay.
+**Tests**: Tenant isolation logic; GSTIN resolution; command registry validation; migration test framework (mechanics validated in proof spikes).
 
-**Exit Gate**: Schema stable; tenant/GSTIN isolation enforced; command registry working; migrations pass all three dialects. No posting/accounting logic yet (deferred to Phase 3).
+**Exit Gate**: Tenant/GSTIN isolation contract defined; command registry stable; migration strategy proven in proof spikes. Physical schema RFC required for implementation; does not imply approval.
 
-**Non-Goals**: Tax calculations, postings, payroll, bank import, compliance, skills.
+**Non-Goals**: Physical schema tables, tax calculations, postings, payroll, bank import, compliance, skills, Evidence aggregate behavior.
 
 ---
 
@@ -82,48 +84,47 @@
 
 ## Phase 3: Ledger, Documents, Posting Engine
 
-**Duration**: 6–8 weeks. Deliverables: document state machine, deterministic posting pipeline, reversal/correction lineage, high-consequence approval gates.
+**Duration**: 6–8 weeks. Deliverables: document state machine, deterministic posting pipeline, reversal/correction lineage, atomic posting.
 
 **Prerequisites**: Phase 1, Phase 2 complete.
 
 **Scope**:
 - Document state machine (Draft → Validated → Posted → Settled; immutability enforcement).
-- Posting pipeline: validate structure → apply effective-dated rule snapshot → compute derived amounts → generate balanced journal → atomic write (postings + audit + idempotency).
+- Posting pipeline: validate structure → apply effective-dated rule snapshot → compute derived amounts → generate balanced journal → atomic write (postings + audit).
 - Base-currency debit=credit balance enforced after rounding; original-currency amounts and rate snapshots preserved.
 - Reversals and corrections: immutable lineage with audit binding.
-- High-consequence gates (prepare/preview → validate → commit with plan hashing) for period lock, payroll finalization, filing snapshot, reconciliation.
-- Reconciliation proposals: ephemeral non-persistent until explicit human confirmation (plan hash binding required); persist provenance only with confirmed match.
-- Supplier payment posting: Dr unapplied-supplier-payments / Cr Bank/Cash exactly once; allocation leg clears control against AP.
-- External operation outbox: durable state tracking (prepared → submitted → known_success/known_failure/unknown → evidence_recorded → business_finalized).
+- Supplier payment posting mechanics: Dr unapplied-supplier-payments / Cr Bank/Cash exactly once; allocation leg clears control against AP.
 - Authorization hooks (no-op in V1; framework in place).
 
-**Tests**: State transitions; posting balance; reversal lineage; idempotency; gate enforcement (reconciliation blocks without human confirmation); external-operation replay safety.
+**Tests**: State transitions; posting balance; reversal lineage; idempotency; atomic posting; multi-currency FX snapshot.
 
-**Exit Gate**: Document lifecycle complete; posting engine working; reconciliation gated on human confirmation; external operations safe; no tax logic yet.
+**Exit Gate**: Document lifecycle complete; posting engine working; postings immutable and balanced. No approval gates, reconciliation proposals, external operations, payroll, or tax logic yet (deferred).
 
-**Non-Goals**: Tax, payroll, bank import, compliance, skills, asset depreciation.
+**Non-Goals**: High-consequence approval gates, reconciliation proposals, external operation outbox, payroll finalization, filing snapshots, tax, bank import, compliance, skills, asset depreciation.
 
 ---
 
-## Phase 4: Evidence, Bank Reconciliation, Ephemeral Proposals
+## Phase 4: Evidence, Bank Reconciliation, High-Consequence Gates, External Operations
 
-**Duration**: 4–6 weeks. Deliverables: bank statement import, ephemeral match proposals, evidence linking, non-posting reconciliation persistence gates.
+**Duration**: 4–6 weeks. Deliverables: bank statement import, ephemeral proposals (non-persistent until confirmed), evidence linking, high-consequence approval gates (prepare/preview → validate → commit with plan hashing), external operation outbox.
 
 **Prerequisites**: Phase 1–3 complete.
 
 **Scope**:
 - Bank statement import (date, amount, reference, description).
-- Ephemeral match proposals (non-posting candidates; zero side effects).
-- Explicit human confirmation binding (plan hash, source line, target, amount, FX snapshot, versions, tenant, actor, timestamp).
+- Ephemeral match proposals (non-posting, zero side effects; never persisted without explicit human confirmation plan-hash binding).
+- High-consequence approval gates (prepare/preview → validate → commit with plan hashing) for reconciliation.
+- Explicit human confirmation binding (plan hash, source line, target, amount, FX snapshot, versions, tenant, actor, timestamp); no skill/agent auto-approval.
 - Reconciliation persistence: only after confirmed; provenance linked to confirmed match.
-- Evidence content-addressed (checksum verification, immutable storage).
+- Evidence content-addressed (checksum verification, immutable storage, immutability).
+- External operation outbox: durable state tracking (prepared → submitted → known_success/known_failure/unknown → evidence_recorded → business_finalized); immutable observation audit log.
 - Bank reconciliation report (matched, unmatched items, period status).
 
-**Tests**: Proposals non-posting; human confirmation required; reconciled postings linked to statement lines; evidence hashes correct; idempotency.
+**Tests**: Proposals non-posting; human confirmation required; gate blocks skill auto-approval; reconciled postings linked to statement lines; evidence hashes correct; external-operation replay safety; idempotency.
 
-**Exit Gate**: Bank import and reconciliation working; evidence linking complete. Proposals remain ephemeral until confirmed; no skill auto-approval.
+**Exit Gate**: Bank import and reconciliation working; evidence linking complete; high-consequence gates enforced; external operations safe. Proposals remain ephemeral until confirmed.
 
-**Non-Goals**: Bank statement automation/import format standards, FX calculation (deferred to Phase 5).
+**Non-Goals**: Bank statement format/automation standards, FX calculation (deferred to Phase 5).
 
 ---
 
@@ -134,8 +135,10 @@
 **Prerequisites**: Phase 1–4 complete.
 
 **Scope**:
-- Reporting (P&L, balance sheet, aging) with cash/accrual basis parameter.
-- Trial balance (no basis parameter; rejects invalid basis).
+- P&L reporting with optional --basis cash|accrual parameter (default from tenant setting).
+- Balance sheet (ledger/as-of; rejects --basis parameter).
+- Trial balance (ledger aggregate; rejects --basis parameter).
+- AR/AP aging (ledger balances; rejects --basis parameter).
 - Realized FX: at settlement, from allocation posting.
 - Unrealized FX: explicit period-end revaluation, reversal, separate accounts, one-time settlement reclassification.
 - Cash/accrual tests: pro-rata settlement, unapplied-cash carry, refunds/credit notes, tax fail-closed, FX/bank-fee separation, accrual-only depreciation/revaluation.
@@ -143,7 +146,7 @@
 - SLM parameterized; method/rate changes blocked until T-003 owner approval (REVIEW/BLOCK gate).
 - Employee-expense workflows (claims, advances, reimbursements, corporate-card matching).
 
-**Tests**: Report balance sheet identity (assets=liabilities+equity); P&L net flows to equity; FX separation (realized vs. unrealized); asset uniqueness; depreciation immutability; basis parameter enforcement.
+**Tests**: P&L basis parameter honored; BS/TB/aging reject --basis; balance sheet identity (assets=liabilities+equity); P&L net flows to equity; FX separation (realized vs. unrealized); asset uniqueness; depreciation immutability.
 
 **Exit Gate**: Reporting complete; FX separation verified; assets tracked; employee expenses working. No payroll yet.
 
@@ -161,6 +164,8 @@
 - Employee statutory profiles, salary structures, effective-dated formula evaluation.
 - Pay-run draft, approval, posting (balanced entry: Dr payroll expense / Cr payroll payables and deductions).
 - Payables (salary, PF, ESI, PT, LWF, TDS, advances/loans).
+- **Statutory computation gate**: Before any PF/ESI/PT/LWF/TDS computation, posting, payment, certificate, or export require `source_verified=true` + non-stale effective rule snapshot and complete applicability facts. Missing/stale/OPEN rules return REVIEW/BLOCK for affected statutory action only; salary postings proceed.
+- Salary TDS under s392 (Form 130/Form 138 generation deferred to P7).
 - Approved summarized inputs only (payable days, LOP, overtime amounts); no attendance, leave, HRMS.
 - Frozen bank CSV export (versioned preset, deterministic formatting).
 - Bank-file state machine: Generated → Uploaded → Accepted/Rejected → Debited → Reconciled (distinct states, separate evidence).
@@ -187,20 +192,20 @@
   - Non-stale `effective_rule_snapshot` (jurisdiction, version, effective dates)
   - Missing/stale rules BLOCK only that action (not all Phase 7)
   - OPEN rules visible; explicitly REVIEW/BLOCK.
-- GST: Regular taxpayer baseline (AATO, GSTR-1 output JSON, amendments, ITC eligibility, effective-dated classification).
-- Non-payroll TDS (s393): Deduction rates/thresholds, Form 140/141 routing outputs only (never invent forms).
-- TCS (s394): Collection rates/thresholds.
-- Income-tax: Annual return form structure (per official Notification), separate tax computation (not audit report Form 26).
-- MCA: Mandatory audit applicability, form structure (per official sources; never infer exemptions).
+- **GST**: Regular taxpayer baseline (AATO, GSTR-1 output JSON, amendments, ITC eligibility, effective-dated classification).
+- **s393 TDS branch** (independent gate): Selection/structure/deadline/payment/export/certificate for Forms 140/141/144 + certificates 131/132 all REVIEW/BLOCK unless branch source snapshot verified. T-009 blocks Form140/141 transport/export pending research; selection and export tools deferred.
+- **s394 TCS branch** (independent gate): Selection/structure/deadline/payment/export/certificate for Form143 + certificate133 all REVIEW/BLOCK unless branch source snapshot verified.
+- **Income-tax**: Annual return form structure (per official Notification), separate tax computation (not audit report Form 26).
+- **MCA**: Mandatory audit applicability, form structure (per official sources; never infer exemptions).
 - Obligation engine: Tenant/GSTIN facts → applicable obligations; filing deadlines from rule snapshots; predecessor gates explicit (no GSTR-3B before GSTR-1).
-- All exports (GSTR-1, GSTR-3B, TDS, income-tax, MCA) prepare/validate/export + manual filing (no auto-submit without filing-specific owner approval per T-009).
 - Compliance calendar and deadline tracking.
+- All exports (GSTR-1, GSTR-3B, income-tax, MCA) prepare/validate/export + manual filing (no auto-submit without filing-specific owner approval per T-001; T-009 blocks TDS/TCS export until research complete).
 
-**Tests**: Tax calculation matches golden fixtures; OPEN rules block affected action only; form exports generate correctly; filing deadlines calculated; predecessor gates enforced.
+**Tests**: Tax calculation matches golden fixtures; OPEN rules block affected action only; form exports generate correctly (where not blocked); filing deadlines calculated; predecessor gates enforced; branch separation verified.
 
-**Exit Gate**: GST, TDS/TCS, income-tax, MCA compliance logic complete. Every action gated on rule snapshot; no silent rule changes; OPEN rules visible and blocking only affected actions.
+**Exit Gate**: GST, income-tax, MCA compliance logic complete. Every action gated on rule snapshot; OPEN rules visible and blocking only affected actions. s393 and s394 branches separately gated; T-009 blocks Form140/141 transport.
 
-**Non-Goals**: Auto-filing, GSP/portal APIs, composition scheme, e-invoice/e-way bill transport (deferred to filing-specific decisions), Form 24/25 (payroll TDS filing; deferred to Phase 6 payroll extension).
+**Non-Goals**: Auto-filing, GSP/portal APIs, composition scheme, e-invoice/e-way bill transport (deferred to filing-specific decisions), Form140/141/143 export/transport (blocked by T-009), Form24/25 (payroll statutory deposit/remittance forms; separate research gate).
 
 ---
 
@@ -250,27 +255,28 @@
 
 ## Phase 9: Zoho Migration (Final; Exact Fixture Checksum, Quarantine Unsupported Rows)
 
-**Duration**: 4–6 weeks. Deliverables: fixture-based import with exact checksum/row counts, duplicate-header preservation, unsupported-row quarantine, schema fingerprinting, idempotent/resumable reconciliation.
+**Duration**: 4–6 weeks. Deliverables: fixture-based import with exact checksum/row counts, duplicate-header ordinal preservation, per-file fingerprints, per-cell provenance, unsupported-row quarantine, idempotent/resumable reconciliation.
 
 **Prerequisites**: Phase 1–8B complete.
 
 **Scope**:
-- Fixture (44 CSV files, 966 test rows): exact checksum and counts verified.
-- Import: transformation to agent-bahi schema (accounts, invoices, bills, payments, expenses, journal entries, etc.).
-- Unsupported rows (inventory, RBAC, identity, custom fields): explicitly quarantined with raw provenance and counted; never claim all rows mapped.
-- Duplicate-header ordinal preservation (CSV column order preserved in raw records for audit).
-- Archive safety: staging atomicity; rollback on validation failure.
-- Raw provenance: Zoho source record ID, transformation decision, agent-bahi target record linked for every imported row.
-- Schema fingerprints: Zoho schema hash vs. agent-bahi schema hash; mismatch noted.
-- Referential validation (FK integrity check post-import).
-- Idempotent/resumable: re-import same fixture produces same result; partial imports resumable by source-record ID.
-- Reconciliation: GL balance, AR/AP aging, cash balance comparison to Zoho.
+- **Fixture specification** (from [zoho-backup-fixture.md](zoho-backup-fixture.md)): 44 CSV files, 966 total data rows, SHA-256 `fda43a99d165dec5766953484cf1377c789ae4eb50abfa3636657d2fc36ce296`, uncompressed 279,924 bytes.
+- **Archive safety**: Verify no path traversal, symlinks, duplicate paths; staging atomicity; rollback on validation failure.
+- **Source checksum verification**: Fail fast on SHA-256 mismatch.
+- **Duplicate-header ordinal preservation**: Three files (Credit_Note.csv, Customer_Payment.csv, Deposit.csv) contain duplicate column headers; must preserve ordinal positions (never collapse into single key); disambiguate programmatically.
+- **Schema fingerprints per file**: Record ordered column-header list (including duplicates) for each CSV; compare against expected on future imports.
+- **Raw provenance per cell/row**: Maintain audit trail of source file, row number, column ordinal for every cell value.
+- **Deterministic dependency ordering**: Load files in order respecting FK dependencies (e.g., Invoice → InvoiceLineItem).
+- **Referential validation post-import**: Check FK relationships; report unmatched references by file, row, column.
+- **Unsupported rows quarantine**: Inventory, RBAC, identity, custom fields explicitly quarantined with raw provenance and counted; never claim all rows mapped.
+- **Reconciliation**: GL balance, AR/AP aging, cash balance, row counts comparison to Zoho.
+- **Idempotent/resumable**: Track checkpoints; re-import same fixture produces same result; partial imports resumable by source-record ID.
 
-**Tests**: Fixture checksum matches; row counts verified; all imported rows reconcile; unsupported rows counted and logged; idempotency (re-import produces same result); cross-dialect reconciliation.
+**Tests**: Fixture SHA-256 matches; 44 files + 966 rows verified; duplicate-header ordinals preserved; per-file fingerprints match; raw provenance complete; all imported rows reconcile; unsupported rows counted and logged; idempotency (re-import produces same result); cross-dialect reconciliation.
 
-**Exit Gate**: Migration complete. All supported rows imported; unsupported rows explicitly quarantined and counted; GL balances match Zoho. Inventory engine and RBAC remain deferred.
+**Exit Gate**: Migration complete. All supported rows imported with complete provenance; unsupported rows explicitly quarantined and counted; GL balances match Zoho; duplicate-header ambiguity resolved. Inventory engine and RBAC remain deferred.
 
-**Non-Goals**: Ongoing sync with Zoho, inventory/manufacturing, unsupported features.
+**Non-Goals**: Ongoing sync with Zoho, inventory/manufacturing, unsupported features, Zoho API enrichment.
 
 ---
 
