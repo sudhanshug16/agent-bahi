@@ -1865,6 +1865,10 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 - [CLI Contract](discovery/cli-contract.md): Reports, reconciliation, period controls.
 - [Skill Architecture](discovery/skill-architecture.md): Engine/CLI/skill/agent responsibilities.
 
+**PERSONAL-TAX DISCOVERY & SCHEMA** (PT-001 through PT-016):
+- [Personal Tax Scope](discovery/personal-tax-scope.md): PT decisions, individual/PAN tenant model, BookSet architecture, TaxCase lifecycle, source management.
+- [Personal Tax Physical-Schema RFC](discovery/personal-tax-physical-schema.md): Implementation-ready tables, constraints, indexes, ownership rules, multi-dialect requirements, migration proof obligations.
+
 **COMPLIANCE RESEARCH BASELINES**:
 - [GST Compliance Matrix](discovery/gst-compliance-matrix.md): Verified research baseline; GSTR-1, GSTR-3B, e-invoice, e-way bill.
 - [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md): TDS, EPF, ESI, PT, LWF, wage records.

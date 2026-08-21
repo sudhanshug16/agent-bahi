@@ -10,6 +10,8 @@ Complete personal and sole-proprietor individual income-tax workflow is in produ
 
 No implementation may begin until the owner and architect review this packet, the affected canonical contracts, and the migration plan. This packet does not approve a data-model change, a legal interpretation, a filing route, or a portal integration.
 
+**Related RFC**: The physical-schema RFC for personal-tax support is documented separately in [personal-tax-physical-schema.md](personal-tax-physical-schema.md). That RFC specifies implementation-ready tables, constraints, indexes, ownership rules, and migration proof obligations. It is also TENTATIVE and requires architect review.
+
 The packet covers an individual taxpayer and one or more sole proprietorships. Company entities remain separate. Other legal forms require their own reviewed scope.
 
 Time limits live outside this packet. The owner parked time-limit and deadline research; this document does not enumerate it.
