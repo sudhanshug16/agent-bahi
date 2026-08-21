@@ -925,19 +925,20 @@ GSTR-3B auto-population from ledger/GSTR-1/GSTR-2B is assistance, not authoritat
 - **Recording**: Agent-bahi records evidence/ARN.
 - **Open research**: Stable official GSTR-3B artifact (analogous to GSTR-1 JSON) is unconfirmed. Direct GSP submission remains **OPEN RESEARCH**.
 
-#### E-Invoice (RECOMMENDED; IRP API + Manual Fallback)
+#### E-Invoice (V1 Frozen at Manual Upload-File + Manual Portal; API Deferred)
 
-- **Applicability**: Effective-dated rule selection; AATO, exemptions, invoice type.
-- **Transport**: Configured IRP adapter for direct submission; export/upload/import-response fallback.
-- **Idempotency**: Same request cannot duplicate IRNs.
-- **Blocking gate**: Applicable invoice not issued/finalized until IRN and signed QR evidence recorded.
-- **Unknown outcome**: Reconciliation skill queries status; records actual evidence.
+- **V1 Boundary**: Upload-file/manual portal workflow only. Direct IRP API adapter submission deferred pending CMP-006 research closure and explicit owner approval. No direct API transport in V1.
+- **Applicability**: Effective-dated rule selection within research-gated e-invoice rules; AATO thresholds, exemptions, invoice type (not a universal baseline threshold).
+- **Transport**: Export to JSON file + manual upload to portal; import response evidence separately. No automated IRP API dispatch in V1.
+- **Idempotency**: Same request cannot duplicate IRNs (applies to manual upload tracking, not API retries).
+- **Blocking gate**: Applicable invoice not issued/finalized until IRN and signed QR evidence recorded via manual upload reconciliation.
+- **Unknown outcome**: Reconciliation skill queries status from portal evidence; records actual evidence.
 
-#### E-Way Bill (RECOMMENDED; API + State-Specific Rules OPEN RESEARCH)
+#### E-Way Bill (V1 Frozen at Manual Upload-File; API Deferred)
 
-- **Transport**: Configured API adapter; manual fallback.
-- **Applicability**: Effective-dated rules determine when EWB required; thresholds, exemptions, state rules remain **OPEN RESEARCH**.
-- **Blocking gate**: Only when effective rules say required; block movement/dispatch until valid EWB evidence recorded.
+- **V1 Boundary**: Upload-file/manual portal workflow only. Direct e-way bill API adapter submission deferred pending CMP-007 research closure and explicit owner approval. No direct API transport in V1.
+- **Applicability**: Effective-dated rules determine when EWB required; thresholds, exemptions, state rules remain **OPEN RESEARCH**. Research closure and owner approval required before any API transport or V2+.
+- **Blocking gate**: Only when effective rules say required; block movement/dispatch until valid EWB evidence recorded via manual upload reconciliation.
 - **No blind claim**: Absence of research does not mean "no EWB required."
 
 #### Other Filings (Per-Filing Decisions, Not Settled Globally)
@@ -1470,19 +1471,35 @@ Workflow:
 
 18. **No unverified form/threshold assumptions**: This architecture stores effective rule versions and evidence states; it does not assert statutory form numbers, section numbers, thresholds, transitions, or eligibility rules without effective-dated source and tenant applicability research. See [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md) and OPEN RESEARCH sections. Payroll accepts prescribed employee declarations and evidence per effective rule packs; the architecture does not embed specific form, section, or threshold references in workflows.
 
-### 5. Late Document in Locked Period → Preview → Explicit Reopen or Current-Period Adjustment
+### 5. Late Document in Locked Period → Preview → Explicit Branch (Original-Date Unlock + Reversal OR Current-Period Adjustment)
 
 1. Agent attempts to finalize invoice dated 2026-03-15 (March 2026).
 2. Period lock enforced: `locked-through = 2026-03-31`.
-3. CLI rejects create/finalize with "period locked" error.
-4. Skill invokes `period unlock preview` to assess impact.
-5. [REVIEW] Skill presents two options:
-   a. Reopen March period → post invoice at original date → relock.
-   b. Post current-period adjustment (dummy invoice at April 1) → reconcile difference.
-6. Human selects and explicitly confirms the option (e.g., reopen March).
-7. [TX] Unlock with reason, actor, audit record; impact preview confirmed.
-8. [TX] Finalize invoice at original date, post journal.
-9. [TX] Relock period with new audit entry.
+3. CLI rejects create/finalize with "PERIOD_LOCKED" error (names locked period).
+4. Skill invokes `period late-document preview` to assess two distinct branches (never auto-select).
+5. [REVIEW] Two branches presented; human must explicitly choose ONE:
+   - **Branch A: Original-Date Correction via Unlock + Reversal + Replacement**
+     - Unlock March period with explicit reason and preview.
+     - Post invoice at original 2026-03-15 date.
+     - Later when period is reopened: record reversal lineage.
+     - Relock March period after work complete.
+     - Branch A allows the invoice to reflect the actual original date; prior locked-period journals/state remain, new invoice posts in its own sequence.
+   - **Branch B: Current-Period Adjustment (Keep Old Period Locked, Post New Entry)**
+     - Keep March locked; do NOT unlock.
+     - Create a current-period (April 2026) linked journal/adjustment entry that reconciles the late discovery against original month.
+     - Original March journal/state immutable; April receives the correction entry.
+     - No reversal or replacement of original; linked as separate current-period adjustment.
+6. Human selects exactly one branch and provides reason (e.g., "customer dispute resolved, backdated invoice discovered").
+7. **Branch A Path** (Unlock + Original Date):
+   - [TX] Unlock with reason, actor, audit record; impact preview confirmed and locked-version/scope validated.
+   - [TX] Finalize invoice at 2026-03-15, post balanced journal.
+   - [TX] Relock period with new audit entry after work complete (operator may reopen/reclose as needed).
+   - Original locked-period state and any subsequent entries remain; only this invoice added to its original date.
+8. **Branch B Path** (Current-Period Adjustment, Old Period Stays Locked):
+   - [TX] Do NOT unlock March period.
+   - [TX] Create and post a current-period journal dated April 2026+ that links to the original March fact and records the correction.
+   - Original March remains locked; April entry is visible as linked adjustment with source reference and reason.
+   - No reversal or re-posting of March; correction is a separate April entry explicitly linked to original.
 
 ### 6. GSTR-1 Preparation → JSON → Manual Portal → ARN
 
@@ -1499,45 +1516,40 @@ Workflow:
 11. [TX] Agent records filing (timestamp, signer method, ARN received).
 12. GSTR-3B preparation later can reference filed GSTR-1 ARN as prerequisite satisfied.
 
-### 7. Applicable E-Invoice IRN and E-Way Bill Flow with API + Manual Transport, Unknown Outcome Handling
+### 7. Applicable E-Invoice IRN and E-Way Bill Flow (V1: Manual Upload-File Workflow Only)
+
+**V1 Boundary**: Direct IRP API and e-way bill API are unavailable in V1. V1 supports upload-file/manual portal workflow only. Direct APIs require CMP-006/007 research closure and explicit owner approval (post-V1).
 
 **Applicability check happens BEFORE issue/post or dispatch. It returns an obligation set: IRN/e-invoice required, EWB required, both, or neither. The following is one sequential flow; each statutory obligation is handled independently:**
 
 1. [TX] Validate the invoice draft (items, tax, movement facts, and required statutory particulars).
-2. [REVIEW] Determine the obligation set using effective-dated rules (AATO threshold, invoice type, exemptions, movement facts, and applicable e-invoice/e-way-bill rules): IRN/e-invoice, EWB, both, or neither.
+2. [REVIEW] Determine the obligation set using effective-dated rules (AATO applicability per e-invoice rules only, invoice type, exemptions, movement facts, and applicable e-invoice/e-way-bill rules): IRN/e-invoice, EWB, both, or neither.
 3. If the obligation set is **neither**, return to Workflow 1 step 5 for ordinary invoice finalization. Workflow 7 creates no external operation in this case. Stop.
 4. [REVIEW] Preview the invoice content, obligation set, rule versions, reserved invoice number (if IRN applies), and dispatch requirements (if EWB applies).
-5. For **each required obligation separately**, select exactly one transport (`api` or `manual`) before creating its operation. A provider capability or policy decision for IRN does not select transport for EWB.
-6. **Single atomic orchestration setup transaction** for the selected attempts — one operation per statutory obligation attempt, not one operation per invoice:
+5. **V1 Manual-Only Transport**: No API transport selection in V1. All applicable obligations use manual upload-file workflow: export to artifact (JSON for IRN, EWB form for movement), then user uploads to portal manually.
+6. **Single atomic orchestration setup transaction** for the manual upload attempts — one operation per statutory obligation attempt, not one operation per invoice:
    - Freeze the invoice basis. If IRN applies, freeze the issuance-pending candidate and reserve the statutory invoice number ONCE with an "awaiting-IRN" gap reason. If IRN does not apply, do not create an IRN gate or reserve an IRN gap. A reservation, submission, or external failure never releases that number: retain the frozen candidate, attempt observations, void/gap reason, and artifact hash, then link any superseding retry to a new child candidate and new number.
    - For each applicable obligation, freeze the exact API request or manual export artifact and its hash. For `manual`, durably store the exact artifact bytes and compute the hash before creating its operation; the prepared operation is bound to those immutable bytes/hash.
    - If EWB applies — whether EWB-only or IRN+EWB — create a durable `dispatch_hold` tied to the invoice and the EWB obligation. If EWB applies without IRN, atomically post/issue the invoice once in this same transaction, then create the hold; do not wait for EWB evidence to post. The invoice post and hold occur before the prepared EWB operation and its intent are inserted, and none are visible until this transaction commits. On an IRN+EWB invoice, keep the invoice pending IRN finalization while still creating the hold in this transaction.
-   - For each selected obligation and attempt, create exactly one `ExternalOperation` with `operation_kind = irn` or `ewb`, `current_state = prepared`, tenant/GSTIN/provider/document correlation, and `transport_type`.
-   - Persist each operation's idempotency identity (internal operation/request identity and any provider/portal identity when assigned).
+   - For each applicable obligation and attempt, create exactly one `ExternalOperation` with `operation_kind = irn` or `ewb`, `current_state = prepared`, tenant/GSTIN/document correlation, and `transport_type = manual`.
+   - Persist each operation's idempotency identity (internal operation/request identity).
    - Create exactly one durable outbox/submission intent corresponding to each operation and obligation: IRN evidence permits invoice finalization; EWB evidence releases the existing dispatch hold. Do not combine intents.
-   - **Commit all invoice state/posting, dispatch holds, frozen payload/artifact bindings, prepared operations, and intents atomically. Outbox workers may run only after this commit; a rollback exposes none of them.**
-7. **API branch using the same obligation operation** (for each committed operation whose step 5 selection was `api`):
-   - [TX] The outbox sender CASes `prepared → submitted` and appends the durable pre-side-effect submission-intent observation with the persisted idempotency identity. **COMMIT before dispatch.**
-   - [EXT] Transmit the frozen request outside the database transaction; provider idempotency governs safe retry of that request.
-   - [TX] Record the response and CAS `submitted → known_success`, `known_failure`, or `unknown`.
-   - If `known_success` (immediate or after reconciliation): [TX] verify and store evidence for this operation_kind, then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 11 for the obligation-specific gate.
-   - If `known_failure`: record the authoritative error for this obligation and stop this operation. No fallback or other obligation operation is created; a failed operation never finalizes or gates success.
-   - If `unknown`: quarantine; do not retry, switch transport, fall back, or create another operation. [EXT] Reconcile only through an authoritative provider lookup by the persisted idempotency/correlation identity or document reference, then [TX] CAS to `known_success`, `known_failure`, or `manual_review` and append the observation. `manual_review` stops for explicit human direction and cannot fall back or start another operation.
-8. **Manual branch using the same obligation operation** (for each committed operation whose step 5 selection was `manual`):
+   - **Commit all invoice state/posting, dispatch holds, frozen payload/artifact bindings, prepared operations, and intents atomically. Manual-upload tracking and portal reconciliation occur after this commit.**
+7. **Manual Upload-File Workflow (V1 Only)** (for each committed operation):
    - [TX] CAS `prepared → submitted` and append the durable submission-intent observation **before** permitting human portal upload. **COMMIT.** The `submitted` state means upload may already have happened.
-   - After `submitted` is durable, upload only the exact frozen artifact bound to this operation. Never generate, mutate, auto-upload, or auto-reupload a different artifact under uncertainty.
-   - [EXT] The human uploads the bound artifact. [EXT]/[TX] Reconcile authoritative portal evidence; it must bind to this operation and match its artifact hash. A mismatch or absent/ambiguous evidence remains `manual_review` and is not success.
-   - With authoritative evidence, CAS `submitted → known_success` or `known_failure` and append the response observation. If `known_success`, [TX] verify/store this operation_kind's evidence, then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 11 for the obligation-specific gate.
-   - If `known_failure`: record the authoritative error for this obligation and stop this operation. The failed operation never finalizes or gates success.
-9. **Explicit retry after terminal `known_failure`, per obligation only**:
-   - A retry is allowed only as a NEW child/retry `ExternalOperation` for the same `operation_kind`, explicitly authorized by the operator and linked to the failed parent. No `unknown`, `manual_review`, or other state may spawn a fallback or retry.
-   - Select `api` or `manual` for the child before creating it. The child gets its own atomic setup transaction in step 6, its own frozen request/artifact hash, idempotency identity, exactly-one outbox/submission intent, and operation-specific evidence. The failed parent never finalizes; repeat steps 7–8 for the child. For an EWB-only child, retain the already-posted invoice and existing dispatch hold; do not repost or create a duplicate hold.
-10. If a provider returns IRN and EWB results in one exchange, persist distinct outcomes and evidence for the distinct IRN and EWB operations. Never infer one obligation's success or failure from the other.
-11. **Apply the obligation-specific gate** after each operation independently reaches `evidence_recorded`:
+   - After `submitted` is durable, export and persist the exact frozen artifact bound to this operation. Never auto-generate, mutate, auto-upload, or auto-reupload a different artifact.
+   - [EXT] The human downloads the artifact, uploads it to the government portal manually.
+   - [EXT]/[TX] Reconcile authoritative portal evidence (user provides ARN or rejection response from portal). Portal evidence must bind to this operation and match its artifact hash. A mismatch or absent/ambiguous evidence remains `manual_review`.
+   - With authoritative evidence (ARN received or portal rejection confirmed), [TX] CAS `submitted → known_success` or `known_failure` and append the response observation. If `known_success`, [TX] verify/store this operation_kind's evidence (IRN/QR for IRN, EWB number for movement), then CAS `known_success → evidence_recorded` and append the observation. Proceed to step 9 for the obligation-specific gate.
+   - If `known_failure` (portal rejection): record the authoritative error for this obligation and stop this operation. No auto-retry or fallback. Operator may explicitly create a new child operation and re-prepare with corrected data.
+8. **Explicit new attempt after terminal `known_failure`, per obligation only** (V1 Manual Workflow):
+   - A new attempt is allowed only as a NEW child/retry `ExternalOperation` for the same `operation_kind`, explicitly authorized by the operator and linked to the failed parent.
+   - The child gets its own atomic setup transaction (as in step 6), its own frozen artifact hash, idempotency identity, and evidence tracking. The failed parent never finalizes. Repeat step 7 for the child. For an EWB-only child, retain the already-posted invoice and existing dispatch hold; do not repost or create a duplicate hold.
+9. **Apply the obligation-specific gate** after each operation independently reaches `evidence_recorded`:
    - If IRN is required, that IRN evidence triggers the atomic invoice finalization in step 12.
    - If EWB is required, that EWB evidence atomically releases the `dispatch_hold` for dispatch/goods movement. It never finalizes the invoice and never substitutes for IRN evidence.
    - If both are required, release the invoice and dispatch gates independently: IRN evidence gates invoice finalization and EWB evidence gates dispatch. Neither evidence substitutes for the other.
-12. **Atomic invoice finalization for an IRN-required invoice** (requires the IRN operation's `current_state = evidence_recorded`):
+10. **Atomic invoice finalization for an IRN-required invoice** (requires the IRN operation's `current_state = evidence_recorded`):
    - [TX] In one transaction, verify the IRN/QR evidence is accessible and bound to the IRN operation; finalize the invoice using the reserved number (do not re-allocate); post the balanced journal: Dr Accounts Receivable (total) | Cr Revenue (net) + Cr Output Tax (if applicable); CAS that operation `evidence_recorded → business_finalized` and append the observation; and honor only its exactly-one IRN intent atomically. Any CAS or validation failure rolls back the entire finalization.
    - Resume-safe: if the process crashes, resume sees `business_finalized` and does not re-finalize. An EWB operation remains a separate dispatch gate.
    - [REVIEW] Confirm on CA/user side if required.

@@ -1070,11 +1070,8 @@ variance, fees, payment evidence, and provenance by skill/version.
 
 ## 13. FX realization and period-end revaluation
 
-**Scope status.** Immutable document and settlement rate snapshots, separate
-realized FX, and auditable open-item revaluation are settled. The exact FX
-provider and fallback chain remain **TENTATIVE - NOT OWNER-APPROVED / OPEN
-RESEARCH** under [T-004](tentative-decisions.md#entry-t-004-exchange-rate-provider-and-fx-workflowtentativeopen-pending-source-audit).
-No provider, statutory rate, or automatic fallback is invented here.
+**Scope status.** Immutable document and settlement rate snapshots with purpose-specific book recognition, settlement, GST, and income-tax-TDS snapshots are approved. Same-purpose fallback only; no cross-purpose rate substitution. Missing statutory source blocks only affected statutory lane; unaffected bookkeeping proceeds. The exact FX provider selection and fallback chain order remain **TENTATIVE - NOT OWNER-APPROVED / OPEN RESEARCH** under [T-004](tentative-decisions.md#entry-t-004-exchange-rate-provider-and-fx-workflowtentativeopen-pending-source-audit).
+No provider, statutory rate, or automatic cross-purpose fallback is invented here. Approved original currency and purpose-specific snapshots are immutable records.
 
 **Scope and identifiers.** FX data is tenant-scoped with one base currency.
 Each foreign-currency document, settlement allocation, rate snapshot, and
@@ -1216,27 +1213,27 @@ original currency drill-down.
 ## 14. Fixed assets and separate book/tax schedules
 
 **Scope status.** Asset register, acquisition/capitalization, depreciation,
-disposal, and traceable journals are settled as a product area. The exact book
-method and tax depreciation rule remain **TENTATIVE - NOT OWNER-APPROVED** in
+disposal, and traceable journals are settled as a product area. Approved
+separate rule-driven book and tax depreciation schedules with no universal
+SLM or WDV default across them. Only applicable statutory method, rate, and
+useful-life content remains **OPEN RESEARCH** and research-gated per
 [T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default)
-and [open research](architecture-decisions.md#open-research--deferred-list).
-The tentative SLM default is not a statutory claim and must not be coded until
-the owner/research gate is closed.
+and [architecture decisions](architecture-decisions.md#open-research--deferred-list).
+Book method and tax method selections are separate, rule-driven, and not hardcoded.
 
 **Scope and identifiers.** Each asset, asset class, book schedule, tax
 schedule, depreciation run, capitalization event, and disposal has a stable
 tenant-scoped ID. Asset codes are unique within the tenant and never reused.
 An asset stores acquisition source, in-service date, location/custodian,
 currency/cost, residual/value basis, book-policy version, tax-rule-pack
-version, useful-life/method inputs where approved, and linked evidence.
+version, useful-life/method inputs where approved and researched, and linked evidence.
 
 **Required fields and states.** Acquisition requires supplier/source document,
 cost components, date, asset class, capitalization decision, account roles,
 and evidence/tax lane. Asset state is `Proposed -> Capitalized -> In Service
 -> Fully Depreciated|Disposed`; schedule state is `Draft -> Validated ->
 Active -> Superseded`. Depreciation run is `Draft -> Validated -> Posted`.
-Book and tax schedules are always separate records, even when their results
-coincide.
+**Book and tax schedules are always separate records, with independently selected rule-driven methods; even when results coincide numerically, the methods and rules are tracked separately and never unified.**
 
 **Validation.** Validate cost arithmetic, source/document, asset class,
 capitalization policy, in-service date, account mappings, rule versions,
