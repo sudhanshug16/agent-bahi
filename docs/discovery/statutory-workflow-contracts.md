@@ -80,21 +80,41 @@ After the auditor report is attached, the workflow branches to AGM/member adopti
 |---|---|---|---|---|
 | **Deduction recorded** | Payment event; TDS computed | Deduction entry in books/payable | No | Completion without deposit |
 | **Deposit confirmed** | Bank confirmation of payment | Payment reference, receipt | No | Completion without filing |
-| **Form 140 filed** | Quarter-end; general quarterly statement submitted to portal | Portal receipt; filing timestamp pending | No | Certificate issuance without filing |
-| **Form 140 accepted** | Portal processes; ARN issued | ARN and acceptance date recorded | No | Completion without acceptance |
-| **Form 131 certificate issued** | General Rule 215 branch after applicable Rule 219 statement path | Form 131 with payee evidence, issue date | **YES** | Invalid certificate (orphaned or incomplete) |
+| **Form 140 submitted** | Quarter-end; general quarterly statement submitted to portal | Dedicated Form 140 submission attempt, portal acknowledgement and processing evidence; record ARN only if the official statement portal supplies it | No | Statement evidence incomplete; do not start certificate issuance |
+| **Form 140 accepted** | Portal processes the Form 140 statement | Statement-specific acceptance evidence and ARN only where officially supplied | **YES** | Statement rejected with its own reason and correction lineage |
 
-Each non-payroll form branch below is its own state machine. A submission
-attempt, acknowledgement/ARN, and terminal outcome are branch-scoped evidence;
-an ARN or rejection from one form must never be reused for another form.
+Rule 215 requires a certificate to be generated and downloaded from the specified
+web portal and furnished to the payee; it does not make Form 131, 132, or 133 a
+separately filed and portal-accepted return. The official [Form 131 FAQ](https://www.incometaxindia.gov.in/documents/d/guest/form-131-faqs)
+describes generation after the quarterly statement is processed and download
+from TRACES, while the official [Form 132](https://www.incometaxindia.gov.in/documents/d/guest/form-no-132-1)
+and [Form 133](https://www.incometaxindia.gov.in/documents/d/guest/form-no-133-1)
+templates identify a certificate number and contain transaction/statement or
+deposit references. A certificate therefore closes through its own artifact,
+certificate/control number, authentication, issue, and delivery evidence—not
+through a certificate ARN or portal acceptance.
 
-| Branch transition | Due event | Submission attempt | Acknowledgement/ARN evidence | Accepted terminal | Rejected terminal | Unknown terminal |
-|---|---|---|---|---|---|---|
-| **Form 141 → Form 132** | Form 141 and payment due within 30 days from the end of the deduction month; Form 132 due within 15 days from the Form 141 due date | Record a dedicated Form 141 submission attempt, then a separate Form 132 issue/submission attempt | `form_141_ack_arn` and `form_132_ack_arn` are separate required evidence records | Close the Form 141 or Form 132 leg only with its own accepted status and ARN | Keep that leg rejected with its own reason; open correction/retry for that leg only | Hold that leg in REVIEW/BLOCK; do not infer acceptance or reuse Form 140/143/144 evidence |
-| **Form 143 → Form 133** | Form 143 due under the ordinary Rule 219 quarterly dates; Form 133 due within 15 days from the Form 143 due date | Record a dedicated Form 143 submission attempt, then a separate Form 133 issue/submission attempt | `form_143_ack_arn` and `form_133_ack_arn` are separate required evidence records | Close each leg only with its own accepted status and ARN | Keep the rejected leg open with its own reason and correction lineage | Hold the unknown leg in REVIEW/BLOCK; do not infer acceptance or reuse Form 140/141 evidence |
-| **Form 144 → Form 131** | Form 144 due under the ordinary Rule 219 quarterly dates; Form 131 due within 15 days from the Form 144 due date | Record a dedicated Form 144 submission attempt, then a separate Form 131 issue/submission attempt | `form_144_ack_arn` and `form_131_ack_arn` are separate required evidence records | Close each leg only with its own accepted status and ARN | Keep the rejected leg open with its own reason and correction lineage | Hold the unknown leg in REVIEW/BLOCK; do not infer acceptance or reuse Form 140/141 evidence |
+Each statement branch below is its own state machine. Statement submission,
+portal acknowledgement, acceptance/rejection/unknown outcome, and any ARN are
+branch-scoped evidence. Certificate issuance starts only after the applicable
+statement is complete and has a separate evidence chain; statement evidence
+must never be reused as certificate evidence, and certificate evidence must
+never be treated as statement acceptance.
 
-**GATE: Never mark "filed" or "accepted" without documented portal acknowledgement (ARN). Submission and acceptance are distinct events.**
+| Branch transition | Statement due event | Statement submission attempt | Statement portal acknowledgement/acceptance evidence | Later certificate issuance and delivery | Certificate evidence and terminal handling |
+|---|---|---|---|---|---|
+| **Form 141 → Form 132** | Form 141 and payment due within 30 days from the end of the deduction month; [Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1) Form 132 due within 15 days from the Form 141 due date | Record a dedicated Form 141 submission attempt | `form_141_portal_ack`, statement acceptance/rejection/unknown, and `form_141_arn` only where the official statement portal supplies an ARN | After Form 141 is complete, generate/download Form 132 and furnish it within the Rule 215 window | Require Form 132 artifact/hash, certificate number or control number, digital-signature/authentication log, issue date, delivery evidence, and source/effective snapshot. Terminal is **ISSUED/DELIVERED** only when complete; rejected, missing, or unknown certificate evidence is **REVIEW/BLOCK**. No Form 132 ARN or certificate acceptance state |
+| **Form 143 → Form 133** | Form 143 due under the ordinary Rule 219 quarterly dates; [Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1) Form 133 due within 15 days from the Form 143 due date | Record a dedicated Form 143 submission attempt | `form_143_portal_ack`, statement acceptance/rejection/unknown, and `form_143_arn` only where the official statement portal supplies an ARN | After Form 143 is complete, generate/download Form 133 and furnish it within the Rule 215 window | Require Form 133 artifact/hash, certificate number or control number, digital-signature/authentication log, issue date, delivery evidence, and source/effective snapshot. Terminal is **ISSUED/DELIVERED** only when complete; rejected, missing, or unknown certificate evidence is **REVIEW/BLOCK**. No Form 133 ARN or certificate acceptance state |
+| **Form 144 → Form 131** | Form 144 due under the ordinary Rule 219 quarterly dates; [Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1) Form 131 due within 15 days from the Form 144 due date | Record a dedicated Form 144 submission attempt | `form_144_portal_ack`, statement acceptance/rejection/unknown, and `form_144_arn` only where the official statement portal supplies an ARN | After Form 144 is complete, generate/download Form 131 and furnish it within the Rule 215 window | Require Form 131 artifact/hash, certificate number or control number, digital-signature/authentication log, issue date, delivery evidence, and source/effective snapshot. Terminal is **ISSUED/DELIVERED** only when complete; rejected, missing, or unknown certificate evidence is **REVIEW/BLOCK**. No Form 131 ARN or certificate acceptance state |
+
+**GATE:** Statement forms 141/143/144 require their own submission attempt,
+portal acknowledgement, and acceptance/rejection/unknown outcome. Record an
+ARN only where the official statement portal supplies it. Certificate forms
+131/132/133 are not separately filed or portal-accepted under Rule 215: require
+their generated/downloaded artifact, certificate/control number,
+digital-signature/authentication log, issue date, delivery evidence, and
+source/effective snapshot instead. Statement completion and later certificate
+issuance/delivery are separate transitions.
 
 ---
 
@@ -277,10 +297,10 @@ These are product rules for deterministic statutory workflows. They are not clai
 | Policy | Required Behavior | Failure Prevented |
 |---|---|---|
 | **Section/form/rule version selection** | Freeze applicable section, form, rule, and rule version at obligation trigger. Do not retroactively change effective period. | Wrong section or obsolete rule applied to deduction/return/filing. |
-| **Separate obligations as distinct states** | Deduction/deposit/filing/acceptance are separate state transitions, each with separate evidence. Do not assume one success implies next state. | Deposit success mistaken for filing; upload mistaken for acceptance. |
+| **Separate obligations as distinct states** | Deduction/deposit/statement submission/statement acceptance and later certificate generation/issue/delivery are separate state transitions, each with separate evidence. Certificate issuance is not certificate portal filing or acceptance. | Deposit success mistaken for statement filing; upload mistaken for statement acceptance; certificate delivery mistaken for statement acceptance. |
 | **No assumed rates/thresholds/due dates** | Every rate, threshold, due date, or exemption must have explicit source verification. Rates/thresholds derive from s393/s394 and applicable annual-tax sections, never from Form 140/141 kits. OPEN items block execution. | Deduction at unsupported rate; return filed after deadline due to wrong date assumption. |
 | **Entity-type driven profile** | Determine entity type (individual, HUF, partnership, company, small, OPC) and audit status before applying rules. Do not assume uniform rules across entity types. | Small company incorrectly treated as audit-exempt; OPC treated as regular company requiring AGM. |
-| **No false "filed" status** | "Filed" status requires documented portal acknowledgement (ARN, Registrar reference) or equivalent. Submission/upload alone never marks filed. | False "filed" status creating compliance gap. |
+| **No false "filed" status** | A statement "filed" status requires its own documented portal acknowledgement/acceptance evidence, with an ARN only where the official portal supplies one; submission/upload alone never marks filed. Certificates use issuance/delivery evidence and have no "filed" status under Rule 215. | False statement filing or certificate acceptance status creating a compliance gap. |
 | **Gateway enforcement — section 63 audit** | If verified s63 conditions apply, Form 26 is mandatory before return filing; it is not the tax computation and is not attached/accompanying the return. | Return filed without audit report or with Form 26 misused as computation. |
 | **Gateway enforcement — company audit** | Every company (including small company and OPC) must appoint an auditor under s139. Keep this Companies Act audit separate from the s63 income-tax audit; test auditor eligibility under s141 and the Audit Rules, not Schedule IV. | Small company/OPC audit suppression or tax/company-audit conflation. See [MCA matrix](mca-companies-act-compliance-matrix.md#legal-research-audit-table). |
 | **Gateway enforcement — MCA source snapshot** | Every MCA obligation must carry `source_verified=true`, an exact `effective_rule_snapshot`, and a verified MCA audit ID. OPEN/TENTATIVE applicability or field detail is REVIEW/BLOCK. | Silent execution from stale or invented section/form/date claims. |
