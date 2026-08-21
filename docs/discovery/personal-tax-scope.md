@@ -318,7 +318,7 @@ No branch example, form example, section, rate, threshold, or due date is embedd
 
 Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor label, or BookSet label cannot substitute for the role and transaction facts.
 
-<a id=”pt-013”></a>
+<a id="pt-013"></a>
 ### PT-013: Filing-specific states and evidence (Issue #1)
 
 **Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
@@ -510,7 +510,7 @@ The DPDP Act and Rules are legal research sources. CERT-In Directions under sect
 
 Implementation is blocked until all of the following are reviewed and approved:
 
-1. Architect review of PT-001, PT-002, PT-003, PT-004, and PT-009; owner and architect approval of PT-005 through PT-008 and PT-010 through PT-016.
+1. Architect review of PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015; owner and architect approval of PT-005, PT-007, PT-010, PT-014, and PT-016.
 2. Canonical contract migration from one legal entity/one balanced book to the reviewed individual/PAN tenant plus independently balanced BookSets model.
 3. Immutable official rule snapshots and official schema or validator releases for each supported period and form.
 4. Year-specific correction-route research and owner-approved mechanism selection.
@@ -590,4 +590,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a discovery baseline. PT-001, PT-002, PT-003, PT-004, and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
