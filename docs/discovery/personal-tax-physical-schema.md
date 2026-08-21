@@ -66,12 +66,13 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.6 `bookset_transfers`
 
-- **Fields:** `tenant_id`, `transfer_id`, source and destination BookSet IDs, amount, currency, purpose, evidence reference, source-leg journal ID, destination-leg journal ID, posted status, creation metadata.
+- **Fields:** `tenant_id`, `transfer_id`, `source_book_set_id`, `destination_book_set_id`, amount, currency, purpose, `evidence_artifact_id`, `source_journal_entry_id`, `destination_journal_entry_id`, posted status, creation metadata.
 - **Primary key:** `(tenant_id, transfer_id)`.
 - **Unique keys:** transfer identity within the tenant.
-- **Foreign keys:** both BookSets, both journal legs, and the evidence reference use composite tenant-aware database relationships; evidence ownership is not an application convention.
+- **Foreign keys:** `(tenant_id, source_book_set_id)` to book_sets; `(tenant_id, destination_book_set_id)` to book_sets; `(tenant_id, source_book_set_id, source_journal_entry_id)` to journal_entries; `(tenant_id, destination_book_set_id, destination_journal_entry_id)` to journal_entries; `(tenant_id, evidence_artifact_id)` to evidence_artifacts.
+- **Constraints:** CHECK source_book_set_id != destination_book_set_id (source and destination must differ).
 - **Immutability:** a posted transfer and its leg bindings are immutable.
-- **Gates:** source and destination differ but share the same tenant; composite tenant-aware database relationships and atomic validation are mandatory; both legs are posted in one transaction; both legs have the same amount, currency, purpose, and evidence binding; actual postings in each leg agree with the transfer; any failure rolls back both legs and the transfer row. Application convention alone cannot establish transfer or evidence ownership.
+- **Gates:** source and destination BookSets are in same tenant; composite FKs enforce tenant/BookSet/journal scope for each leg; evidence artifact is tenant-scoped; both legs posted in one atomic transaction; both legs have same amount, currency, purpose, evidence; actual postings agree with transfer; any failure rolls back both legs and transfer row.
 
 ### 2.7 `income_periods`
 
@@ -125,13 +126,32 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.12 `filing_snapshots`
 
-- **Fields:** `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, `authority_pack_content_hash`, exact BookSet ledger version/event cursor references (immutable), source artifact IDs/hashes, parser versions, frozen eligibility facts, declared `tax_computation_version`, declared `tax_computation_hash` (expected hash for canonical computation), as_of_instant timestamp, snapshot_content_hash (computed over inputs: ledger versions, source artifacts, eligibility facts, declared computation version/hash).
+- **Fields:** `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, `authority_pack_content_hash`, declared `tax_computation_version`, declared `tax_computation_hash` (expected hash for canonical computation), as_of_instant timestamp, snapshot_content_hash (computed over inputs: ordered BookSet entries + artifact hashes + computation version/hash).
 - **Primary key:** `snapshot_id`.
 - **Unique keys:** `UNIQUE(tenant_id, tax_case_id, snapshot_id)` and `(tenant_id, tax_case_id, as_of_instant, snapshot_content_hash)` — tenant-scoped uniqueness ensures no cross-case snapshot confusion.
-- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; composite FK `(authority_pack_id, authority_pack_content_hash)` to authority_packs; BookSet and evidence artifact references are tenant-scoped.
-- **Immutability:** snapshot ID, ledger versions, source artifacts, parser versions, authority pack (ID and content hash), declared computation version/hash, timestamp, and snapshot_content_hash are immutable. A new snapshot is created when books or sources change before submission.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; composite FK `(authority_pack_id, authority_pack_content_hash)` to authority_packs.
+- **Immutability:** snapshot ID, authority pack (ID and content hash), declared computation version/hash, timestamp, and snapshot_content_hash are immutable. A new snapshot is created when books or sources change before submission.
 - **No computation FK:** FilingSnapshot does NOT store `tax_computation_id`; this breaks circular dependency. Declared computation version/hash is an input to snapshot content hash and must match the canonical TaxComputation created atomically with this snapshot.
-- **Gate:** FilingSnapshot must bind exactly one sealed AuthorityPack via (ID, content_hash) and reference exact BookSet ledger event cursors (not just as-of date). Every ExportRun is tied to exactly one FilingSnapshot via tenant-scoped composite FK. Snapshot and its canonical TaxComputation are created atomically; their version/hash must match or integrity is violated.
+- **BookSet and Artifact Membership:** Explicit via junction tables filing_snapshot_booksets (2.12a) and filing_snapshot_artifacts (2.12b). Membership must be nonempty before snapshot seals/readiness.
+- **Gate:** FilingSnapshot must bind exactly one sealed AuthorityPack via (ID, content_hash) and enumerate exact BookSet ledger versions via junction (not as-of alone). Every ExportRun is tied to exactly one FilingSnapshot via tenant-scoped composite FK. Snapshot and its canonical TaxComputation created atomically; their version/hash must match or integrity violated.
+
+### 2.12a `filing_snapshot_booksets`
+
+- **Fields:** `tenant_id`, `tax_case_id`, `snapshot_id`, `book_set_id`, ledger_version, event_cursor.
+- **Primary key:** `(tenant_id, tax_case_id, snapshot_id, book_set_id)`.
+- **Unique keys:** one row per snapshot per BookSet; enforces nonempty membership before seal.
+- **Foreign keys:** composite FK `(tenant_id, tax_case_id, snapshot_id)` to filing_snapshots; `(tenant_id, book_set_id)` to book_sets.
+- **Immutability:** all fields immutable after snapshot seals.
+- **Gate:** Before snapshot is sealed, membership is deterministically enumerated and frozen. Readiness gate: membership must be nonempty.
+
+### 2.12b `filing_snapshot_artifacts`
+
+- **Fields:** `tenant_id`, `tax_case_id`, `snapshot_id`, `evidence_artifact_id`, evidence_artifact_hash, parser_version, source_id (optional: if artifact is tied to external source).
+- **Primary key:** `(tenant_id, tax_case_id, snapshot_id, evidence_artifact_id)`.
+- **Unique keys:** one row per snapshot per artifact.
+- **Foreign keys:** composite FK `(tenant_id, tax_case_id, snapshot_id)` to filing_snapshots; composite FK `(tenant_id, evidence_artifact_id, evidence_artifact_hash)` to evidence_artifacts if evidence_artifacts declares candidate key UNIQUE(tenant_id, artifact_id, artifact_hash); optional `(tenant_id, tax_case_id, source_id)` to external_sources.
+- **Immutability:** all fields immutable after snapshot seals.
+- **Gate:** Artifact membership deterministically enumerated at snapshot creation. Hash verifies artifact integrity across lifecycle.
 
 ### 2.13 `tax_computations`
 
@@ -187,23 +207,23 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.17 `external_sources`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `source_id`, source type, readiness status, source identity and period, evidence pointer, reconciliation state, and actor metadata.
+- **Fields:** `tenant_id`, `tax_case_id`, `source_id`, source type, readiness status, source identity and period, optional `book_set_id` (for institution/account sources), optional `institution_code`, `optional account_identifier`, reconciliation state, and actor metadata.
 - **Primary key:** `(tenant_id, tax_case_id, source_id)`.
 - **Unique keys:** source identity within a TaxCase.
-- **Foreign keys:** TaxCase composite key; artifact and reconciliation references remain tenant-compatible.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; optional `(tenant_id, book_set_id)` to book_sets (for institution-linked sources); derived evidence via junction explicit_source_artifacts.
 - **Immutability:** source identity and imported evidence version are immutable; new imports create new evidence/source versions.
 - **Source types:** include `AIS`, `26AS`, `Form16A_TDS`, bank, broker, property, loan, EPFO, and NPS evidence. `Form16A_TDS` is non-salary TDS evidence only.
 - **Statuses:** exactly `UNKNOWN`, `DECLARED_NOT_APPLICABLE`, `EXPECTED`, `INGESTED`, `RECONCILED`, `CONFLICT`, `INCOMPLETE`, `READY`, or `STALE`.
-- **Gates:** the complete required catalog is enumerated before readiness; mandatory unresolved, conflicting, incomplete, stale, or unknown entries block the affected action. An empty or unenumerated catalog cannot become ready.
+- **Gates:** complete required catalog enumerated before readiness; mandatory unresolved entries block action. Empty catalog cannot become ready. All BookSet/artifact associations explicit via FK or junction.
 
 ### 2.18 `evidence_artifacts`
 
-- **Fields:** `tenant_id`, `artifact_id`, content hash, content type, size, immutable storage reference, parser identity/release, retrieval metadata.
+- **Fields:** `tenant_id`, `artifact_id`, `artifact_hash`, content type, size, immutable storage reference, parser identity/release, retrieval metadata.
 - **Primary key:** `(tenant_id, artifact_id)`.
-- **Unique keys:** artifact identity; content hash is indexed for lookup but is not unique, so re-imports remain visible.
+- **Unique keys:** `UNIQUE(tenant_id, artifact_id, artifact_hash)` — exact identity tuple for composite FK targets; content hash indexed for lookup. Re-imports are visible as separate rows with different artifact_id.
 - **Foreign keys:** tenant key.
-- **Immutability:** raw content, hash, storage reference, and parser provenance are immutable; a new file or parser result creates a new row.
-- **Gate:** every derived record and filing/portal evidence row points to an exact artifact; no import overwrites another artifact.
+- **Immutability:** raw content, hash, storage reference, and parser provenance are immutable after insert; a new file or parser result creates a new row.
+- **Gate:** every derived record, filing/portal evidence row, and filing_snapshot_artifacts points to exact artifact via (tenant_id, artifact_id, artifact_hash); no import overwrites another artifact.
 
 ### 2.19 `external_source_derived_records`
 
@@ -244,12 +264,12 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.23 `portal_status_evidence`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `evidence_id`, one of the five normalized ITD labels, `official_label_raw` containing the exact raw label, exact artifact/status reference, capture time, and actor.
+- **Fields:** `tenant_id`, `tax_case_id`, `evidence_id`, `evidence_artifact_id`, `evidence_artifact_hash`, normalized_label (one of: submitted, verified, processed, defective, case_transferred_to_assessing_officer), `official_label_raw` (exact raw label), capture_time, actor.
 - **Primary key:** `(tenant_id, tax_case_id, evidence_id)`.
 - **Unique keys:** evidence identity within the TaxCase.
-- **Foreign keys:** TaxCase and exact `evidence_artifacts` row in the same tenant.
-- **Immutability:** evidence and its captured label are append-only.
-- **Gate:** a portal label cannot be stored without bound filing-specific evidence and its exact raw official label; an `invalid_return` condition is derived separately only from bound defect/notice evidence. Internal `prepared`, `exported`, or `unknown` state never implies a portal label.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; composite FK `(tenant_id, evidence_artifact_id, evidence_artifact_hash)` to evidence_artifacts matching UNIQUE(tenant_id, artifact_id, artifact_hash).
+- **Immutability:** evidence and its captured label are append-only; no cross-tenant binding possible (both FKs scoped to tenant_id).
+- **Gate:** portal label cannot be stored without bound filing-specific evidence and exact raw label; invalid_return condition derived separately only from bound defect/notice evidence. Internal `prepared`, `exported`, or `unknown` state never implies a portal label.
 
 ### 2.24 `audit_records`
 
