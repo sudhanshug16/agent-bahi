@@ -76,6 +76,36 @@ Each entry below has the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCH
 
 **Open choice:** The exact tenant migration and legal-person identity model remain owner and architect decisions.
 
+#### Apprentice debate record
+
+Two moderated rounds compared these models:
+
+- **A — recommended default:** one individual/PAN tenant with independent personal and sole-proprietorship BookSets.
+- **B:** separate personal and business bookkeeping tenants aggregated by a PAN/TaxCase authority.
+- **C:** separate business tenants plus a non-posting personal tax workspace.
+
+The outcome remains **A**. Sole proprietorship and individual are the same legal person/PAN for this boundary; companies remain separate legal-entity tenants. A preserves the no-cross-tenant product-query/write rule, while B needs a privileged cross-tenant aggregation exception.
+
+Personal banks, investments, property, and loans require canonical balances and reconciliation. C therefore either creates a second accounting engine or collapses into A/B. Same-tenant BookSets allow balanced atomic personal/business settlement; B requires two independently successful postings. TaxCase can enumerate all BookSets inside the PAN tenant, mark itself `STALE` when membership changes, and block omissions.
+
+Honest losing arguments:
+
+- A is a pervasive breaking data-model change: `book_set_id` scope, queries, indexes, uniqueness, fixtures, and migrations.
+- Separate tenants provide a harder future access boundary and simpler single-book mutations.
+
+Mandatory safeguards before A is implementation-ready:
+
+- Thread BookSet-level actor/resource authorization context from day one; a CA granted one business BookSet cannot read the personal BookSet by default.
+- Every BookSet-owned row carries `tenant_id` plus `book_set_id`, and each BookSet independently balances.
+- BookSet-scoped mutations fail with `AMBIGUOUS_BOOKSET` when not explicit; tenant-wide status/TaxCase aggregation is read-only and separately authorized.
+- The TaxCase source/BookSet catalog cannot be empty or `UNKNOWN`; a membership change makes the immutable case `STALE` and blocks it.
+- Gate-0 scenarios must prove personal-paid business expense, drawing/loan transfer, new BookSet mid-year staleness, and business-only CA access cannot read personal data.
+
+Reversal trigger: if Gate 0 cannot prove fail-closed BookSet authorization/isolation, or migration would require weakening canonical ledger invariants, reopen B with an explicit PAN registry and read-only snapshot authority.
+
+This apprentice debate is evidence, not architect review or implementation authority.
+It changes no other PT decision, legal rule, source, or index file.
+
 <a id="pt-002"></a>
 ### PT-002: BookSet-owned records and independent balance
 
