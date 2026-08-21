@@ -173,7 +173,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - Only observed debit clears payroll payable once; export ≠ payment.
 - Payroll payable locked while run is draft/unposted; unlock only via reversal pattern.
 
-**Tests**: Salary structure gross/net correct; payables balanced; CSV export deterministic; debit observation required before payable clears; select Form 24Q versus Form 138 from the frozen effective snapshot; unknown, stale, or missing source blocks statement selection; idempotency.
+**Tests**: Salary structure gross/net correct; payables balanced; CSV export deterministic; debit observation required before payable clears; verify the exact legacy/new-law effective boundary at payment/credit through 31 March 2026 versus from 1 April 2026; select Form 24Q versus Form 138 only from a VERIFIED frozen source/effective snapshot; for missing, stale, OPEN, or TENTATIVE source/effective snapshots, statement selection and the correction/acknowledgement transition action each return REVIEW/BLOCK with no artifact or state change; idempotency.
 
 **Exit Gate**: Payroll posting complete; bank-file state machine working; exports frozen and verified. s392 salary Forms 130/138 and the distinct s393(1) Table 8(iii) specified-bank/senior-citizen Forms 130/138 route remain in the P6 payroll-canonical lane; the general s393 branch and s394 TCS are deferred to Phase 7.
 
