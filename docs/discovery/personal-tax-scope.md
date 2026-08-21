@@ -466,14 +466,14 @@ The commands are scenario notation, not an implementation contract. Each mutatio
 
 ### Personal-paid business expense
 
-An operator discovers that a finalized personal expense was actually for the consulting BookSet. The correction is not a label edit:
+An operator determines that a personal bank payment was for the consulting BookSet. The posting uses PT-003 mechanics:
 
-1. Reverse the personal posting with a linked reason.
-2. Post the business replacement to the consulting BookSet, with GST treatment determined by the applicable business facts and snapshot.
-3. Record the separate same-tenant funding settlement using the linked due-to-owner and due-from-business legs.
-4. Reconcile both BookSets and attach the evidence to `tc_person_fy25_original` using explicit `--book-set` and `--tax-case tc_...` on each mutation.
+1. Personal BookSet leg: `Dr amount-due-from-business E / Cr personal-bank E`.
+2. Business BookSet leg: `Dr software-expense (base amount) / Dr eligible-input-GST` (only where eligibility is separately established under the existing rules; otherwise use the appropriate non-creditable tax/expense treatment), `Cr amount-due-to-proprietor E` (gross amount matching the personal leg).
+3. One atomic transaction with the same shared gross amount across both linked legs. There is no fictional receipt into the business bank and no second settlement in this event.
+4. Reconcile both BookSets and attach the evidence to `tc_person_fy25_original` using explicit `--book-set` and `--tax-case tc_...` on each mutation. If the business later reimburses the proprietor, that is a separate linked event (business `Dr amount-due-to-proprietor / Cr business-bank`; personal `Dr personal-bank / Cr amount-due-from-business`), not part of this posting.
 
-The original personal ledger is preserved, the replacement is business-owned, and the funding movement is neither omitted nor counted as a second expense.
+Each BookSet is reconciled independently, and the expense is not counted once in the personal BookSet and again as an unrelated business expense.
 
 The scenario also demonstrates the boundary between accounting and tax evidence. BookSet routing is an accounting fact; GST eligibility and return treatment are effective-dated decisions loaded from the relevant official source pack. A source label, payment instrument, or operator expectation cannot decide those lanes alone.
 
