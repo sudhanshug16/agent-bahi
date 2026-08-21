@@ -121,7 +121,7 @@ Sudhanshu's owner approval is recorded for this clarified model. Architect revie
 
 **Boundary:** A company tenant normally has one BookSet even when it has multiple bank, cash, or card accounts. An individual/PAN tenant may have one personal BookSet plus separate sole-proprietorship BookSets. Accounts, postings, invoices, bills, payments, assets, subledgers, evidence links, and reconciliations are BookSet-owned. Raw imported lines are not posted accounting records and may remain unassigned until explicitly classified. Cross-BookSet views are explicit aggregations, not hidden shared balances.
 
-Cross-BookSet movement is represented by linked entries rather than duplicated balances. One-BookSet commands resolve that BookSet automatically; when a write is ambiguous across multiple BookSets, it fails closed unless the operator supplies explicit, visible BookSet context as documented by PT-014. The atomic transfer mechanics remain separately specified in PT-003 and are not approved by this entry.
+Cross-BookSet movement is represented by linked entries rather than duplicated balances. Every BookSet mutation requires explicit BookSet context as documented by PT-014, even when only one candidate exists; implicit automatic resolution is never performed. The atomic transfer mechanics remain separately specified in PT-003 and are not approved by this entry.
 
 All existing tenant-wide identifier uniqueness remains in force until separately revised. Adding BookSets does not silently narrow uniqueness to a BookSet.
 
@@ -248,7 +248,7 @@ There is no generic form priority order, threshold shortcut, business-assets sho
 
 **Control:** Selection records the evaluated facts, official predicate identifiers, source snapshot, and unresolved branches. Unresolved eligibility returns REVIEW/BLOCK.
 
-**Note:** PT-007 AuthorityPack sourcing/binding remains unresolved and does not prevent owner approval of this semantic rule.
+**Note:** PT-007 (owner-approved) establishes the mandatory AuthorityPack binding required for this decision. Future authority-registry sourcing and V1 bundled-pack mechanics remain architectural choices; PT-007 does not pre-approve future registry automation or live-scraping.
 
 <a id="pt-007"></a>
 ### PT-007: Immutable hashed AuthorityPack binding
@@ -556,7 +556,7 @@ agent-bahi status --tenant tenant_person
 
 It lists the personal BookSet, each proprietorship BookSet, and the TaxCases separately. It does not require `--book-set`.
 
-Aggregate TaxCase create, validate, and status operations are tenant/TaxCase-scoped and are explicitly exempt from `--book-set`. Only BookSet-scoped imports, reconciliations, ledger postings, and corrections require explicit `--book-set` when multiple eligible BookSets exist. Every TaxCase mutation after creation names an immutable `--tax-case tc_...`; ambiguity fails closed.
+Aggregate TaxCase create, validate, and status operations are tenant/TaxCase-scoped and are explicitly exempt from `--book-set`. Every BookSet-scoped mutation (imports, reconciliations, ledger postings, corrections) requires explicit `--book-set` even with one eligible BookSet. Every TaxCase mutation after creation names an immutable `--tax-case tc_...`; ambiguity fails closed.
 
 ```text
 agent-bahi tax-case create --tenant tenant_person --tax-case tc_person_fy25_original --period FY-2025-26 --filing-sequence original

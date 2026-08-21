@@ -101,18 +101,65 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Required artifact kinds:** exactly four independently hashed and effective-dated kinds are supported: `schema`, `validation_rules`, `utility`, and `instructions`. They are separate bindings, even when released together, and none may be substituted for another.
 - **Gates:** a TaxCase must bind all four compatible kinds before validation or export; a missing, stale, incompatible, or unapproved binding yields `REVIEW/BLOCK`.
 
-### 2.10 `tax_cases`
+### 2.10 `authority_packs`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `pan`, normalized `period_key`, assessment year, ordinal `filing_sequence`, filing trigger, governing Act, `rule_snapshot_id`, four official artifact binding IDs, selected form, frozen eligibility facts/predicate references, internal filing lifecycle, case readiness state, staleness reason, and successor reference.
+- **Fields:** `pack_id`, governing Act, applicable period, filing trigger, content hash, official source reference, retrieval metadata, effective dates, compatibility metadata.
+- **Primary key:** `pack_id`.
+- **Unique keys:** `(Act, period, filing_trigger, content_hash)`.
+- **Foreign keys:** period to `income_periods`.
+- **Immutability:** pack ID, hash, source, and effective interval are immutable. A new official release creates a new row.
+- **Contents:** An AuthorityPack is an immutable bundle containing applicable period and filing trigger, governing Act, official schema, validation rules, utility reference and version, instructions and guidance, provenance and source evidence, effective dates and compatibility metadata.
+- **Gate:** every FilingSnapshot must bind exactly one compatible AuthorityPack by ID and hash. Missing or incompatible pack returns REVIEW/BLOCK.
+
+### 2.11 `tax_cases`
+
+- **Fields:** `tenant_id`, `tax_case_id`, `pan`, normalized `period_key`, assessment year, ordinal `filing_sequence`, filing trigger, governing Act, `rule_snapshot_id`, `authority_pack_id`, selected form, frozen eligibility facts/predicate references, internal filing lifecycle, case readiness state, staleness reason, and successor reference.
 - **Primary key:** `(tenant_id, tax_case_id)`.
 - **Unique keys:** `(tenant_id, period_key, filing_sequence)`; a TaxCase is one non-posting case per taxpayer, period, and sequence.
-- **Foreign keys:** `(tenant_id, pan)` to the matching unique tenant key; period to `income_periods`; rule snapshot and all four artifact bindings; successor `(tenant_id, successor_tax_case_id)` to another TaxCase in the same tenant.
-- **Immutability:** PAN, period, sequence, trigger, Act, authority bindings, selected form facts, and membership snapshot are immutable. Internal state transitions and staleness are audited; an original case is never edited into a successor.
+- **Foreign keys:** `(tenant_id, pan)` to the matching unique tenant key; period to `income_periods`; rule snapshot and authority pack; all four artifact bindings through the pack; successor `(tenant_id, successor_tax_case_id)` to another TaxCase in the same tenant.
+- **Immutability:** PAN, period, sequence, trigger, Act, authority pack, selected form facts, and membership snapshot are immutable. Internal state transitions and staleness are audited; an original case is never edited into a successor.
 - **Internal states:** preparation/readiness state is separate from external portal status. Internal filing lifecycle is exactly `prepared`, `exported`, or `unknown`; case readiness remains an internal product state.
 - **Portal status:** only these five normalized portal labels are allowed: `submitted`, `verified`, `processed`, `defective`, and `case_transferred_to_assessing_officer`, corresponding to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq). Each non-null portal label requires a bound `portal_status_evidence` row retaining the exact raw label and evidence. An invalid return is a separate derived legal consequence/internal condition only when supported by bound defect or notice evidence; it is never a portal label. Form 16A is never a portal status.
-- **Gates:** TaxCase creation binds the matching tenant PAN, period-derived Act, compatible rule snapshot, all four artifact kinds, normalized membership, and non-empty source catalog atomically. Form eligibility must be evaluated from the frozen facts and official predicates before `ready`, validation, or export. A changed membership/source catalog marks the case stale and blocks the affected action.
+- **Gates:** TaxCase creation binds the matching tenant PAN, period-derived Act, compatible rule snapshot, compatible authority pack, normalized membership, and non-empty source catalog atomically. Form eligibility must be evaluated from the frozen facts and official predicates before `ready`, validation, or export. A changed membership/source catalog marks the case stale and blocks the affected action.
 
-### 2.11 `tax_case_bookset_membership`
+### 2.12 `filing_snapshots`
+
+- **Fields:** `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, exact BookSet ledger version/event cursor references (immutable), source artifact IDs/hashes, parser versions, frozen eligibility facts, `tax_computation_id`, as_of_instant timestamp, content hash.
+- **Primary key:** `snapshot_id`.
+- **Unique keys:** `(tax_case_id, as_of_instant, content_hash)`.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `authority_pack_id` to AuthorityPack; BookSet and evidence artifact references are tenant-scoped.
+- **Immutability:** snapshot ID, ledger versions, source artifacts, parser versions, computation ID, timestamp, and content hash are immutable. A new snapshot is created when books or sources change before submission.
+- **Gate:** FilingSnapshot must bind exactly one AuthorityPack and reference exact BookSet ledger event cursors (not just as-of date). Every ExportRun is tied to exactly one FilingSnapshot.
+
+### 2.13 `tax_computations`
+
+- **Fields:** `computation_id`, `snapshot_id`, version, content hash, tax computation state.
+- **Primary key:** `computation_id`.
+- **Unique keys:** `(snapshot_id, version, content_hash)`.
+- **Foreign keys:** `snapshot_id` to FilingSnapshot.
+- **Immutability:** computation ID, snapshot binding, and hash are immutable. A computation never posts to the books.
+- **Gate:** exactly one TaxComputation derives from one FilingSnapshot. Multiple ExportRuns may use the same computation if snapshot has not changed.
+
+### 2.14 `export_runs`
+
+- **Fields:** `export_id`, `snapshot_id`, export format, export timestamp, content hash, selected-for-submission flag, creation metadata.
+- **Primary key:** `export_id`.
+- **Unique keys:** `(snapshot_id, export_format, export_timestamp, content_hash)`.
+- **Foreign keys:** `snapshot_id` to FilingSnapshot.
+- **Immutability:** export ID, snapshot binding, and content hash are immutable. A new export is created for a snapshot when format or generation parameters change.
+- **Selected submission:** exactly one export per FilingSnapshot may be marked selected-for-submission; a SubmissionAttempt binds that selected export.
+- **Gate:** multiple ExportRuns may exist per snapshot; only the explicitly selected export is submission-bound.
+
+### 2.15 `submission_attempts`
+
+- **Fields:** `attempt_id`, `tax_case_id`, `export_id`, portal receipt/acknowledgement, raw portal status/response, capture timestamp, actor.
+- **Primary key:** `attempt_id`.
+- **Unique keys:** one per selected ExportRun.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `export_id` to ExportRun.
+- **Immutability:** attempt ID, export binding, receipt/status, and response are immutable.
+- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase. Post-submission, correction work uses a linked successor TaxCase (PT-016).
+
+### 2.16 `tax_case_bookset_membership`
 
 - **Fields:** `tenant_id`, `tax_case_id`, `book_set_id`, inclusion reason, inclusion metadata.
 - **Primary key:** `(tenant_id, tax_case_id, book_set_id)`.
@@ -121,7 +168,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** one membership snapshot is sealed at TaxCase creation; after creation, a database write guard rejects every insert, update, or delete on the old case's membership rows.
 - **Gate:** this normalized relation is the one authoritative source for TaxCase BookSet membership. A membership change marks the old case `STALE` and atomically creates a successor with a new complete set in the same transaction workflow. The database write guard and atomic successor transaction must be proven per dialect at Gate0. No duplicate authoritative list is stored in JSON or arbitrary text.
 
-### 2.12 `external_sources`
+### 2.17 `external_sources`
 
 - **Fields:** `tenant_id`, `tax_case_id`, `source_id`, source type, readiness status, source identity and period, evidence pointer, reconciliation state, and actor metadata.
 - **Primary key:** `(tenant_id, tax_case_id, source_id)`.
@@ -132,7 +179,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Statuses:** exactly `UNKNOWN`, `DECLARED_NOT_APPLICABLE`, `EXPECTED`, `INGESTED`, `RECONCILED`, `CONFLICT`, `INCOMPLETE`, `READY`, or `STALE`.
 - **Gates:** the complete required catalog is enumerated before readiness; mandatory unresolved, conflicting, incomplete, stale, or unknown entries block the affected action. An empty or unenumerated catalog cannot become ready.
 
-### 2.13 `evidence_artifacts`
+### 2.18 `evidence_artifacts`
 
 - **Fields:** `tenant_id`, `artifact_id`, content hash, content type, size, immutable storage reference, parser identity/release, retrieval metadata.
 - **Primary key:** `(tenant_id, artifact_id)`.
@@ -141,7 +188,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** raw content, hash, storage reference, and parser provenance are immutable; a new file or parser result creates a new row.
 - **Gate:** every derived record and filing/portal evidence row points to an exact artifact; no import overwrites another artifact.
 
-### 2.14 `external_source_derived_records`
+### 2.19 `external_source_derived_records`
 
 - **Fields:** `tenant_id`, `tax_case_id`, `source_id`, `derived_record_id`, artifact tenant and ID, parsed facts, parser warnings, and derivation metadata.
 - **Primary key:** `(tenant_id, tax_case_id, source_id, derived_record_id)`.
@@ -150,7 +197,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** derived records are append-only and retain their raw-artifact pointer.
 - **Gate:** no cross-tenant derived evidence is accepted, even when artifact IDs or source IDs collide; the composite tenant-aware database relationship, not application convention, enforces evidence ownership; parser warnings never become reconciliation success.
 
-### 2.15 `reconciliation_records`
+### 2.20 `reconciliation_records`
 
 - **Fields:** `tenant_id`, `reconciliation_id`, TaxCase/source reference, optional BookSet reference, compared artifact IDs, outcome, conflicts, reviewer, and timestamp.
 - **Primary key:** `(tenant_id, reconciliation_id)`.
@@ -159,7 +206,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** a reconciliation result is append-only; a new comparison creates a new record.
 - **Gate:** reconciliation links books and evidence without replacing either; a required conflict cannot be marked ready by acknowledgement alone.
 
-### 2.16 `correction_metadata`
+### 2.21 `correction_metadata`
 
 - **Fields:** `tenant_id`, `tax_case_id`, filing sequence, verified trigger, applicable mechanism identifier, effective rule reference, deadline/source, correction evidence, verifier, and verification timestamp.
 - **Primary key:** `(tenant_id, tax_case_id)`.
@@ -168,7 +215,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** verified metadata is append-only; a changed mechanism creates a new successor TaxCase and metadata row.
 - **Gates:** `filing_sequence = 1` needs no correction metadata; every sequence greater than one requires complete, verified correction metadata before `ready`, validation, or export. Missing or unverified metadata yields `REVIEW/BLOCK`.
 
-### 2.17 `correction_lineages`
+### 2.22 `correction_lineages`
 
 - **Fields:** `tenant_id`, `book_set_id`, `lineage_id`, original journal ID, reversal journal ID, replacement journal ID, reason, actor, and timestamp.
 - **Primary key:** `(tenant_id, book_set_id, lineage_id)`.
@@ -177,7 +224,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** this is the one canonical correction-lineage definition; lineage rows and linked journals are never rewritten or duplicated under another authoritative definition.
 - **Gate:** a posted correction requires the original, reversal, and replacement relationship to be valid and same-BookSet; affected derived cases become stale.
 
-### 2.18 `portal_status_evidence`
+### 2.23 `portal_status_evidence`
 
 - **Fields:** `tenant_id`, `tax_case_id`, `evidence_id`, one of the five normalized ITD labels, `official_label_raw` containing the exact raw label, exact artifact/status reference, capture time, and actor.
 - **Primary key:** `(tenant_id, tax_case_id, evidence_id)`.
@@ -186,7 +233,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** evidence and its captured label are append-only.
 - **Gate:** a portal label cannot be stored without bound filing-specific evidence and its exact raw official label; an `invalid_return` condition is derived separately only from bound defect/notice evidence. Internal `prepared`, `exported`, or `unknown` state never implies a portal label.
 
-### 2.19 `audit_records`
+### 2.24 `audit_records`
 
 - **Fields:** tenant and optional BookSet scope, audit ID, entity identity, action, actor/source, request identity, outcome, and timestamp.
 - **Primary key:** `(tenant_id, audit_id)`.
