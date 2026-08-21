@@ -26,8 +26,10 @@ exception rather than silently guessing.
   application rates, realized exchange gain/loss, bank-fee separation, and
   auditable period-end revaluation adjustments.
 - Own the asset register, automatic depreciation postings, disposal tracking,
-  and the policy/configuration boundary for still-undecided depreciation
-  methods and book-versus-tax schedules.
+  and the policy/configuration boundary for **T-003 TENTATIVE - NOT
+  OWNER-APPROVED** depreciation methods and separate book-versus-tax schedules.
+  This choice is reversible and must not be treated as implementation
+  authorization.
 - Enforce permissions, safety gates, document state rules, and ledger
   invariants, including inclusive global or module-specific period locks.
 - Expose authoritative validation results and durable audit metadata.
@@ -139,20 +141,26 @@ of invented procedures:
 The bank-reconciliation skill is invoked by a scheduler or user. Its ordered
 workflow is to gather bank statement evidence and open-item evidence, produce
 one or more candidate matches, show the evidence and uncertainty, and invoke
-the explicit CLI persistence operation only after the match is selected or
-otherwise authorized by the workflow. The CLI validates tenant, bank account,
-currency, amount, status, and idempotency, then persists the match and
-provenance. Replaying the same idempotent request must not create a second
-match. The engine never silently chooses a match or runs an AI decision inside
-posting.
+the explicit CLI persistence operation only after a recorded explicit human
+confirmation is bound to the exact selected candidate/proposal. No workflow,
+skill, scheduler, or agent authorization substitutes for that confirmation.
+The CLI validates tenant, bank account, currency, amount, status, and
+idempotency, then persists the match and provenance. Replaying the same
+idempotent request must not create a second match. The engine never silently
+chooses a match or runs an AI decision inside posting.
 
 ### Period-close and locking boundary
 
 The skill may prepare a lock or a late-document decision, but the engine owns
 the inclusive `locked-through` rule. Create, edit, delete, and void operations
-inside the locked range fail. Unlock and bounded partial unlock require a
-reason, actor, audit record, and impact preview. A late document is routed to
-an explicit controlled-reopen/original-date-posting choice or a
+inside the locked range fail. Full unlock uses
+`period unlock preview|commit`; bounded partial unlock uses
+`period partial-unlock preview|commit`. Both require tenant/scope, current
+lock version, explicit range, non-empty reason, impact preview, and recorded
+explicit human confirmation at commit; stale previews return
+`UNLOCK_PREVIEW_REQUIRED`, invalid ranges return `PARTIAL_UNLOCK_INVALID`, and
+version changes return `UNLOCK_CONFLICT`. A late document is routed to an
+explicit controlled-reopen/original-date-posting choice or a
 current-period-adjustment choice; no skill may turn that choice into an
 automatic posting policy.
 

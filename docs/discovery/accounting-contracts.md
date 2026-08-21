@@ -42,10 +42,11 @@ detail that does not change product or statutory behavior may be marked
   in place.
 - The normal posting lifecycle is exactly:
   `Draft -> Validated -> Posted -> Settled`.
-  `Settled` is derived from explicit allocations or an explicit close-out, and
-  may be partial while the record remains open. A document must not skip
-  validation. Pre-post drafts may be cancelled/voided; posted records require
-  reversal lineage.
+  `Settled` is reached only after full allocation or an explicit, audited
+  close-out. `Partially Allocated`, `Unapplied`, and other open/partial states
+  are derived views while the document remains `Posted`; they are never a
+  `Settled` shortcut. A document must not skip validation. Pre-post drafts may
+  be cancelled/voided; posted records require reversal lineage.
 - Every final posting is one atomic balanced journal: total debits equal total
   credits in the relevant currency/base-currency representation. Account
   balances and all report views are derived from the canonical postings.
@@ -100,11 +101,14 @@ the semantic operation and error code are binding.
 | `CONCURRENCY_CONFLICT` / `SERIES_ALLOCATION_CONFLICT` | Expected version or exclusive allocation lock failed; retry only with a newly prepared plan. |
 | `MISSING_RULE` / `STALE_RULE` / `AMBIGUOUS_RULE` | A required effective-dated rule is unavailable or not unique; statutory finalization fails closed. |
 | `EVIDENCE_EXCEPTION` / `ITC_EVIDENCE_REQUIRED` | Evidence is absent or does not support the requested tax lane; gross bookkeeping may still be allowed. |
-| `ALLOCATION_CONFIRMATION_REQUIRED` / `RECONCILIATION_CONFIRMATION_REQUIRED` | Agent proposal is not human-approved for a high-consequence allocation or match. |
+| `ALLOCATION_CONFIRMATION_REQUIRED` / `RECONCILIATION_CONFIRMATION_REQUIRED` | No recorded explicit human confirmation is bound to the exact proposal/plan; a skill or workflow cannot self-authorize. |
 | `CURRENCY_MISMATCH` / `RATE_REQUIRED` | Currency or explicit rate data is inconsistent or missing. |
 | `UNKNOWN_EXTERNAL_OUTCOME` | An external attempt is quarantined; no blind retry or transport switch is allowed. |
 | `BASIS_NOT_APPLICABLE` | The caller supplied `--basis` to a fixed-basis report; never ignore it. |
 | `UNSUPPORTED_V1_SCOPE` | The request requires inventory, warehouse, COGS, or another deferred product area. |
+| `UNLOCK_PREVIEW_REQUIRED` / `PARTIAL_UNLOCK_INVALID` / `UNLOCK_CONFLICT` | Unlock preview is missing/stale, the requested range/scope is invalid, or the lock changed before commit. |
+| `REASON_REQUIRED` | A lock, unlock, reversal, void, correction, or other controlled mutation has no non-empty reason. |
+| `IMPORT_CONTENT_ALREADY_PRESENT` / `IMPORT_DUPLICATE_LINE_AMBIGUOUS` | The same file was already imported for the tenant/bank account, or identical legitimate rows cannot be distinguished safely; stop for explicit resolution. |
 
 Machine-readable failures contain `error.code`, a plain-language `message`,
 `tenant_id` when safely known, `gstin_id` when applicable, field/entity
@@ -130,6 +134,19 @@ there is no last-write-wins or silent retry.
 All templates below name account *roles*, not statutory account names. A tenant
 maps roles to its chart of accounts. Tax components are selected by the
 effective rule pack; this contract does not state statutory rates.
+
+### 1.5 Number-series invariant
+
+Every invoice, bill, note, receipt, payment, journal, and reserved issuance
+number uses a tenant-scoped monotonic series with explicit family, financial
+year, and GSTIN scope when applicable. Allocation is serialized; numbers only
+move forward and are never reused, even when a draft is cancelled, an external
+issuance attempt fails, a transaction rolls back after reservation, or a number
+is voided. Every gap is a durable `NumberGap` record containing the number,
+series scope, reason (`void`, `reservation_failed`, `external_failure`,
+`cancelled`, or another explicit reason), request/operation ID, actor, time,
+frozen payload/artifact hash when relevant, and audit evidence. A failed
+reservation never releases a number to the allocator.
 
 ## 2. Party, contact, address, and tax identity
 
@@ -375,9 +392,11 @@ amounts, rate source, and rounding metadata.
 invoice date, due date/payment terms, currency, line snapshots, tax components
 or a recorded non-applicability decision, totals, account roles, GSTIN when
 `gst_context=required`, and evidence/exception state. State is
-`Draft -> Validated -> Posted -> Settled`; settlement may be partial. An
-applicable external issuance gate may insert `Issuance-Pending/Frozen` between
-Validated and Posted, but ARN never gates ledger posting.
+`Draft -> Validated -> Posted -> Settled`; settlement is reached only after
+full allocation or explicit audited close-out. Partial/open allocation remains
+a derived view while the invoice is `Posted`. An applicable external issuance
+gate may insert `Issuance-Pending/Frozen` between Validated and Posted, but ARN
+never gates ledger posting.
 
 **Validation.** Validate tenant/GSTIN, party/address/tax identity as required,
 line and tax arithmetic, currency/rate, date/period, numbering plan, duplicate
@@ -405,7 +424,12 @@ original posting plus a new corrected invoice with new version/number lineage;
 the original remains reportable. Finalization and number allocation serialize;
 draft edits use expected version. A locked accounting date rejects finalization,
 void, reversal, or replacement until the controlled reopen or current-period
-adjustment choice is explicitly confirmed.
+adjustment choice is explicitly confirmed. If an issuance-pending/frozen
+attempt fails, times out, or is abandoned, the frozen candidate and artifact
+hash remain immutable; its reserved number is retained as a `NumberGap` with a
+void/failure reason and audit evidence. A superseding attempt is a new child
+operation and new candidate/number linked to the failed lineage; the reserved
+number is never released or reused.
 
 **Evidence and CLI.** Preserve invoice source, customer acceptance where
 available, tax calculation/rule version, e-invoice evidence where applicable,
@@ -454,7 +478,9 @@ rules, and evidence lanes. Missing supplier receipt/bill evidence never blocks
 gross bookkeeping posting: post the lawful gross expense/asset with a visible
 evidence exception. ITC is independent and remains pending/ineligible until
 the prescribed document and other effective conditions are verified; GSTR-2B
-alone is not proof.
+alone is not proof. The bill due date affects aging and reminders only; it
+never clears AP or makes the bill `Settled`. Only an explicit, validated
+payment or credit allocation, or an explicit audited close-out, can settle it.
 
 **Deterministic posting template.** Initial gross posting when ITC is not yet
 valid:
@@ -506,6 +532,71 @@ derived views.
    ITC reclassification posts and the original bill remains immutable.
 3. A duplicate supplier document is submitted under a new request ID: it is
    rejected before posting and identifies the existing tenant-scoped record.
+
+### 7.1 Deterministic mixed-use and claimant expense templates
+
+These templates implement the settled evidence policy for business/personal
+allocation. Let `G` be the validated gross amount, `B` the explicitly approved
+business share, and `P = G - B` the personal share. `B` and `P` must be exact
+minor-unit amounts that sum to `G`; no universal percentage is inferred. GST
+ITC and income-tax treatment remain independent lanes and never follow merely
+from the allocation.
+
+**Employee or director pays personally.** Reimburse only the approved business
+share. The posting is:
+
+```text
+Dr Business expense or asset role                         B
+  Cr Employee/director reimbursement payable              B
+```
+
+The personal share `P` is not reimbursed or expensed. If a claim contains
+`P`, the excess is held as an explicit exception or rejected; it is not
+silently paid. When the reimbursement is actually paid, the separate cash
+allocation is `Dr Employee/director reimbursement payable B / Cr Bank/Cash B`.
+
+**Company pays the full mixed-use bill.** If the personal share is approved as
+a recoverable amount, post:
+
+```text
+Dr Business expense or asset role                         B
+Dr Named recoverable from employee/director               P
+  Cr Accounts Payable or Bank/Cash                        G
+```
+
+The recoverable must name the accountable person and source document. A
+separately reviewed payroll/perquisite treatment is an alternative explicit
+path, not an automatic reclassification; it uses the applicable effective
+payroll rule and named payroll/perquisite roles. The personal share is never
+silently expensed and allocation approval never grants ITC.
+
+**Sole proprietor pays or the business pays a mixed-use bill.** The business
+share is the expense/asset and the personal share is drawings:
+
+```text
+Dr Business expense or asset role                         B
+Dr Proprietor drawings                                    P
+  Cr Bank/Cash or Accounts Payable                        G
+```
+
+For a proprietor-paid business expense, use `Dr Business expense/asset B / Cr
+Proprietor payable B`, then settle that payable only by an explicit payment or
+allocation. Evidence records the premises/vendor/usage facts, allocation
+rule version, actor, approval, and affected tax lanes. A missing receipt does
+not block the gross bookkeeping entry, but the relevant tax lanes remain
+exception-open or review-required.
+
+**CLI and skill boundary.** Command family:
+`expense mixed-use preview|validate|confirm|post`,
+`expense claim preview|validate|post`, and
+`expense reimbursement preview|post`. `ALLOCATION_CONFIRMATION_REQUIRED`,
+`EVIDENCE_EXCEPTION`, `ITC_EVIDENCE_REQUIRED`, and
+`RECONCILIATION_CONFIRMATION_REQUIRED` apply. A skill may prepare the split
+and evidence bundle; only a recorded explicit human confirmation bound to the
+exact `G`, `B`, `P`, source, and rule snapshot permits posting. A workflow,
+agent, or skill cannot self-authorize the split. Reports show business,
+personal, recoverable, drawings, reimbursement, and tax-lane amounts
+separately.
 
 ## 8. Credit notes, debit notes, and vendor credits
 
@@ -663,9 +754,10 @@ overpaid balance and state `Requested -> Approved -> Posted -> Settled`.
 amount precision, rate, eligible state, no duplicate source-target application,
 and total allocation not exceeding the source or target unless the excess is
 explicitly overpayment/unapplied. Matching proposals are non-deterministic;
-the engine accepts only an explicit human confirmation or a policy-approved
-human-origin approval token. Agent confirmation alone is not human
-confirmation.
+the engine accepts persistence only with a recorded explicit human
+confirmation bound to the exact allocation plan, source, target, amount, and
+rate. Agent, skill, scheduler, workflow, or policy approval alone is not human
+confirmation and cannot self-authorize.
 
 **Deterministic posting template.** For a customer receipt allocation:
 
@@ -684,12 +776,30 @@ Dr Accounts Payable for the applied bill/note amount
 Cross-currency settlement adds separate bank-fee and realized-FX gain/loss
 roles so the applied document amount and bank amount both reconcile. A partial
 allocation leaves the residual control balance. An overpayment remains in the
-unapplied control account until applied or refunded. A refund posts:
+unapplied control account until applied or refunded. Refund direction depends
+on who owes the cash.
+
+**Customer refund** (the tenant pays cash back to a customer):
 
 ```text
-Dr Unapplied/overpayment control account
-  Cr Bank/Cash
+Dr Unapplied Customer Receipts or Customer Credit Balance       R
+  Cr Bank/Cash                                                  R
 ```
+
+If the source is a posted credit note rather than an unapplied receipt, use a
+named `Customer Refund Payable`/credit-balance control role for `R`; never debit
+revenue a second time.
+
+**Supplier refund** (a supplier pays cash back to the tenant):
+
+```text
+Dr Bank/Cash                                                    R
+  Cr Unapplied Supplier Payments or Supplier Credit Receivable  R
+```
+
+The source control/balance must be identified in the refund record. A supplier
+refund never credits the tenant's bank or uses the customer control account,
+and a customer refund never debits the tenant's bank as if cash were received.
 
 No allocation silently changes revenue, expense, tax, or the original document.
 
@@ -723,6 +833,9 @@ FX/fee components, and unmatched candidates.
 3. A ₹40,000 overpayment is refunded after approval: one refund journal debits
    the control account and credits bank, with refund evidence and no revenue
    reversal.
+4. A supplier returns a ₹40,000 overpayment: the refund journal debits bank
+   and credits the supplier-payment control/receivable, never credits bank or
+   uses the customer refund account.
 
 ## 11. Journals
 
@@ -785,11 +898,16 @@ lineage, control-account reconciliation, and audit exceptions.
 ## 12. Bank statement import and reconciliation
 
 **Scope and identifiers.** A bank account and statement batch are tenant
-scoped. Each import has a stable batch ID, source filename/reference, content
-hash, bank-account ID, statement period, currency, and import sequence. Each
-line has a stable line ID and deterministic fingerprint from the source batch,
-line number, date, amount, direction, and bank reference; duplicates are
-retained as duplicate observations rather than silently collapsed.
+scoped. Each import has a stable batch ID, source filename/reference, raw-file
+content hash, bank-account ID, statement period, currency, and import sequence.
+The tuple `(tenant_id, bank_account_id, raw_file_content_hash)` is unique:
+re-importing the same bytes returns the original batch/result or
+`IMPORT_CONTENT_ALREADY_PRESENT` and creates no second batch. The raw content
+hash and line fingerprint never include the generated batch ID. Each line has
+a stable line ID and a fingerprint from bank account, statement period,
+parser/preset version, source line number (or source row ordinal), date, amount,
+direction, currency, description, and bank reference. Identical legitimate
+rows on different source lines therefore remain distinct.
 
 **Required fields and states.** A batch requires bank account, statement dates,
 currency, source evidence/hash, and parser/preset version. A line requires
@@ -800,12 +918,16 @@ an explicit missing-field exception). Line state is
 match and never posts.
 
 **Validation and confirmation.** Validate tenant/account ownership, parser
-version, duplicate fingerprints, currency, precision, opening/closing balance
-reconciliation where the source supplies it, and eligible target state. A
-skill may rank candidates; only a human-confirmed, CLI-validated match is
-persisted. Explicitly record no-match and ambiguity. Import is atomic per
-batch unless the contract returns a declared, non-zero partial result (the
-default is reject the full invalid batch).
+version, content-hash uniqueness, line fingerprints, currency, precision,
+opening/closing balance reconciliation where the source supplies it, and
+eligible target state. A fingerprint collision from a different file is not
+silently deduplicated: retain the complete new line and evidence, mark both
+lines `AmbiguousDuplicate`, and require explicit human resolution before any
+match. Missing line numbers use the stable source row ordinal; identical rows
+in one file are never dropped. A skill may rank candidates; only a recorded
+explicit human confirmation bound to the exact candidate/proposal is
+persisted. Import is atomic per batch unless the contract returns a declared,
+non-zero partial result (the default is reject the full invalid batch).
 
 **Deterministic posting template.** Import and proposal have no posting.
 Persisting a match has no hidden posting; it links an already posted cash
@@ -833,6 +955,7 @@ and result. Command family:
 `reconciliation propose|review|match|unmatch|show`, and
 `reconciliation fee preview|post`. Errors include
 `RECONCILIATION_CONFIRMATION_REQUIRED`, `DUPLICATE_STATEMENT_LINE`,
+`IMPORT_CONTENT_ALREADY_PRESENT`, `IMPORT_DUPLICATE_LINE_AMBIGUOUS`,
 `CURRENCY_MISMATCH`, `TENANT_SCOPE_VIOLATION`, `PERIOD_LOCKED`, and
 `CONCURRENCY_CONFLICT`.
 
@@ -845,12 +968,16 @@ variance, fees, payment evidence, and provenance by skill/version.
 
 **Acceptance scenarios.**
 
-1. A CSV contains a repeated bank reference: both source lines remain visible;
-   one cannot silently overwrite the other, and the import reports the
-   duplicate for review.
-2. A skill proposes two invoice matches for one credit: no match is persisted
+1. The same CSV bytes are imported twice for one bank account: the second
+   command returns the existing batch or `IMPORT_CONTENT_ALREADY_PRESENT` and
+   creates no duplicate batch.
+2. A CSV contains repeated legitimate rows: source line number/ordinal keeps
+   both fingerprints distinct; no line is silently dropped.
+3. A fingerprint collides with a line from another file: both lines remain
+   visible as `AmbiguousDuplicate` until explicit human resolution.
+4. A skill proposes two invoice matches for one credit: no match is persisted
    until a human confirms one; the rejected candidate remains in provenance.
-3. A bank statement shows a salary debit after a generated export: the
+5. A bank statement shows a salary debit after a generated export: the
    explicit debit can clear net-pay payable once, while the export alone never
    posts or clears it.
 
@@ -883,27 +1010,56 @@ cross-tenant source. A selected rate is immutable after posting. Revaluation
 must not mutate the original document or settlement rate and must not combine
 realized and unrealized gain/loss.
 
-**Deterministic posting templates.** A cross-currency settlement balances the
-document clearing, bank amount, bank fees, and realized difference:
+**Deterministic settlement formulas and direction table.** Use base-currency
+amounts for every posting. For the applied foreign-currency quantity `Q`,
+immutable original rate `R0`, settlement/application rate `Rs`, and the
+current base-currency carrying amount `K` of the applied slice immediately
+before settlement (including any active revaluation), compute:
 
 ```text
-Dr/Cr Accounts Receivable or Accounts Payable (document-currency application)
-Dr Bank-fee expense (when applicable)
-Dr/Cr Realized FX gain/loss (balancing difference)
-  Cr/Dr Bank/Cash (paid-currency amount)
+C = round(Q * Rs)                 gross settlement consideration
+F = separately validated bank fee (not included in C)
+G_AR = C - K                       signed customer-receivable FX result
+G_AP = K - C                       signed supplier-payable FX result
 ```
 
-The direction is determined by receivable/payable and sign; it is computed,
-not chosen by an agent. Period-end revaluation of open AR/AP:
+The bank fee is always a separate journal, `Dr Bank-fee expense F / Cr
+Bank/Cash F`. It never changes `C` or the realized FX formula.
 
-```text
-Dr/Cr Open AR/AP revaluation adjustment
-  Cr/Dr Unrealized FX gain/loss
-```
+| Open item | Condition | Base-currency settlement journal |
+| --- | --- | --- |
+| Receivable | `G_AR >= 0` | `Dr Bank/Cash C`; `Cr Accounts Receivable K`; `Cr Realized FX Gain G_AR`. |
+| Receivable | `G_AR < 0` | `Dr Bank/Cash C`; `Dr Realized FX Loss -G_AR`; `Cr Accounts Receivable K`. |
+| Payable | `G_AP >= 0` | `Dr Accounts Payable K`; `Cr Bank/Cash C`; `Cr Realized FX Gain G_AP`. |
+| Payable | `G_AP < 0` | `Dr Accounts Payable K`; `Dr Realized FX Loss -G_AP`; `Cr Bank/Cash C`. |
 
-The next-period reversal, if required by the selected policy, is an explicit
-linked reversal; no original amount changes. Book/tax or statutory treatment
-uses only an effective rule and separate adjustment roles.
+`R0` is retained to explain original carrying value, but settlement uses `K`
+so a prior revaluation is not double-counted. If the item has a prior
+unrealized gain `U`, reclassify it exactly once at settlement with `Dr
+Unrealized FX Gain U / Cr Realized FX Gain U`. If it has a prior unrealized
+loss `U`, use `Dr Realized FX Loss U / Cr Unrealized FX Loss U`. Then apply the
+table above; do not post another copy of `U`. All values are rounded only at
+the declared base-currency posting stage.
+
+**Deterministic revaluation formulas and direction table.** For open foreign
+quantity `Q_open`, prior carrying rate `R_prev`, and close rate `R_close`,
+compute the base-currency change `D = round(Q_open * (R_close - R_prev))`.
+
+| Open item | Rate movement | Revaluation journal |
+| --- | --- | --- |
+| Receivable | `D > 0` (rate rises) | `Dr Accounts Receivable D`; `Cr Unrealized FX Gain D`. |
+| Receivable | `D < 0` (rate falls) | `Dr Unrealized FX Loss -D`; `Cr Accounts Receivable -D`. |
+| Payable | `D > 0` (rate rises) | `Dr Unrealized FX Loss D`; `Cr Accounts Payable D`. |
+| Payable | `D < 0` (rate falls) | `Dr Accounts Payable -D`; `Cr Unrealized FX Gain -D`. |
+
+If an item remains open at the next period boundary, reverse the exact prior
+revaluation journal with the same base amount and linked run ID before posting
+the next close-rate adjustment. If it settles first, do not post that separate
+reversal: the settlement reclassifies the active unrealized gain/loss as shown
+above and clears the carrying amount `K`; the revaluation run is marked
+realized/closed for that slice. Original document and rate snapshots never
+change. Any book/tax or statutory treatment uses only an effective rule and
+separate adjustment roles.
 
 **Corrections, concurrency, and locks.** Correct a realized settlement or
 revaluation with reversal plus replacement and preserve both rate snapshots.
@@ -984,15 +1140,30 @@ Dr Book depreciation expense by class/department
 Tax schedule is separately calculated and reported. It does not silently
 rewrite book depreciation or post a statutory tax adjustment; any tax-only
 ledger adjustment requires an approved effective rule and distinct tax-
-adjustment roles. Disposal:
+adjustment roles.
+
+Book disposal uses explicit base-currency values: `C` = asset cost being
+removed, `A` = accumulated book depreciation being removed, `N = C - A` = book
+net carrying amount, `P` = cash or receivable proceeds before tax, and `T` =
+separately calculated disposal tax under the effective rule. The balancing book
+result is `L = P - N`: positive `L` is a gain and negative `L` is a loss.
 
 ```text
-Dr Accumulated depreciation
-Dr/Cr Disposal gain/loss (balancing residual)
-  Cr Fixed-asset cost
+Dr Cash/Receivable for proceeds plus tax                 P + T
+Dr Accumulated depreciation                               A
+Dr Disposal loss                                         max(-L, 0)
+  Cr Fixed-asset cost                                    C
+  Cr Disposal gain                                       max(L, 0)
+  Cr Output-tax payable or other separate tax role       T
 ```
 
-Proceeds, receivable, and tax components are separate roles where applicable.
+The entry balances because `P + T + A + max(-L, 0) = C + max(L, 0) + T`.
+`T` is never folded into gain/loss or asset cost. The tax schedule separately
+closes the asset's tax basis using its effective rule-pack version and records
+tax proceeds and tax gain/loss as a non-book schedule result; a tax-only ledger
+adjustment, if an approved rule requires one, uses separate tax-adjustment
+roles and a separate journal. Asset cost and accumulated depreciation remain
+immutable history; a correction is reversal plus replacement.
 
 **Corrections, concurrency, and locks.** A posted acquisition/depreciation/
 disposal is corrected by reversal plus replacement; schedule history and
@@ -1058,13 +1229,30 @@ and approval. Close/reopen uses exclusive tenant/period serialization. While
 closed, all in-period mutation commands return `PERIOD_LOCKED`; a failed write
 cannot implicitly open the period.
 
+**Exact unlock protocol.** Full unlock uses
+`period unlock preview --scope <global|module> --through <date> --reason <text>`
+followed by `period unlock commit --preview <plan_id> --confirmation <human_confirmation>`.
+Partial unlock uses
+`period partial-unlock preview --scope <global|module> --from <date> --to <date> --reason <text>`
+followed by `period partial-unlock commit --preview <plan_id> --confirmation <human_confirmation>`.
+Preview is read-only and records the current lock version, prior lock interval,
+requested interval/scope, affected records and expected impact, actor, reason,
+and plan hash. Commit requires the same tenant, actor, non-empty reason, exact
+plan hash, current lock version, and a recorded explicit human confirmation;
+it revalidates impact inside the transaction and writes the unlock audit event
+atomically. A stale preview, missing confirmation, invalid range, or changed
+lock commits nothing.
+
 **Evidence and CLI.** Preserve checklist, report hashes, reconciliations,
 exception list, approval token, lock state, reopen impact, and resulting
 adjustments. Command family: `period close preview|validate|approve|commit`,
-`period reopen preview|confirm|commit`, `period lock show`, and
+`period reopen preview|confirm|commit`, `period unlock preview|commit`,
+`period partial-unlock preview|commit`, `period lock show`, and
 `period late-document preview|choose`. Errors include
-`LOCK_CONFIRMATION_REQUIRED`, `PERIOD_LOCKED`, `CONCURRENCY_CONFLICT`,
-`RECONCILIATION_CONFIRMATION_REQUIRED`, and `INVALID_STATE_TRANSITION`.
+`LOCK_CONFIRMATION_REQUIRED`, `UNLOCK_PREVIEW_REQUIRED`,
+`PARTIAL_UNLOCK_INVALID`, `UNLOCK_CONFLICT`, `PERIOD_LOCKED`,
+`CONCURRENCY_CONFLICT`, `RECONCILIATION_CONFIRMATION_REQUIRED`, and
+`INVALID_STATE_TRANSITION`.
 
 **Skill boundary and reports.** Close skills gather checklists, produce
 previews, and route exceptions. The engine owns lock semantics and final

@@ -103,6 +103,10 @@ A blank or "NOT CONFIRMED" cell indicates the feature could not be verified from
 | **Depreciation Schedules (Book and Tax)** | Zoho supports configurable depreciation method (SLM, WDV, or others) with automatic monthly/quarterly depreciation runs. Separate book and tax schedules NOT CONFIRMED. | NOT CONFIRMED | Frappe Books: Depreciation schedule generation; separate book/tax treatment NOT CONFIRMED. | NOT CONFIRMED | Agent-bahi supports separate book-depreciation and tax-depreciation schedules per asset (per [[tentative-decisions.md#T-003]]). Book method: SLM (tentative default) with user-specified useful life and salvage value. Tax method: Follows statutory rule pack (indexed by year, jurisdiction, asset class). Monthly pro-rata SLM for book; deterministic statutory accrual for tax. | Deferred | Depreciation-method research is an OPEN_RESEARCH gate (per [[tentative-decisions.md#T-003]]). Implementation is blocked until tax rule-pack research closes. |
 | **Asset Disposal and Accumulated Depreciation** | Zoho tracks asset disposals: sale/scrapping, disposal date, sale price, and gain/loss on disposal. Accumulated depreciation is reconciled against the disposal entry. | [Zoho Books help: Fixed Assets](https://www.zoho.com/books/help/) | Frappe Books: Asset disposal tracking; detailed behavior NOT CONFIRMED. | NOT CONFIRMED | Agent-bahi records asset disposal as explicit reversal (closing depreciation through disposal date) + replacement (if applicable). Gain/loss on disposal is posted in a separate journal entry with reference to the asset and disposal evidence. Accumulated depreciation is immutable and linked to the asset's depreciation history. | Deferred | Asset depreciation is deferred; disposal workflow will be defined once depreciation is implemented. |
 
+The separate book/tax schedule model referenced above remains **T-003
+TENTATIVE - NOT OWNER-APPROVED** and reversible. The parity comparison does not
+approve the tentative SLM default, a tax method, or any statutory rate.
+
 ---
 
 ## Period Locking and Audit

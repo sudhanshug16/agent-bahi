@@ -107,12 +107,24 @@ before that date, the engine rejects create, edit, delete, and void operations;
 the CLI must surface the scope and date that caused the rejection rather than
 silently retrying or moving the date.
 
-An unlock request must include the acting principal and a non-empty reason. A
-bounded partial unlock must additionally include an explicit date range and
-scope. Both operations require an impact preview before applying the change;
-the applied operation writes an audit record containing the actor, reason,
-scope, prior lock state, requested range, preview, and outcome. A lock change
-must never be inferred from a failed transaction write.
+Full unlock uses the exact two-step command family
+`period unlock preview --scope <global|module> --through <date> --reason <text>`
+then `period unlock commit --preview <plan_id> --confirmation <human_confirmation>`.
+A bounded partial unlock uses
+`period partial-unlock preview --scope <global|module> --from <date> --to <date> --reason <text>`
+then `period partial-unlock commit --preview <plan_id> --confirmation <human_confirmation>`.
+Preview is side-effect free and binds tenant, scope, current lock version,
+prior lock interval, requested range, affected-record impact, actor, reason,
+and plan hash. Commit revalidates all of those values under the lock and
+requires recorded explicit human confirmation; a skill or workflow cannot
+self-authorize. The applied operation writes an audit record containing the
+actor, reason, scope, prior lock state, requested range, preview, plan hash,
+confirmation, and outcome. A stale/missing preview returns
+`UNLOCK_PREVIEW_REQUIRED`; an invalid range/scope returns
+`PARTIAL_UNLOCK_INVALID`; a changed lock/version returns `UNLOCK_CONFLICT`.
+A missing reason returns `REASON_REQUIRED`, and missing confirmation returns
+`LOCK_CONFIRMATION_REQUIRED`. A lock change must never be inferred from a
+failed transaction write.
 
 When a late document targets a locked period, the CLI exposes the two
 skill-guided choices: controlled reopen followed by original-date posting, or

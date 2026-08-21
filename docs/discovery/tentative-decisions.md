@@ -122,6 +122,10 @@ Awaiting owner review. Do not commit any LICENSE file changes. This entry docume
 
 **Status**: TENTATIVE_AGENT_DEFAULT
 
+The separate book/tax schedule model remains **T-003 TENTATIVE - NOT
+OWNER-APPROVED**. This entry records a reversible working default only; it does
+not approve a depreciation method, tax rate, or filing behavior.
+
 **Question**: How should book and tax depreciation be modeled and calculated in the fixed-asset module?
 
 **Recommended Working Default**:
@@ -147,7 +151,12 @@ India accounting and tax compliance require separate book and tax depreciation (
 - Tax research dependency: Exact tax rule packs remain open research; implementation cannot proceed without statutory rates and asset-class rules.
 
 **Reversal Path**:
-Owner may change book method (e.g., declining-balance, MACRS for specific assets) by adjusting asset master and depreciation logic. Tax method is not reversible without tax research closure and rule-pack updates. If book method changes, existing asset schedules must be audited for impact on prior-year reporting.
+The separate book/tax schedule model and its working default are reversible.
+Owner may replace a method or rule-pack choice through a new version and
+superseding schedule; posted history and prior schedules remain immutable and
+linked by correction lineage. Any tax method change still requires tax
+research closure and rule-pack updates before use. If a book method changes,
+existing asset schedules must be audited for impact on prior-year reporting.
 
 **Dependencies**:
 - Fixed-asset module (Phase scope: ARC-012 in architecture-decisions.md).

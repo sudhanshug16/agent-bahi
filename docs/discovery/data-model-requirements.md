@@ -102,9 +102,11 @@ needed to support acquisition or capitalization, automatic depreciation, and
 disposal tracking. Depreciation runs and disposals must be traceable to the
 asset and the resulting ledger postings.
 
-The exact depreciation methods and the relationship between book and tax
-schedules are intentionally undecided. They must remain configuration and
-policy boundaries rather than assumptions hidden in the register.
+The separate book/tax schedule model is **T-003 TENTATIVE - NOT OWNER-APPROVED**
+([tentative decision](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default)).
+The relationship and exact methods remain configuration/policy boundaries, and
+the owner may reverse the tentative default without changing the asset-register
+or schedule identity seams. No method or rate may be hidden in the register.
 
 ## Bank Reconciliation
 
@@ -119,9 +121,17 @@ Bank reconciliation is a bounded workflow across skills, CLI, and engine:
    applies only the explicit, validated match; it does not make a hidden AI
    decision.
 
-Provenance must identify the evidence, proposal, skill version, actor or
-scheduler, validation outcome, and idempotency key well enough to reproduce why
-the match was validated.
+Provenance must identify the evidence, proposal, skill version, explicit human
+confirmation, actor or scheduler, validation outcome, and idempotency key well
+enough to reproduce why the match was validated. A scheduler, skill, workflow,
+or agent cannot self-authorize persistence.
+
+An imported statement batch is uniquely keyed by tenant + bank account + raw
+file content hash. A line fingerprint uses canonical source fields and source
+line number/row ordinal, never a generated batch ID. Re-importing the same file
+returns the original result; a collision from another file retains both lines
+and enters an explicit ambiguity state. Identical legitimate rows are never
+silently dropped.
 
 ## Period Locking
 
@@ -131,11 +141,18 @@ operations for records in that date range are rejected by the authoritative
 engine boundary.
 
 Unlocking or bounded partial unlocking requires a reason, acting principal,
-audit record, and impact preview before the change is applied. A partial
-unlock is bounded to an explicit date range and scope. If a document arrives
-for a locked period, a skill may guide the user through either a controlled
-reopen followed by original-date posting or a current-period adjustment. The
-system never chooses between those treatments automatically.
+audit record, and impact preview before the change is applied. Full unlock uses
+`period unlock preview|commit`; partial unlock uses
+`period partial-unlock preview|commit`. Preview binds the current lock version,
+scope/range, affected-record impact, actor, reason, and plan hash. Commit
+requires a recorded explicit human confirmation and revalidates that binding
+under serialization. Missing/stale preview, invalid range, or changed lock
+returns `UNLOCK_PREVIEW_REQUIRED`, `PARTIAL_UNLOCK_INVALID`, or
+`UNLOCK_CONFLICT`; missing confirmation returns `LOCK_CONFIRMATION_REQUIRED`.
+If a document arrives for a locked period, a skill may guide the user through
+either a controlled reopen followed by original-date posting or a current-
+period adjustment. The system never chooses between those treatments
+automatically.
 
 ## Evidence and Attachments
 
@@ -174,6 +191,17 @@ Required deterministic outcomes include:
 - A company-card expense debits the expense account and credits the card
   liability; the statement is reconciled to card transactions, and the card
   liability is later paid through a bank transaction.
+
+For mixed-use amounts, let `G` be gross, `B` the explicitly approved business
+share, and `P = G - B` the personal share. An employee/director-paid claim
+posts `Dr business expense/asset B | Cr employee/director reimbursement payable
+B`; only `B` may be reimbursed. A company-paid full bill posts `Dr business
+expense/asset B + Dr named recoverable from employee/director P | Cr AP or
+Bank G`, or follows a separately reviewed payroll/perquisite path under the
+applicable rule. A proprietor-paid full bill posts `Dr business expense/asset B
++ Dr proprietor drawings P | Cr AP or Bank G`. The shares must reconcile
+exactly; no allocation approval grants ITC or silently expenses the personal
+share.
 
 GST input tax is a separate posting component and must be blocked unless a
 valid statutory document and all applicable eligibility checks are present.

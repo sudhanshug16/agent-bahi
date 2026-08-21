@@ -393,9 +393,16 @@ Do not hardcode one timeless legal rounding mode. Each effective-dated rule pack
 
 **Allocation**: Allocated at legal issue/finalization (not at draft creation).
 
-**Never reuse**: Voided or cancelled numbers are not reused within the scope.
+**Monotonic/no reuse**: Every invoice, bill, note, receipt, payment, journal,
+and reserved issuance series is tenant-scoped, serialized, monotonic, and never
+reuses a number. This includes numbers reserved for an issuance-pending
+candidate whose external attempt fails or times out.
 
-**Preserve gaps**: Gaps are documented with explicit reason (e.g., voided, test number, legal reversal).
+**Preserve gaps**: Every gap, void, cancellation, reservation failure, and
+failed issuance retains a durable number-gap record with series scope, number,
+reason, request/operation ID, actor, timestamp, frozen payload/artifact hash
+when applicable, and audit evidence. A failed reservation never releases its
+number to the allocator.
 
 **Example**: Invoice series "INV" for GSTIN 18AAXXX1234A1Z1 in FY 2025-26 → sequence INV/2025-26/18AAXXX1234A1Z1/001, INV/2025-26/18AAXXX1234A1Z1/002, etc.
 
@@ -615,7 +622,7 @@ Each module owns and must never own the listed state:
 | **Ledger/Posting** | Immutable journal entries, account balances, audit trail, idempotency records | Document state changes; event sourcing |
 | **Tax Engine** | Tax rules, rates, slabs, calculations (GST, TDS, TCS), tax component posting | Business rule changes; approval policies |
 | **Compliance/Obligations** | Obligation engine, filing deadlines, predecessor gates, filing snapshots, amendments, ARN/evidence | Ledger truth; automatic filing decisions |
-| **Fixed Assets** | Asset register, acquisition, depreciation runs, disposal tracking, depreciation schedules | Operating transactions; tax strategy |
+| **Fixed Assets** | Asset register, acquisition, depreciation runs, disposal tracking, separate book/tax schedules | Operating transactions; tax strategy |
 | **Reporting/Export** | Report generation (P&L, balance sheet, aging, reconciliation, compliance exports), query/filtering | Ledger mutations; document state changes |
 | **Audit/Evidence** | Immutable audit log, evidence storage, checksums, lineage tracking, compliance evidence | Ledger corrections; document retroactive changes |
 | **Rule Packs** | Versioned, immutable rule manifests, declarative tables, calculators, signatures | Compliance decisions; tax policy exceptions |
@@ -623,6 +630,12 @@ Each module owns and must never own the listed state:
 | **Persistence/Adapters** | SQL dialects, schema, migrations, repository implementations | Domain logic; business rule calculations |
 
 **Canonical ledger principle**: Ledger/Posting is authoritative. Reports never write. Tax/Compliance never infer filing status from portal assumption; records explicit evidence.
+
+**Fixed-asset method status**: Separate book and tax schedules are the stable
+model seam, but the exact methods/defaults remain **T-003 TENTATIVE -
+NOT OWNER-APPROVED**. See [Tentative Decision T-003](discovery/tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default).
+The choice is reversible; no SLM, WDV, rate, or tax schedule behavior is an
+implementation authorization.
 
 ---
 
@@ -633,7 +646,7 @@ Each module owns and must never own the listed state:
 **Documents without external issuance gating** (most transactions):
 
 ```
-Draft → Validated → Posted → Settled (full or partial)
+Draft → Validated → Posted → Settled (full allocation or explicit audited close-out)
                       ↓
                   Void (pre-post reversal entry)
                   Correction (posted reversal + replacement)
@@ -645,12 +658,22 @@ Draft → Validated → Posted → Settled (full or partial)
 Draft → Validated → Issuance-Pending/Frozen (immutable candidate, number reserved with gap reason)
   → [IRP external call, unknown outcome reconciliation]
   → Issue-and-Post-Atomically (IRN/QR evidence recorded, number allocated, journal posted)
-  → Settled (full or partial payment/allocation)
+  → Settled (full allocation or explicit audited close-out)
     ↓
   Void (pre-post) or Correction (post reversal + replacement)
 ```
 
-**Partial and Settled states**: Derived from settlement/payment allocations, not state transitions. A document is settled when all amounts are allocated or explicitly closed.
+**Partial and Settled states**: Partial/open allocation is a derived view while
+the document remains `Posted`; it is not `Settled`. A document reaches
+`Settled` only when all amounts are allocated or an explicit audited close-out
+is recorded.
+
+**Issuance reservation failure**: An `Issuance-Pending/Frozen` candidate keeps
+its frozen payload, artifact hash, operation observations, and reserved number
+when reservation, submission, or external processing fails or times out. The
+number becomes a durable gap/void record with reason and audit evidence; it is
+never released or reused. A superseding attempt is a new child operation and
+candidate with a new monotonic number linked to the failed lineage.
 
 **Forbidden shortcuts**: Never skip validation. Never mutate posted documents; only reversal + replacement. Pre-post documents may be voided; posted documents require reversal lineage.
 
@@ -1034,6 +1057,21 @@ Low-risk operations (invoice draft, memo) may commit directly under policy.
 
 `--dry-run` is always side-effect-free.
 
+**Period unlock command contract**: Full unlock is
+`period unlock preview --scope <global|module> --through <date> --reason <text>`
+then `period unlock commit --preview <plan_id> --confirmation <human_confirmation>`.
+Bounded partial unlock is
+`period partial-unlock preview --scope <global|module> --from <date> --to <date> --reason <text>`
+then `period partial-unlock commit --preview <plan_id> --confirmation <human_confirmation>`.
+Preview binds the current lock version, scope/range, impact, actor, reason,
+and plan hash. Commit revalidates them under serialization and requires a
+recorded explicit human confirmation. Missing/stale preview returns
+`UNLOCK_PREVIEW_REQUIRED`; invalid range/scope returns
+`PARTIAL_UNLOCK_INVALID`; a changed lock returns `UNLOCK_CONFLICT`; missing
+reason or confirmation returns `REASON_REQUIRED` or
+`LOCK_CONFIRMATION_REQUIRED`. No skill or workflow may self-authorize a lock
+change.
+
 ### Batch Atomicity Declared
 
 Source ingestion: atomic per file/snapshot.
@@ -1243,8 +1281,12 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
 9. [TX] Only after eligible classification confirmed AND every effective-rule prerequisite/evidence/2B condition passes: Post reclassification journal:
    - Dr. ITC Recoverable | Cr. the original expense/asset cost account(s) for the same allocated tax portion.
    - Never credit nil; always reconcile to the gross amount allocated at posting.
-10. Payment due date arrives.
-11. [TX] Post payment journal: Dr. AP | Cr. Bank/Cash (AP decreases; bank decreases).
+10. Payment due date arrives. This changes aging/reminder status only; due date
+    alone never clears AP and never makes the bill settled.
+11. [TX] After an actual, validated supplier payment is observed, persist an
+    explicit payment allocation and post `Dr. AP | Cr. Bank/Cash` (AP decreases;
+    bank decreases). A vendor credit allocation is the other explicit clearing
+    path; neither a due date nor a bank-file export clears AP.
 12. GST return prep reflects ITC claim sourced from eligible booked bill + matching evidence (never portal-only, never GSTR-2B-alone). Claim/utilization state is separate from eligibility/reclassification; Portal 2B alone never proves eligibility.
 
 ### 3. Statement Import → Proposed Match → Explicit Persistence
@@ -1383,7 +1425,7 @@ Workflow:
 4. [REVIEW] Preview the invoice content, obligation set, rule versions, reserved invoice number (if IRN applies), and dispatch requirements (if EWB applies).
 5. For **each required obligation separately**, select exactly one transport (`api` or `manual`) before creating its operation. A provider capability or policy decision for IRN does not select transport for EWB.
 6. **Single atomic orchestration setup transaction** for the selected attempts — one operation per statutory obligation attempt, not one operation per invoice:
-   - Freeze the invoice basis. If IRN applies, freeze the issuance-pending candidate and reserve the statutory invoice number ONCE with an "awaiting-IRN" gap reason. If IRN does not apply, do not create an IRN gate or reserve an IRN gap.
+   - Freeze the invoice basis. If IRN applies, freeze the issuance-pending candidate and reserve the statutory invoice number ONCE with an "awaiting-IRN" gap reason. If IRN does not apply, do not create an IRN gate or reserve an IRN gap. A reservation, submission, or external failure never releases that number: retain the frozen candidate, attempt observations, void/gap reason, and artifact hash, then link any superseding retry to a new child candidate and new number.
    - For each applicable obligation, freeze the exact API request or manual export artifact and its hash. For `manual`, durably store the exact artifact bytes and compute the hash before creating its operation; the prepared operation is bound to those immutable bytes/hash.
    - If EWB applies — whether EWB-only or IRN+EWB — create a durable `dispatch_hold` tied to the invoice and the EWB obligation. If EWB applies without IRN, atomically post/issue the invoice once in this same transaction, then create the hold; do not wait for EWB evidence to post. The invoice post and hold occur before the prepared EWB operation and its intent are inserted, and none are visible until this transaction commits. On an IRN+EWB invoice, keep the invoice pending IRN finalization while still creating the hold in this transaction.
    - For each selected obligation and attempt, create exactly one `ExternalOperation` with `operation_kind = irn` or `ewb`, `current_state = prepared`, tenant/GSTIN/provider/document correlation, and `transport_type`.

@@ -13,6 +13,10 @@ The foundational policy is:
 
 This document separates legal-source facts from product decisions. Legal behavior is stored with jurisdiction, source, rule version, and effective-dated applicability so a later rule change does not reinterpret an old posting.
 
+The canonical deterministic mixed-use posting templates and their command,
+confirmation, reversal, and reporting contract are maintained in
+[accounting-contracts.md](accounting-contracts.md#71-deterministic-mixed-use-and-claimant-expense-templates).
+
 ## Evidence Types (Typed and Additive)
 
 Every attachment must identify its type, source, and validation status. The following list is minimal; types are additive (additional proven types may be registered):
