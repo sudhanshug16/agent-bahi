@@ -45,7 +45,7 @@ The following are explicitly out of scope for v1 and remain deferred:
 3. **Immutability and audit**: Posted documents are immutable except through explicit reversal + replacement. Every decision is auditable with actor, source, timestamp, and evidence links.
 4. **Compliance freshness**: Effective-dated rules ensure compliance decisions reflect the rules in effect at decision time. Stale/missing rules fail closed for statutory operations.
 5. **Deterministic agent interface**: Skills invoke deterministic CLI commands with stable schemas. No hidden accounting decisions in prompt or agent heuristics.
-6. **Local simplicity**: SQLite default, no external runtime dependencies, fully testable offline.
+6. **Local simplicity**: SQLite default. The released executable requires no separately installed Node or Bun runtime, Node subprocess/lifecycle hook, or external service for core local operation; individually approved npm-compatible packages may be bundled only after Bun proof. This does not imply zero third-party code.
 7. **Dialect portability**: Multi-dialect support through adapters means zero coupling to one database.
 8. **Recoverability**: Immutable evidence, content-addressed blobs, and restore-in-isolation verification gates.
 
@@ -1160,15 +1160,15 @@ Domain and application layers import no ORM. Persistence contracts (ports) are d
 
 ### Technology Stack and Proof-Gated Candidates
 
-**Note**: TypeScript + Bun is owner-selected. Prefer Bun-native APIs first. Third-party npm-compatible TypeScript packages are allowed only when needed, must be individually proof-gated, and must execute under the pinned Bun runtime. ORM, parser, validator, decimal, database-driver, migration, and build libraries remain unapproved candidates. Gate0 is mandatory evidence before implementation but is not authorized by this document, does not authorize Phase 1, and does not approve libraries.
+**Note**: TypeScript + Bun is owner-selected. Prefer Bun-native APIs first. Third-party npm-compatible TypeScript packages are allowed only when needed, may be bundled only after individual Bun proof, and must execute under the pinned Bun runtime. This does not imply zero third-party code. ORM, parser, validator, decimal, database-driver, migration, and build libraries remain unapproved candidates. Gate0 is mandatory evidence before implementation but is not authorized by this document, does not authorize Phase 1, and does not approve libraries.
 
-- **Persistence**: Bun-native database APIs first. Drizzle, Kysely, better-sqlite3, and other ORM/driver candidates may be evaluated individually against bun-sqlite, PostgreSQL, and MySQL; none is pre-approved.
+- **Persistence**: Bun-native database APIs first. Drizzle, Kysely, better-sqlite3, and other ORM/driver candidates may be evaluated individually against bun-sqlite, PostgreSQL, and MySQL; none is pre-approved. PostgreSQL and MySQL are supported product dialects. A user may optionally configure a remote database, but the required dialect drivers, migrations, conformance, and target-platform proofs are mandatory release evidence.
 - **CLI parser**: Bun-native parsing first. Clipanion and other parser candidates remain unapproved and require individual proof.
 - **Schema/validation**: Bun-native validation first. Zod and other validator candidates remain unapproved and require individual proof.
 - **Decimal math**: Bun-native exact arithmetic first. decimal.js and other decimal candidates remain unapproved and require individual proof; all paths use the domain wrapper and never floats.
 - **Migrations**: Separate SQLite, PostgreSQL, and MySQL histories with shared logical IDs and checksums. Migration libraries remain unapproved candidates and must prove fresh install, every supported upgrade, replay/checksum behavior, and pinned-Bun execution.
 - **Testing**: bun:test (Bun native).
-- **Build/distribution**: Bun build and one Bun-embedded platform-specific single-file executable for macOS arm64, Linux x64, and Linux arm64. Released operation must not require or invoke Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback.
+- **Build/distribution**: Bun build and one Bun-embedded platform-specific single-file executable for macOS arm64, Linux x64, and Linux arm64. Released operation must not require or invoke Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback. PostgreSQL and MySQL drivers, migrations, conformance, and target-platform proofs are mandatory release evidence even though remote database configuration is optional for a user.
 
 ### SQLite Default Configuration
 
@@ -1201,7 +1201,7 @@ Separate, parallel migration paths:
 
 **Never production push/sync**: Migrations are versioned, reviewed, and tested before release. No auto-schema-sync or schema-push in production.
 
-**Testing gates**: Fresh install + every supported upgrade path tested on all three dialects before release.
+**Testing gates**: Fresh install + every supported upgrade path, dialect conformance, and target-platform driver behavior are tested on all three supported dialects before release. Remote database configuration is optional for a user; these driver, migration, conformance, and platform proofs are mandatory release evidence.
 
 ### Content-Addressed Immutable Evidence
 
@@ -1654,13 +1654,13 @@ STK-001 through STK-006 must be resolved by passing proof spikes. **This gate mu
 
 #### STK-001: Exact Pinned Bun
 
-- At Gate0 resolve the authoritative latest stable Bun release; then record its exact version, `bun --revision`, artifact checksums, and lockfile/CI/release pins. Do not hard-code a guessed current version today.
+- At authorized Gate0 execution time, resolve the authoritative latest stable Bun release from official Bun release metadata. Record its exact version, `bun --revision`, and official Bun artifact checksum(s), then pin the version and checksum in the lockfile, CI, and release metadata. Do not use a placeholder or rolling release selector.
 - Verify Bun-native install, workspaces, lockfile, and embedded runtime on macOS arm64, Linux x64, and Linux arm64.
 
 #### STK-002: Multi-Dialect ORM
 
 - Prefer Bun-native persistence. If needed, test one candidate at a time, such as Drizzle, Kysely, or better-sqlite3; no candidate is pre-approved.
-- Identical contract on bun-sqlite, Bun SQL PostgreSQL, MySQL.
+- Identical contract on bun-sqlite, Bun SQL PostgreSQL, and MySQL; PostgreSQL and MySQL drivers are required for the supported dialects.
 - Verify schema definition, query generation, type inference on all three.
 - Verify migrations fresh and all upgrade paths.
 
@@ -1685,7 +1685,7 @@ STK-001 through STK-006 must be resolved by passing proof spikes. **This gate mu
 
 - Bun build on all target platforms.
 - Release exactly one Bun-embedded single-file executable for each of macOS arm64, Linux x64, and Linux arm64.
-- Required DB drivers (MySQL, PostgreSQL) and migration assets work on all platforms.
+- Required PostgreSQL and MySQL drivers and migration assets work on all platforms; dialect conformance and target-platform proofs are mandatory release evidence.
 - Prove skills invoke only the packaged `agent-bahi` executable and that no released path invokes Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback.
 
 Each spike produces a decision update, not production code.

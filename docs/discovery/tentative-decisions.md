@@ -631,9 +631,12 @@ after that blocker is a new explicit owner decision.
 **Selected Stack and Gate0 Prerequisite**:
 - **Selected**: TypeScript + Bun, with Bun-native runtime, package, test, and
   SQLite APIs used first. No third-party package is pre-approved.
-- **Gate0 records exact dependencies before implementation authorization**:
-  Gate0 must select and record the exact stable Bun version, every exact
-  approved dependency version, each dependency checksum, and the lockfile.
+- **Gate0 records exact runtime and dependency evidence before implementation authorization**:
+  At execution time, Gate0 must resolve the authoritative latest stable Bun
+  release and record its exact version, `bun --revision`, official Bun artifact
+  checksum(s), every exact approved dependency version, dependency
+  artifact/package integrity and checksum evidence, the lockfile, and the
+  version/checksum pins in CI and release metadata.
   Third-party packages are individually approved; an unrecorded or unverified
   package is not approved.
 - **Proof spikes (Gate0) validate the selected stack before implementation authorization**:
@@ -643,12 +646,12 @@ after that blocker is a new explicit owner decision.
   - STK-003: SQLite pragmas, WAL, foreign_keys=ON, SQLITE_BUSY handling, network-filesystem rejection.
   - STK-004: Schema migrations and upgrade paths on all three dialects.
   - STK-005: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
-  - STK-006: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
+  - STK-006: ESM build, platform binaries, and required PostgreSQL/MySQL database drivers for the supported dialects.
 - **Gate0 is a mandatory prerequisite, not authorized by this docs review**.
   Gate0 must pass on all platforms (macOS arm64, Linux x64/arm64) and its exact
-  Bun/dependency/version/checksum/lockfile record must be complete before
-  implementation is authorized. If Gate0 reveals blockers, work stops; any
-  stack override is a new owner decision.
+  runtime/dependency/version/revision/checksum/integrity/lockfile/CI/release
+  record must be complete before implementation is authorized. If Gate0 reveals
+  blockers, work stops; any stack override is a new owner decision.
 
 **Alternatives**:
 - No ordinary alternative is selected. A different language or runtime is
@@ -659,15 +662,17 @@ after that blocker is a new explicit owner decision.
 Bun provides the selected runtime and Bun-native APIs for the CLI, scripts, and
 backend services, while TypeScript provides type safety for domain and
 compliance calculations. Gate0 validates the selected stack on all target
-platforms and records the exact stable Bun version plus individually approved
-dependency versions, checksums, and lockfile. The selected stack is binding;
+platforms and records the exact Bun version, `bun --revision`, official Bun
+artifact checksum(s), individually approved dependency versions, dependency
+artifact/package integrity and checksum evidence, lockfile, and CI/release
+pins. The selected stack is binding;
 Gate0 and implementation authorization are separate decisions.
 
 **Product Impact**:
 - **Development velocity**: Bun's built-in features (TypeScript, package management, testing) reduce toolchain complexity.
 - **Deployment simplicity**: ESM build produces portable binaries; single platform-specific executable per OS/arch.
 - **Type safety**: TypeScript catches many errors at build time; domain logic is verifiable.
-- **Multi-database support**: Proof spikes validate ORM cross-dialect equivalence (SQLite default, PostgreSQL/MySQL optional).
+- **Multi-database support**: Proof spikes validate ORM cross-dialect equivalence across SQLite, PostgreSQL, and MySQL. Remote database configuration is optional for a user; the PostgreSQL/MySQL drivers and their release proofs are mandatory for the supported dialects.
 
 **Reversal Path**:
 If Gate0 reveals a blocker, work stops and the blocker is recorded. Any stack
@@ -676,18 +681,22 @@ runtime or language is authorized by this entry.
 
 **Proof Spike Gates**:
 - STK-001 through STK-006 must all pass on target platforms (macOS arm64, Linux x64/arm64).
-- Bun-native runtime and database APIs must work on all target platforms.
+- Bun-native runtime and database APIs must work on all target platforms, including the required PostgreSQL/MySQL drivers for the supported dialects.
 - Every third-party ORM, validation, CLI, migration, build, or arithmetic package
-  must have an exact approved version, checksum, and lockfile entry.
+  must have an exact approved version, dependency artifact/package integrity and
+  checksum evidence, and a lockfile entry.
 - If any spike reveals a blocker (e.g., Bun database incompatibility or missing
   decimal precision), the result is documented and any stack override is a new
   owner decision.
 
 **Gate0 Prerequisite**:
 - **Gate0 is mandatory and not authorized by this docs review**: STK-001
-  through STK-006 must pass on target platforms (macOS arm64, Linux x64/arm64),
-  and Gate0 must select and record the exact stable Bun version plus exact
-  approved dependency versions, checksums, and lockfile.
+  through STK-006 must pass on target platforms (macOS arm64, Linux x64/arm64).
+  At execution time, Gate0 must resolve the authoritative latest stable Bun
+  release and record its exact version, `bun --revision`, official Bun artifact
+  checksum(s), exact approved dependency versions, dependency artifact/package
+  integrity and checksum evidence, lockfile, and version/checksum pins in CI and
+  release metadata.
 - **Blocking discovery**: If Gate0 reveals any blocker, the result is documented
   and work stops for a new owner decision. Proceeding without Gate0 passing and
   without the complete exact-version record is not authorized.
@@ -708,8 +717,10 @@ runtime or language is authorized by this entry.
 Owner-approved. TypeScript + Bun is selected as the language and runtime, with
 Bun-native APIs first and no separate Node runtime, Node subprocess, or Node
 hook in the release. Gate0 remains mandatory but is not authorized by this docs
-review; it must pass with the exact stable Bun version and exact individually
-approved dependency versions, checksums, and lockfile recorded. Gate0 does not
+review; it must pass with the exact Bun version, `bun --revision`, official Bun
+artifact checksum(s), exact individually approved dependency versions,
+dependency artifact/package integrity and checksum evidence, lockfile, and
+CI/release pins recorded. Gate0 does not
 authorize implementation. If Gate0 reveals a blocker, work stops and any stack
 override is a new explicit owner decision. No implementation is authorized
 until Gate0 and the separate implementation approval are complete.
@@ -759,7 +770,7 @@ Entries T-001 through T-011 extend and clarify settled decisions from [decisions
 - **T-008** (new): Allow controlled user corrections/deletions after FY/report/audit/filing via preview/reason/confirmation/unlock. Use reversal/replacement, version or tombstone lineage. Prior artifacts remain immutable. Affected derived reports/filing/audit cases marked STALE/DRIFTED. No destructive overwrite or automatic government action. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
 - **T-009** (migrated from statutory-workflow-contracts.md examples): Always allow text and CSV operator exports of prepared/validated data; do not invent arbitrary JSON as statutory artifact; government upload only after official current format/utility/schema/portal verification. Form 140/141 export is research-gated and deferred. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Preserve original filing, ARN/status/rejection/notices/evidence and explicit correction lineage; no unverified automatic revised/amended/defective-return submission. Return-amendment adapters are research-gated and deferred. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-011** (new): TypeScript + Bun selected with Bun-native APIs first and no separate Node runtime, subprocess, or hooks in release. Gate0 is mandatory but not authorized; it must record the exact stable Bun version and exact individually approved dependency versions, checksums, and lockfile. Any post-blocker stack override is a new owner decision, and no implementation is authorized until separate approval.
+- **T-011** (new): TypeScript + Bun selected with Bun-native APIs first and no separate Node runtime, subprocess, or hooks in release. Gate0 is mandatory but not authorized; at execution time it must resolve the authoritative latest stable Bun release and record the exact version, `bun --revision`, official Bun artifact checksum(s), exact individually approved dependency versions, dependency artifact/package integrity and checksum evidence, lockfile, and version/checksum pins in CI and release metadata. Any post-blocker stack override is a new owner decision, and no implementation is authorized until separate approval.
 
 **None of these entries override settled decisions.** They provide implementation detail and working defaults for decisions that remain open or recommend future owner approval. Filing-specific settled decisions always override T-001.
 

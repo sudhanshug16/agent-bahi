@@ -391,8 +391,8 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 **STK-001: Pinned Bun version**
 
-- **Recommendation**: Pin an exact Bun version (e.g., 1.x.y) in `package.json`, CI workflows, and release artifacts. Use Bun workspaces and lockfile for dependency consistency. Reference: [https://bun.com/docs/pm/lockfile](https://bun.com/docs/pm/lockfile).
-- **Alternative**: Latest Bun; or floating version.
+- **Recommendation**: At authorized Gate0 execution time, resolve the authoritative latest stable Bun release from official Bun release metadata. Record its exact version, `bun --revision`, and official Bun artifact checksum(s). Pin that version and checksum in the lockfile, CI workflows, and release metadata; use Bun workspaces and the lockfile for dependency consistency. Reference: [https://bun.com/docs/pm/lockfile](https://bun.com/docs/pm/lockfile).
+- **Alternative**: None within Gate0. No placeholder or rolling release selector is permitted. A different exact Bun release requires a new explicit owner decision.
 - **Rationale**: Exact pin ensures reproducible builds. Workspaces enable monorepo patterns (e.g., shared domain package + CLI + skills).
 - **Silent failure prevented**: CI using a different Bun version than developer laptops, breaking changes in a Bun minor version.
 - **Reversal trigger**: Upgrade Bun intentionally and test; do not auto-upgrade.
@@ -431,7 +431,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 **STK-006: Bun-embedded single-file distribution**
 
-- **Recommendation**: Release one Bun-embedded, platform-specific single-file executable for each supported target: macOS arm64, Linux x64, and Linux arm64. The released operation must not require or invoke a separate Node runtime, Node subprocess, Node lifecycle hook, separate Bun runtime, source distribution, or package/bin fallback. Skills may subprocess only the packaged `agent-bahi` executable. Prove migrations, optional MySQL/PostgreSQL drivers, and all required assets on each target. Reference: [https://bun.com/docs/bundler/executables](https://bun.com/docs/bundler/executables).
+- **Recommendation**: Release one Bun-embedded, platform-specific single-file executable for each supported target: macOS arm64, Linux x64, and Linux arm64. The released operation must not require or invoke a separate Node runtime, Node subprocess, Node lifecycle hook, separate Bun runtime, source distribution, or package/bin fallback. Skills may subprocess only the packaged `agent-bahi` executable. PostgreSQL and MySQL are supported product dialects: prove their required drivers, migrations, conformance, and target-platform behavior on each target. A user may optionally configure a remote database, but these release proofs are mandatory. Reference: [https://bun.com/docs/bundler/executables](https://bun.com/docs/bundler/executables).
 - **Alternative**: None for released operation; a proof failure blocks release and requires a new owner decision.
 - **Rationale**: A Bun-embedded executable makes the runtime boundary explicit and keeps the shipped operation identical across supported platforms.
 - **Silent failure prevented**: A release silently depending on an unpinned runtime, Node/npm script, missing database driver, or platform-incompatible migration asset.
