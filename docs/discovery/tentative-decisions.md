@@ -75,7 +75,8 @@ Awaiting owner review. This is a working default to unblock skill architecture d
 
 **Recommended Working Default**:
 - Frappe Books is a **behavior and concept reference only**. Agent-bahi does not copy source code, database schemas, UI patterns, prose, or assets from Frappe Books.
-- Concepts from Frappe Books (e.g., India accounting principles, GST workflows, fixed-asset patterns) may inform design and research but are documented in agent-bahi's own words with proper attribution.
+- Concepts from Frappe Books (e.g., India accounting principles, GST workflows) may inform design and research but are documented in agent-bahi's own words with proper attribution.
+- Payroll and fixed-asset capabilities in Frappe Books are NOT CONFIRMED from official Frappe Books documentation (these may be part of separate Frappe HR/Assets modules). Agent-bahi references only what Frappe Books officially documents.
 - No Frappe code or substantial prose is used; all documentation is agent-bahi's own discovery and design.
 - **License implication**: Frappe Books is AGPL-3.0. Agent-bahi is recommended for Apache-2.0 to remain permissive for commercial use and agents/integrations.
 - **License decision**: Do NOT add, change, or select a LICENSE file in this commit. Owner review and explicit approval are required before any license is finalized, given the AGPL history of Frappe.
@@ -86,7 +87,7 @@ Awaiting owner review. This is a working default to unblock skill architecture d
 - Selective code reuse: Copy specific algorithms or rule packs (requires AGPL compliance and explicit license propagation).
 
 **Rationale**:
-Frappe Books is a mature India accounting system with documented GST, payroll, and fixed-asset workflows. Referencing its behavior ensures agent-bahi covers similar compliance gaps and reuses proven patterns. However, copying code or prose creates license obligations and makes it harder to evolve independently. Treating it as a reference allows clean, independent design while learning from proven implementations. Apache-2.0 preserves agent-bahi's freedom and enables unrestricted agent/integration ecosystems; AGPL-3.0 would restrict these use cases.
+Frappe Books is a mature India accounting system with documented GST workflows and accounting principles. Referencing its behavior ensures agent-bahi covers similar compliance gaps and reuses proven patterns. Payroll and fixed-asset features are NOT CONFIRMED as part of standard Frappe Books (may be separate Frappe HR/Assets modules). However, copying code or prose creates license obligations and makes it harder to evolve independently. Treating Frappe Books as a reference (GST, accounting only) allows clean, independent design while learning from proven implementations. Apache-2.0 preserves agent-bahi's freedom and enables unrestricted agent/integration ecosystems; AGPL-3.0 would restrict these use cases.
 
 **Product Impact**:
 - Design quality: Frappe reference ensures India compliance patterns are not reinvented.
@@ -142,7 +143,7 @@ not approve a depreciation method, tax rate, or filing behavior.
 - Separate asset tables (book assets vs. tax assets): Couples data model and adds complexity; reconciliation is harder.
 
 **Rationale**:
-India accounting and tax compliance require separate book and tax depreciation (Companies Act vs. Income-tax Act). Book method is typically SLM (simpler, predictable); tax method is statutory (block assets, WDV, or specific asset class rules). Separating schedules allows clean, auditable reconciliation. Tentative SLM default for book is standard practice in Zoho Books and enterprise accounting systems; tax rules are deterministic and must be maintained in a compliance-rules package (separate OPEN_RESEARCH item). Monthly pro-rata SLM is realistic for India reporting cycles (monthly trials, quarterly compliance).
+India accounting and tax compliance require separate book and tax depreciation (Companies Act vs. Income-tax Act). Book method is typically SLM (simpler, predictable); tax method is statutory (block assets, WDV, or specific asset class rules). Separating schedules allows clean, auditable reconciliation. Tentative SLM default for book is a working recommendation (NOT CONFIRMED as Zoho Books feature); tax rules are deterministic and must be maintained in a compliance-rules package (separate OPEN_RESEARCH item). Monthly pro-rata SLM is realistic for India reporting cycles (monthly trials, quarterly compliance). Zoho's separate book/tax depreciation capability is NOT CONFIRMED from official documentation; this remains a product design choice, not vendor evidence.
 
 **Product Impact**:
 - Compliance readiness: Separate book/tax schedules support India's dual-reporting requirements.
