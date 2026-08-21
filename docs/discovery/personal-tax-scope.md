@@ -1,8 +1,8 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** PT-001 and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001, PT-002, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
-Sudhanshu's explicit owner approvals of PT-001 and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from either owner approval alone.
+Sudhanshu's explicit owner approvals of PT-001, PT-002, and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
 
 ## 1. Verdict and scope
 
@@ -61,7 +61,7 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-PT-001 and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
+PT-001, PT-002, and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
@@ -113,17 +113,21 @@ It changes no other PT decision, legal rule, source, or index file.
 <a id="pt-002"></a>
 ### PT-002: BookSet-owned records and independent balance
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Every BookSet-owned record carries `tenant_id` and `book_set_id`. Each BookSet balances independently.
+Sudhanshu's owner approval is recorded for this clarified model. Architect review, the physical-schema RFC review, and the existing Gate-0/readiness safeguards remain outstanding.
 
-**Boundary:** Accounts, postings, invoices, bills, payments, assets, subledgers, evidence links, and reconciliations are BookSet-owned. Cross-BookSet views are explicit aggregations, not hidden shared balances.
+**Decision:** A BookSet is one independently balanced books/business boundary, not a bank account. Every posted accounting record belongs to exactly one BookSet and carries `tenant_id` and `book_set_id`.
+
+**Boundary:** A company tenant normally has one BookSet even when it has multiple bank, cash, or card accounts. An individual/PAN tenant may have one personal BookSet plus separate sole-proprietorship BookSets. Accounts, postings, invoices, bills, payments, assets, subledgers, evidence links, and reconciliations are BookSet-owned. Raw imported lines are not posted accounting records and may remain unassigned until explicitly classified. Cross-BookSet views are explicit aggregations, not hidden shared balances.
+
+Cross-BookSet movement is represented by linked entries rather than duplicated balances. One-BookSet commands resolve that BookSet automatically; when a write is ambiguous across multiple BookSets, it fails closed unless the operator supplies explicit, visible BookSet context as documented by PT-014. The atomic transfer mechanics remain separately specified in PT-003 and are not approved by this entry.
 
 All existing tenant-wide identifier uniqueness remains in force until separately revised. Adding BookSets does not silently narrow uniqueness to a BookSet.
 
 Account codes remain tenant-wide unique, immutable, and never reused, while account ownership, parent references, and BookSet defaults remain bound to the same BookSet.
 
-**Failure mode:** A personal record is treated as business data because a report merged two books without an explicit scope.
+**Failure mode:** A bank, cash, or card account is mistaken for a BookSet, a raw imported line is posted before classification, or a personal record is treated as business data because a report merged two books without an explicit scope.
 
 **Open choice:** Physical schema, migration ordering, and the precise list of BookSet-owned aggregates require the reviewed schema RFC.
 
@@ -469,7 +473,7 @@ The DPDP Act and Rules are legal research sources. CERT-In Directions under sect
 
 Implementation is blocked until all of the following are reviewed and approved:
 
-1. Architect review of PT-001 and PT-009; owner and architect approval of PT-002 through PT-008 and PT-010 through PT-016.
+1. Architect review of PT-001, PT-002, and PT-009; owner and architect approval of PT-003 through PT-008 and PT-010 through PT-016.
 2. Canonical contract migration from one legal entity/one balanced book to the reviewed individual/PAN tenant plus independently balanced BookSets model.
 3. Immutable official rule snapshots and official schema or validator releases for each supported period and form.
 4. Year-specific correction-route research and owner-approved mechanism selection.
@@ -549,4 +553,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a discovery baseline. PT-001 and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. PT-001, PT-002, and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.

@@ -444,7 +444,7 @@ Owner-approved. Partial batch completion is a distinct nonzero result with per-i
 - **Linked but distinct**: The sole proprietor's personal assets, income, and deductions are modeled separately within the same tenant as business/GST books, enabling consolidated compliance but preserving accounting clarity.
 
 **Detailed Personal-Tax Decisions**:
-Detailed technical decisions for personal-tax implementation (PT-001 through PT-016) remain separately gated and documented in [Personal Tax Discovery Packet](personal-tax-scope.md). PT-001 (tenant model) and PT-009 (file-first data handling) are owner-approved/not-architect-reviewed; PT-002 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED and require separate review.
+Detailed technical decisions for personal-tax implementation (PT-001 through PT-016) remain separately gated and documented in [Personal Tax Discovery Packet](personal-tax-scope.md). PT-001 (tenant model), PT-002 (BookSet boundary and record scope), and PT-009 (file-first data handling) are owner-approved/not-architect-reviewed; PT-003 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED and require separate review.
 
 **Advance-Tax Behavior—Not Owner-Approved by T-007**:
 The old advance-tax manual-vs-auto default choice is **NOT** owner-approved by this scope decision. Advance-tax behavior (s404/408 estimated-amount input, auto-projection, deadline tracking) remains a separate personal-tax research item and must be preserved as TENTATIVE detail within the personal-tax scope, not claimed as approved by T-007's scope decision.
@@ -735,7 +735,7 @@ are complete.
 
 ## Personal Tax Decisions (PT-001 through PT-016)
 
-**Personal Tax status:** PT-001 and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
+**Personal Tax status:** PT-001, PT-002, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
 
 All Personal Tax decisions are documented in the canonical discovery packet: [Personal Tax Discovery Packet](personal-tax-scope.md). Cross-link index:
 
@@ -758,7 +758,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 | PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; Redacted Logs; No False Compliance Claims | [personal-tax-scope.md § PT-015](personal-tax-scope.md#pt-015) |
 | PT-016 | Immutable Original + Linked Correction/Revised/Rectification Cases | [personal-tax-scope.md § PT-016](personal-tax-scope.md#pt-016) |
 
-**Status**: PT-001 and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
+**Status**: PT-001, PT-002, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
 
 ---
 
