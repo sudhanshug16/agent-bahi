@@ -113,6 +113,10 @@ The separate book/tax schedule model is **T-003 TENTATIVE - NOT OWNER-APPROVED**
 The relationship and exact methods remain configuration/policy boundaries, and
 the owner may reverse the tentative default without changing the asset-register
 or schedule identity seams. No method or rate may be hidden in the register.
+For tax depreciation, [Rule 25](https://www.incometaxindia.gov.in/w/rule-25-9)
+and its effective Appendix I/II tables are the rate source. Preserve
+acquisition, block, WDV, use, and rule inputs; select the effective tax-year
+rule when preparing a tax run rather than freezing the tax rate at acquisition.
 
 Capitalization has one posting owner per source line. The recommended owner is
 an AP bill line carrying asset-capitalization metadata: its source journal posts
@@ -302,7 +306,7 @@ annual income-tax returns, and company statutory compliance (Companies Act 2013)
 Baseline research and workflow requirements are documented in:
 - [Statutory Workflow Contracts](statutory-workflow-contracts.md) — Defines obligation scope, due-event calculation, validation gates, human/professional review, evidence tracking, and portal-filing boundaries.
 - [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Verified research baseline for Tax Deducted at Source and Tax Collected at Source obligations under Income-tax Act 2025 and Rules 2026.
-- [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Verified research baseline for annual income-tax return filing, tax computation (Form 26), and advance-tax obligations.
+- [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Verified research baseline for annual income-tax return filing, separate tax computation, Form 26 s63 audit report, and advance-tax obligations.
 - [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Verified research baseline for company statutory compliance under Companies Act 2013, including audit, AGM, and Registrar filings.
 
 Data model requirements for statutory compliance include:
@@ -311,10 +315,24 @@ Data model requirements for statutory compliance include:
 - portal filing snapshots (preparation, submission, acceptance, ARN/reference tracking);
 - separate obligation states (deduction computed, payment due, filed, accepted, amended);
 - evidence linkage for compliance decisions (audit reports, filing receipts, portal acknowledgements);
-- forms and schedules (Form 141, Form 140, Form 26, Registrar forms) with field mapping and attachment tracking;
+- forms and schedules (Form 141, Form 140, Form 26, Registrar forms) with field mapping and evidence linkage; Form 26 is only the s63 audit report, never the annual tax computation or an attachment accompanying the return;
+- a separate tax-computation artifact for total income, liability, reliefs,
+  credits, and net tax, linked to Form 26 only as audit evidence where s63
+  applies;
 - correction and amendment lineage for returns and filings.
 
-Statutory operations are effective-dated and rule-scoped. Every filing or return freezes the applicable rule version and entity facts at decision time. Corrections use explicit reversal and replacement lineage matching other posted-document contracts. Portal-observed states (ARN, Registrar reference, filing status) are kept distinct from product-internal preparation states; filing success is only confirmed from documented portal acknowledgement, not from upload alone.
+Statutory operations are effective-dated and rule-scoped. Every legal action
+must first have `source_verified=true` and a non-stale
+`effective_rule_snapshot` containing official source, rule version, effective
+date, jurisdiction, and applicability facts. Missing/stale snapshots or
+**OPEN**/**TENTATIVE** rules return **REVIEW/BLOCK** with no form selection,
+tax computation/posting, deadline, payment, export, filing, advance-tax
+action, Form 26, or tax-depreciation posting. Every filing or return freezes
+the applicable rule version and entity facts at decision time. Corrections use
+explicit reversal and replacement lineage matching other posted-document
+contracts. Portal-observed states (ARN, Registrar reference, filing status) are
+kept distinct from product-internal preparation states; filing success is only
+confirmed from documented portal acknowledgement, not from upload alone.
 
 ## Optional Reporting Tags/Dimensions
 

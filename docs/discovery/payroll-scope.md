@@ -10,7 +10,7 @@ as identical. No Zoho MCP was used.
 
 The statutory research baseline is [Payroll Compliance Matrix](payroll-compliance-matrix.md).
 It is research documentation, not legal advice and not implementation. The
-matrix uses a research cutoff of 20 August 2026 and separates confirmed
+matrix uses a research cutoff of 21 August 2026 and separates confirmed
 official facts, product validation policy, tenant configuration, and open
 research.
 
@@ -69,9 +69,10 @@ The target includes the complete India payroll workflow:
 - payslips, wage/overtime/deduction reports, and requested employee outputs for
   secure delivery outside agent-bahi;
 - deterministic bank-import CSV export using versioned bank presets;
-- payroll TDS, declarations, investment proofs, a certificate selected as
-  Form 16 or Form 130 by governing period and rule version, and quarterly TDS
-  statements;
+- payroll TDS under section 392, declarations, investment proofs, a certificate
+  selected as Form 16 or Form 130 by governing period and rule version, and
+  Form 138 quarterly salary statements. Non-payroll Forms 131/132/140/141 are
+  excluded from this payroll contract;
 - PF, ESI, professional tax (PT), and labour welfare fund (LWF) modules; and
 - full-and-final settlement based on approved inputs, including final payables,
   deductions, any approved leave-settlement amount, and statutory references;
@@ -93,15 +94,28 @@ invent amounts, select an unsupported rule, bypass a validation or lock, or
 silently post. External systems are evidence and transport boundaries; the
 ledger remains the source of truth for accounting outcomes.
 
+Before any payroll legal action, the engine requires
+`source_verified=true` and a non-stale `effective_rule_snapshot` containing
+the official source, version, effective date, jurisdiction, and applicability
+facts. Missing or stale evidence, or an **OPEN**/**TENTATIVE** rule, returns
+**REVIEW/BLOCK** with no form selection, tax computation/posting, deadline,
+payment, export, filing, advance-tax action, or certificate generation. See
+`PAYROLL-GATE-001` in [payroll-compliance-matrix.md](payroll-compliance-matrix.md).
+
 ### Transition and statutory implementation decisions
 
-The notified [Income-tax Rules, 2026](https://www.incometax.gov.in/iec/foportal/sites/default/files/2026-03/En-Notified-IT-Rules-2026-20-03-2026.pdf)
+The notified [Income-tax Rules, 2026](https://www.incometaxindia.gov.in/iec/foportal/sites/default/files/2026-03/En-Notified-IT-Rules-2026-20-03-2026.pdf)
 come into force on 1 April 2026. Salary paid through March 2026 remains under
 section 192 of the Income-tax Act, 1961. Salary paid from April 2026 for Tax
 Year 2026-27 is under section 392(1) of the Income-tax Act, 2025. The
 [TDS compliance guidance](https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/tds-compliance)
 states that salary TDS follows the date of payment: March 2026 salary uses
-the old Act and April 2026 salary uses the new Act.
+the old Act and April 2026 salary uses the new Act. For the new-law period,
+the legal source set is [section 392](https://www.incometaxindia.gov.in/w/section-392-5),
+[Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1),
+[Rule 218](https://www.incometaxindia.gov.in/w/rule-218-1),
+[Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1), and the official
+[Form 138 FAQ](https://www.incometaxindia.gov.in/documents/d/guest/form-138-faqs).
 
 The engine must select the governing Act, rule version, forms, rates, and
 effective dates from the payroll period and salary payment event. The employee
@@ -113,10 +127,10 @@ claims use Form 124 under Rule 205; no old-form mapping is assumed here.
 
 Form 138, earlier Form 24Q, is the quarterly salary TDS statement for the new
 framework. Its Q1/Q2/Q3/Q4 due dates are 31 July, 31 October, 31 January, and
-31 May respectively. It requires a valid TAN and the current RPU/FVU
-workflow. TDS payment, statement filing, acceptance/rejection, and
-acknowledgement are separate tracked outcomes. See the [Form 138 user
-manual](https://www.incometax.gov.in/iec/foportal/newformpage/forms/form138-um)
+31 May respectively, as stated in the official Form 138 FAQ and Rule 219. It
+requires applicable TAN/profile facts and the current RPU/FVU workflow. TDS
+payment, statement filing, acceptance/rejection, and acknowledgement are
+separate tracked outcomes. See the official [Form 138 FAQ](https://www.incometaxindia.gov.in/documents/d/guest/form-138-faqs)
 and the full [payroll compliance matrix](payroll-compliance-matrix.md) for
 the transition table and gates.
 

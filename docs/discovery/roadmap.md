@@ -26,18 +26,25 @@ Explicit follow-ups before GST implementation decisions:
 The [Statutory Workflow Contracts](statutory-workflow-contracts.md) document
 defines obligation scope, due-event calculation, validation gates, human/professional review requirements, and portal-filing boundaries for TDS/TCS, annual income-tax returns, and company statutory compliance. Linked verified research baselines include:
 
-- [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Tax Deducted at Source and Tax Collected at Source under Income-tax Act 2025/Rules 2026 (effective 1 April 2026). Marks unverified rates, forms (141, 140), and exemption criteria as OPEN.
-- [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Annual return filing, tax computation (Form 26), audit applicability (section 63), and advance-tax obligations under current law. Marks form selection (Rule 164/Notification 22) and computation inputs as OPEN.
+- [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Tax Deducted at Source and Tax Collected at Source under Income-tax Act 2025/Rules 2026 (effective 1 April 2026). Rates and thresholds derive from s393/s394 and effective rule snapshots; Forms 141/140 are routing outputs, not rate sources.
+- [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Annual return filing, separate tax computation, Form 26 as the s63 audit report only, audit applicability (section 63), and advance-tax obligations under current law. Marks unresolved form selection and computation inputs as OPEN.
 - [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Company statutory compliance (audit, AGM, Registrar filings, statutory forms) under Companies Act 2013. Marks form instruction kits, audit committee applicability, and exemption criteria as OPEN. Explicitly rejects obsolete Form 23AC/23ACA and unverified Form DPT-7.
 
 This documentation milestone does not approve implementation, portal submission, or compliance decision automation; it establishes verified baselines and marks all unverified items OPEN.
 
+All statutory phases have a hard predecessor: `source_verified=true` and a
+non-stale `effective_rule_snapshot` with official source, version, effective
+date, jurisdiction, and applicability facts. Missing/stale snapshots or
+**OPEN**/**TENTATIVE** rules return **REVIEW/BLOCK** with no form selection,
+tax computation/posting, deadline generation, payment, export, filing,
+advance-tax action, Form 26, or tax-depreciation posting.
+
 Explicit follow-ups before statutory-compliance implementation decisions:
 
-- verify TDS/TCS rates and thresholds from official Form 140/Form 141 instruction kits;
+- verify TDS/TCS rates and thresholds from the official s393/s394 sources and effective rule snapshots; use Form 140/Form 141 only for statement routing;
 - verify annual-return form code and structure from official Notification 22 and Form Navigator;
 - verify company audit applicability and exemptions from current MCA notification;
-- research payroll Form 130 filing requirement and interaction with non-payroll Form 140;
+- research payroll Form 130/Form 138 details and keep them separate from non-payroll Form 140/Form 141;
 - verify all form-instruction kits (AOC-4, MGT-7, ADT-1, DPT-3, MSME-1) and gate implementation on verified forms only.
 
 ## Phase 1 Gate: Review and Approval
@@ -148,7 +155,7 @@ Before Phase 1 implementation begins:
 - Pay schedules, payroll periods, and approved summarized payroll inputs such as payable days, LOP days, and overtime amounts/hours; no attendance, leave, shift, HRMS, or attendance-import domain
 - Regular, bonus, arrears, correction, and off-cycle runs with draft, approval, posting, and locking
 - Reimbursements, perquisites, loans, advances, payslips, wage/overtime/deduction reports, and requested employee outputs for secure external delivery; no employee self-service portal
-- Payroll TDS, declarations/proofs, Form 16, quarterly TDS statements, PF, ESI, PT, LWF, and statutory filing/remittance references
+- Payroll TDS under s392, declarations/proofs, Form 16/Form 130, payroll-only Form 138 quarterly statements, PF, ESI, PT, LWF, and statutory filing/remittance references; non-payroll Forms 140/141 remain in the statutory TDS contract
 - Deterministic bank-import CSV export using versioned bank presets; no bank transfer initiation or auto-pay
 - Full-and-final settlement and auditable reversal/correction lineage
 
