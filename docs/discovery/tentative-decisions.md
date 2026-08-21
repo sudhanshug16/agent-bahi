@@ -602,7 +602,7 @@ Awaiting docket review and explicit owner direction for Gate0. This entry docume
 
 ## Personal Tax Decisions (PT-001 through PT-016)
 
-**Personal Tax status:** Every PT entry and this index table inherit the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**.
+**Personal Tax status:** PT-001 is **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
 
 All Personal Tax decisions are documented in the canonical discovery packet: [Personal Tax Discovery Packet](personal-tax-scope.md). Cross-link index:
 
@@ -625,7 +625,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 | PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; Redacted Logs; No False Compliance Claims | [personal-tax-scope.md § PT-015](personal-tax-scope.md#pt-015) |
 | PT-016 | Immutable Original + Linked Correction/Revised/Rectification Cases | [personal-tax-scope.md § PT-016](personal-tax-scope.md#pt-016) |
 
-**Status**: The entire PT table inherits the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
+**Status**: PT-001 is **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
 
 ---
 

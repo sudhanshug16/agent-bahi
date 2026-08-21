@@ -1,6 +1,8 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** Every PT entry is **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001 is **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+
+Sudhanshu's owner approval of PT-001 is recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from PT-001 alone.
 
 ## 1. Verdict and scope
 
@@ -43,7 +45,7 @@ The following are the safe baseline facts used by this discovery packet. They ar
 
 The current canonical product contract is one legal entity per tenant and one balanced book. See [confirmed decisions](decisions.md#confirmed) and the existing [data-model requirements](data-model-requirements.md).
 
-PT-001 extends that contract for an individual taxpayer: one individual/PAN tenant may contain a personal BookSet and multiple independently balanced sole-proprietorship BookSets. Companies remain separate tenants. This is a breaking data-model contract change requiring owner approval and a coordinated canonical migration.
+PT-001 extends that contract for an individual taxpayer: one individual/PAN tenant may contain a personal BookSet and multiple independently balanced sole-proprietorship BookSets. Companies remain separate tenants. This is a breaking data-model contract change. Owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required.
 
 This is not a relaxation across legal persons. Cross-tenant posting remains prohibited. The extension is a controlled grouping of books belonging to one individual legal person so the one PAN return can aggregate them without merging their ledgers.
 
@@ -57,12 +59,12 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-Each entry below has the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are provisional discovery constraints, not implementation authority.
+PT-001 has the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
 **Decision:** One individual/PAN tenant may contain one personal BookSet and one or more sole-proprietorship BookSets. Companies stay in separate tenants.
 
@@ -70,7 +72,7 @@ Each entry below has the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCH
 
 **Why:** Sole-proprietorship income is part of the proprietor's individual return. Separate personal and proprietorship returns would create an omission path.
 
-**Contract impact:** This breaks the current one-legal-entity-per-tenant data model. Owner approval, architect review, and a coordinated canonical migration are prerequisites. No implementation follows from this entry alone.
+**Contract impact:** This breaks the current one-legal-entity-per-tenant data model. Owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration are prerequisites. No implementation follows from this entry alone.
 
 **Failure mode:** A new business BookSet is created in a separate tenant and the TaxCase silently omits it.
 
@@ -454,7 +456,7 @@ The DPDP Act and Rules are legal research sources. CERT-In Directions under sect
 
 Implementation is blocked until all of the following are reviewed and approved:
 
-1. Owner and architect approval of PT-001 through PT-016.
+1. Architect review of PT-001; owner and architect approval of PT-002 through PT-016.
 2. Canonical contract migration from one legal entity/one balanced book to the reviewed individual/PAN tenant plus independently balanced BookSets model.
 3. Immutable official rule snapshots and official schema or validator releases for each supported period and form.
 4. Year-specific correction-route research and owner-approved mechanism selection.
@@ -534,4 +536,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a tentative discovery baseline. The owner and architect must review the exact PT status, the breaking tenant/BookSet contract, the source and readiness boundaries, and the open research gates before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. PT-001 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
