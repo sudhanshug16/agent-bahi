@@ -16,7 +16,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - **T-004**: FX provider and fallback selection (provisional; gates Phase 5 spike).
 - **T-005**: Regular-GST V1 profile baseline (AATO applicability, effective-dated rules, GSTR-1 output; composition scheme deferred).
 - **T-006**: Batch partial-success numeric proposal (exit code for partially-committed multi-item operations; tests must not assume specific numeric value).
-- **T-007**: Advance-tax estimate operator input under s404/s408 (installment computation, operator-entered estimates; not s392 salary withholding).
+- **T-007**: Provenance-only operator-entered advance-tax estimate under s404/s408; no auto-projection, computed tax/liability, installment calculation, sufficiency validation, or payment advice. Any derived amount is REVIEW/BLOCK pending verified rules and full computation inputs.
 - **T-008**: Retroactive depreciation correction policy (immutability and reversal pattern).
 - **T-009**: Form140/141 statutory export research only (non-payroll TDS s393 routing forms; not s392 salary withholding and not Form143/TCS). Form140/141 export/transport remains blocked pending research.
 - **T-010**: Post-filing correction and revised-return boundary (amended returns, form corrections after filing).
@@ -114,12 +114,12 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - Evidence storage: content-addressed immutable blob storage (checksum verification, storage reference, metadata).
 - Evidence linking: attachment to documents and postings with hash verification.
 - Bank statement import (date, amount, reference, description).
-- Ephemeral match proposals (non-posting, zero side effects; candidates only; never persisted without explicit human action).
-- Reconciliation proposals: ephemeral candidates with evidence references; persistence requires explicit human confirmation (recorded separately; not an application-layer gate).
+- Ephemeral match proposals (non-posting, zero side effects; candidates only; never persisted without an application-layer commit).
+- Reconciliation commit: the final CLI/application commit is an application-layer gate and must bind the exact plan digest to the source line, target, amount, FX snapshot, relevant versions, tenant, actor, and timestamp. Proposals remain ephemeral; stale, mismatched, or missing confirmation fails closed with no reconciliation or posting persistence.
 - Bank reconciliation report (matched, unmatched items, period status).
 - Exception routing for import validation, ambiguity, missing evidence.
 
-**Tests**: Evidence hashes correct; content-addressing prevents duplicates; proposals non-posting; reconciliation matches persist with evidence links; idempotency.
+**Tests**: Evidence hashes correct; content-addressing prevents duplicates; proposals non-posting; final CLI/application commit enforces exact-plan confirmation fields; stale, mismatched, or missing confirmation persists nothing; reconciled postings link to statement lines; idempotency.
 
 **Exit Gate**: Bank import and reconciliation proposal logic working; evidence storage and linking complete. Proposals remain ephemeral until confirmed.
 
@@ -165,6 +165,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - Payables (salary, PF, ESI, PT, LWF, TDS, advances/loans).
 - **Payroll legal-action gate**: Before any PF/ESI/PT/LWF/TDS applicability or form selection, rate/contribution computation, deadline, statement/certificate, posting, payment/remittance, export, or filing require `source_verified=true` + a non-stale effective rule snapshot + complete facts. Missing/stale/OPEN rules return REVIEW/BLOCK for the affected action only; unaffected salary posting proceeds.
 - Salary TDS under s392 owns Forms 130/138 in P6; their applicability, selection, computation, statements/certificates, posting, payment/remittance, export, and filing actions remain independently source-gated here.
+- P6 also owns the distinct s393(1) Table 8(iii) specified-bank/senior-citizen cross-lane route for Forms 130/138. Table 8(iii) is non-salary, but uses the payroll-canonical artifact contract; every action remains independently source-gated.
 - Approved summarized inputs only (payable days, LOP, overtime amounts); no attendance, leave, HRMS.
 - Frozen bank CSV export (versioned preset, deterministic formatting).
 - Bank-file state machine: Generated → Uploaded → Accepted/Rejected → Debited → Reconciled (distinct states, separate evidence).
@@ -173,9 +174,9 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 
 **Tests**: Salary structure gross/net correct; payables balanced; CSV export deterministic; debit observation required before payable clears; idempotency.
 
-**Exit Gate**: Payroll posting complete; bank-file state machine working; exports frozen and verified. Payroll TDS under s392 (Form 130/Form 138) remains in payroll lane; non-payroll TDS/TCS (s393/s394) deferred to Phase 7.
+**Exit Gate**: Payroll posting complete; bank-file state machine working; exports frozen and verified. s392 salary Forms 130/138 and the distinct s393(1) Table 8(iii) specified-bank/senior-citizen Forms 130/138 route remain in the P6 payroll-canonical lane; the general s393 branch and s394 TCS are deferred to Phase 7.
 
-**Non-Goals**: Attendance tracking, employee portal, non-payroll statutory compliance (deferred to Phase 7), composition scheme, SEZ.
+**Non-Goals**: Attendance tracking, employee portal, the general s393 Forms 140/141/144 + certificates 131/132 branch and s394 Form143 + certificate133 branch (deferred to Phase 7), composition scheme, SEZ. The s393(1) Table 8(iii) Forms 130/138 cross-lane route is owned here.
 
 ---
 
@@ -192,7 +193,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
   - Missing/stale rules BLOCK only that action (not all Phase 7)
   - OPEN rules visible; explicitly REVIEW/BLOCK.
 - **GST**: Regular taxpayer baseline (AATO, GSTR-1 output JSON, amendments, ITC eligibility, effective-dated classification).
-- **s393 non-payroll TDS branch** (independent gate): Form selection, structure, deadline, deduction, posting, payment/remittance, export, filing, and certificates for Forms 140/141/144 + certificates 131/132 each require `source_verified=true`, a non-stale branch snapshot, and complete facts. T-009 blocks only Form140/141 transport/export pending research; it does not block other s393 actions.
+- **General s393 non-payroll TDS branch** (independent gate; explicitly excludes s393(1) Table 8(iii), which is owned by P6): Form selection, structure, deadline, deduction, posting, payment/remittance, export, filing, and certificates for Forms 140/141/144 + certificates 131/132 each require `source_verified=true`, a non-stale branch snapshot, and complete facts. T-009 blocks only Form140/141 transport/export pending research; it does not block other general s393 actions.
 - **s394 TCS branch** (independent gate): Form selection, structure, deadline, collection, posting, payment/remittance, export, filing, and certificate for Form143 + certificate133 each require `source_verified=true`, a non-stale branch snapshot, and complete facts. T-009 does not block Form143 or any TCS action.
 - **Income-tax**: Annual return form structure (per official Notification), separate tax computation (not audit report Form 26).
 - **MCA**: Mandatory audit applicability, form structure (per official sources; never infer exemptions).

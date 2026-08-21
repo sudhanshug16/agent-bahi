@@ -72,9 +72,11 @@ The target includes the complete India payroll workflow:
 - payroll owns section 392 salary TDS, declarations, investment proofs, a
   certificate selected as Form 16 or Form 130 by governing period and branch,
   and Form 138 quarterly statements. Forms 130/138 are not salary-exclusive:
-  s393(1) Table 8(iii) specified-senior-citizen payments use them under Rules
-  215/219 with ordinary Rule 218 timing. General non-payroll Forms
-  131/132/140/141/143/144 are excluded from this payroll contract;
+  the distinct s393(1) Table 8(iii) specified-bank/senior-citizen cross-lane
+  route uses them under Rules 215/219 with ordinary Rule 218 timing. Table
+  8(iii) is non-salary but uses the payroll-canonical artifact contract.
+  General non-payroll Forms 131/132/140/141/143/144 are excluded from this
+  payroll contract;
 - PF, ESI, professional tax (PT), and labour welfare fund (LWF) modules; and
 - full-and-final settlement based on approved inputs, including final payables,
   deductions, any approved leave-settlement amount, and statutory references;
@@ -108,11 +110,13 @@ payment, export, filing, advance-tax action, or certificate generation. See
 
 The notified [Income-tax Rules, 2026](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf)
 come into force on 1 April 2026. The matrix preserves the requested period
-split: legacy salary periods through March 2026 remain a separately selected
-1961-law workflow, while salary paid from April 2026 for Tax Year 2026-27 is
-under section 392(1) of the Income-tax Act, 2025. Exact legacy transition,
-filing, and correction details remain OPEN+BLOCK until their period-specific
-official source is attached. The
+split: legacy salary periods through the applicable legacy effective date
+(currently payment/credit through 31 March 2026) remain a separately selected
+1961-law workflow using source-gated Form 24Q, while the new-law effective
+regime from 1 April 2026 uses Form 138 and salary paid from April 2026 for Tax
+Year 2026-27 is under section 392(1) of the Income-tax Act, 2025. Exact legacy transition,
+filing, Form 24Q correction, and Form 24Q acknowledgement details remain OPEN+BLOCK
+until their period-specific official source is attached. The
 official [Rule 30](https://www.incometaxindia.gov.in/w/rule-30-7) source is
 retained for the applicable legacy payment timing. For the new-law period, the
 legal source set is [section 392](https://www.incometaxindia.gov.in/w/section-392-5),
@@ -135,7 +139,9 @@ no old-form mapping is assumed here.
 
 Form 138 is the quarterly statement for
 s392 salary or s393(1) Table 8(iii) specified-senior-citizen TDS in the new
-framework. Its Q1/Q2/Q3/Q4 due dates are 31 July, 31 October, 31 January, and
+framework. Source-gated Form 24Q remains the statement for old-law salary
+periods through the applicable legacy effective date. For new-law Form 138, the
+Q1/Q2/Q3/Q4 due dates are 31 July, 31 October, 31 January, and
 31 May respectively, as stated in the official Form 138 FAQ and Rule 219. It
 requires applicable TAN/profile facts and the current RPU/FVU workflow. TDS
 payment, statement filing, acceptance/rejection, and acknowledgement are
@@ -210,7 +216,7 @@ The parity target does not settle the following implementation details:
 - exact Zoho edge-case behavior, plan entitlements, import formats, and
   integration failure semantics;
 - the complete effective-dated tax tables, surcharge/cess, regime choices,
-  declarations, proof validation, Form 16 generation, and Form 138/legacy
+  declarations, proof validation, Form 16 generation, and Form 138/Form 24Q
   correction rules;
 - PF wage-base exceptions and voluntary coverage, ESI establishment and
   coverage exceptions, and state PT/LWF schedules;
