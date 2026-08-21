@@ -21,6 +21,25 @@ Explicit follow-ups before GST implementation decisions:
 - decide e-way-bill transport and research effective-dated state rules and
   exceptions.
 
+## Cross-cutting discovery milestone: verified statutory compliance baseline (2026-08-21)
+
+The [Statutory Workflow Contracts](statutory-workflow-contracts.md) document
+defines obligation scope, due-event calculation, validation gates, human/professional review requirements, and portal-filing boundaries for TDS/TCS, annual income-tax returns, and company statutory compliance. Linked verified research baselines include:
+
+- [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Tax Deducted at Source and Tax Collected at Source under Income-tax Act 2025/Rules 2026 (effective 1 April 2026). Marks unverified rates, forms (141, 140), and exemption criteria as OPEN.
+- [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Annual return filing, tax computation (Form 26), audit applicability (section 63), and advance-tax obligations under current law. Marks form selection (Rule 164/Notification 22) and computation inputs as OPEN.
+- [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Company statutory compliance (audit, AGM, Registrar filings, statutory forms) under Companies Act 2013. Marks form instruction kits, audit committee applicability, and exemption criteria as OPEN. Explicitly rejects obsolete Form 23AC/23ACA and unverified Form DPT-7.
+
+This documentation milestone does not approve implementation, portal submission, or compliance decision automation; it establishes verified baselines and marks all unverified items OPEN.
+
+Explicit follow-ups before statutory-compliance implementation decisions:
+
+- verify TDS/TCS rates and thresholds from official Form 140/Form 141 instruction kits;
+- verify annual-return form code and structure from official Notification 22 and Form Navigator;
+- verify company audit applicability and exemptions from current MCA notification;
+- research payroll Form 130 filing requirement and interaction with non-payroll Form 140;
+- verify all form-instruction kits (AOC-4, MGT-7, ADT-1, DPT-3, MSME-1) and gate implementation on verified forms only.
+
 ## Phase 1 Gate: Review and Approval
 
 Before Phase 1 implementation begins:

@@ -253,6 +253,28 @@ or proves payment. Bank statement matching/reconciliation records actual salary
 payment before an explicit clearing entry. Any jurisdiction-specific component
 must use the same effective-dated rule and frozen-input links.
 
+## Statutory Compliance Workflows and Tax Filing
+
+The model must support statutory compliance operations including TDS/TCS filings,
+annual income-tax returns, and company statutory compliance (Companies Act 2013).
+
+Baseline research and workflow requirements are documented in:
+- [Statutory Workflow Contracts](statutory-workflow-contracts.md) — Defines obligation scope, due-event calculation, validation gates, human/professional review, evidence tracking, and portal-filing boundaries.
+- [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Verified research baseline for Tax Deducted at Source and Tax Collected at Source obligations under Income-tax Act 2025 and Rules 2026.
+- [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Verified research baseline for annual income-tax return filing, tax computation (Form 26), and advance-tax obligations.
+- [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Verified research baseline for company statutory compliance under Companies Act 2013, including audit, AGM, and Registrar filings.
+
+Data model requirements for statutory compliance include:
+- effective-dated rule versioning (Acts, Rules, Notifications) with applicability facts;
+- obligation tracking with due dates, filing deadlines, and predecessor gates;
+- portal filing snapshots (preparation, submission, acceptance, ARN/reference tracking);
+- separate obligation states (deduction computed, payment due, filed, accepted, amended);
+- evidence linkage for compliance decisions (audit reports, filing receipts, portal acknowledgements);
+- forms and schedules (Form 141, Form 140, Form 26, Registrar forms) with field mapping and attachment tracking;
+- correction and amendment lineage for returns and filings.
+
+Statutory operations are effective-dated and rule-scoped. Every filing or return freezes the applicable rule version and entity facts at decision time. Corrections use explicit reversal and replacement lineage matching other posted-document contracts. Portal-observed states (ARN, Registrar reference, filing status) are kept distinct from product-internal preparation states; filing success is only confirmed from documented portal acknowledgement, not from upload alone.
+
 ## Optional Reporting Tags/Dimensions
 
 ### Overview
