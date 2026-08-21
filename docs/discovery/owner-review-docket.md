@@ -30,7 +30,7 @@ T-001 through T-011 are owner-approved as settled decision frameworks, while rem
 
 **Personal Tax status:** PT-001, PT-002, PT-003, PT-004, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**.
 
-A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope.md), documents 16 core decisions for sole-proprietor personal income-tax expansion. Complete individual tax is **in product scope**; PT-001, PT-002, PT-003, and PT-009 have the owner-approved status above, while PT-004 through PT-008 and PT-010 through PT-016 retain the tentative status above. The table below is a compact index; full specifications and rationale are in the canonical packet.
+A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope.md), documents 16 core decisions for sole-proprietor personal income-tax expansion. Complete individual tax is **in product scope**; PT-001, PT-002, PT-003, PT-004, and PT-009 have the owner-approved status above, while PT-005 through PT-008 and PT-010 through PT-016 retain the tentative status above. The table below is a compact index; full specifications and rationale are in the canonical packet.
 
 | PT-ID | Title | Recommended Option | First Affected Gate/Phase | Link |
 |-------|-------|-------------------|--------------------------|------|
