@@ -115,11 +115,11 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - Evidence linking: attachment to documents and postings with hash verification.
 - Bank statement import (date, amount, reference, description).
 - Ephemeral match proposals (non-posting, zero side effects; candidates only; never persisted without an application-layer commit).
-- Reconciliation commit: the final CLI/application commit is an application-layer gate and must bind the exact plan digest to the source line, target, amount, FX snapshot, relevant versions, tenant, actor, and timestamp. Proposals remain ephemeral; stale, mismatched, or missing confirmation fails closed with no reconciliation or posting persistence.
+- Reconciliation commit: persistence requires an explicit recorded HUMAN confirmation (`actor_type=human`) bound to the plan ID/digest plus the exact source line, target, amount, FX snapshot, relevant versions, tenant, actor, and timestamp. The CLI/application commit is the sole persistence boundary. Automated workflows and skills cannot confirm or persist a candidate, even when all fields match. Proposals remain ephemeral; stale, mismatched, or missing confirmation fails closed with no reconciliation or posting persistence.
 - Bank reconciliation report (matched, unmatched items, period status).
 - Exception routing for import validation, ambiguity, missing evidence.
 
-**Tests**: Evidence hashes correct; content-addressing prevents duplicates; proposals non-posting; final CLI/application commit enforces exact-plan confirmation fields; stale, mismatched, or missing confirmation persists nothing; reconciled postings link to statement lines; idempotency.
+**Tests**: Evidence hashes correct; content-addressing prevents duplicates; proposals non-posting; final CLI/application commit enforces exact-plan confirmation fields; stale, mismatched, or missing confirmation persists nothing; automated workflow/skill confirmation or persistence is rejected even with matching fields; reconciled postings link to statement lines; idempotency.
 
 **Exit Gate**: Bank import and reconciliation proposal logic working; evidence storage and linking complete. Proposals remain ephemeral until confirmed.
 
@@ -166,13 +166,14 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - **Payroll legal-action gate**: Before any PF/ESI/PT/LWF/TDS applicability or form selection, rate/contribution computation, deadline, statement/certificate, posting, payment/remittance, export, or filing require `source_verified=true` + a non-stale effective rule snapshot + complete facts. Missing/stale/OPEN rules return REVIEW/BLOCK for the affected action only; unaffected salary posting proceeds.
 - Salary TDS under s392 owns Forms 130/138 in P6; their applicability, selection, computation, statements/certificates, posting, payment/remittance, export, and filing actions remain independently source-gated here.
 - P6 also owns the distinct s393(1) Table 8(iii) specified-bank/senior-citizen cross-lane route for Forms 130/138. Table 8(iii) is non-salary, but uses the payroll-canonical artifact contract; every action remains independently source-gated.
+- Legacy salary statement branch: source-gated old-law salary periods use Form 24Q; the new-law effective regime uses Form 138. Effective-period selection, correction, and acknowledgement transition details remain OPEN+BLOCK until period-specific official sources attach.
 - Approved summarized inputs only (payable days, LOP, overtime amounts); no attendance, leave, HRMS.
 - Frozen bank CSV export (versioned preset, deterministic formatting).
 - Bank-file state machine: Generated → Uploaded → Accepted/Rejected → Debited → Reconciled (distinct states, separate evidence).
 - Only observed debit clears payroll payable once; export ≠ payment.
 - Payroll payable locked while run is draft/unposted; unlock only via reversal pattern.
 
-**Tests**: Salary structure gross/net correct; payables balanced; CSV export deterministic; debit observation required before payable clears; idempotency.
+**Tests**: Salary structure gross/net correct; payables balanced; CSV export deterministic; debit observation required before payable clears; select Form 24Q versus Form 138 from the frozen effective snapshot; unknown, stale, or missing source blocks statement selection; idempotency.
 
 **Exit Gate**: Payroll posting complete; bank-file state machine working; exports frozen and verified. s392 salary Forms 130/138 and the distinct s393(1) Table 8(iii) specified-bank/senior-citizen Forms 130/138 route remain in the P6 payroll-canonical lane; the general s393 branch and s394 TCS are deferred to Phase 7.
 

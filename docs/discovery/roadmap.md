@@ -99,7 +99,7 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Goal**: Evidence storage and linking, bank statement import, ephemeral reconciliation proposals, and exception routing. See [Implementation Plan: Phase 4](implementation-plan.md#phase-4-evidence-storage-and-linking-bank-reconciliation-proposals).
 
-**Key contract**: Evidence is immutable and content-addressed; bank imports and reconciliation proposals are auditable and non-posting until the final CLI/application commit. That application-layer gate binds the exact plan digest to the source line, target, amount, FX snapshot, relevant versions, tenant, actor, and timestamp; stale, mismatched, or missing confirmation fails with no persistence. Exceptions cover invalid imports, ambiguity, and missing evidence.
+**Key contract**: Evidence is immutable and content-addressed; bank imports and reconciliation proposals are auditable and non-posting until the final CLI/application commit. Persistence requires an explicit recorded HUMAN confirmation (`actor_type=human`) bound to the plan ID/digest plus the exact source line, target, amount, FX snapshot, relevant versions, tenant, actor, and timestamp. The CLI/application commit is the sole persistence boundary; automated workflows and skills cannot confirm or persist a candidate even when all fields match. Stale, mismatched, or missing confirmation fails with no persistence. Exceptions cover invalid imports, ambiguity, and missing evidence.
 
 **Exit conditions**: Evidence storage/linking, bank import, reconciliation proposals, and exception routing work; proposals remain ephemeral until confirmed.
 
@@ -115,9 +115,9 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Goal**: Employee profiles, salary structures, pay runs, frozen bank-CSV export. See [Implementation Plan: Phase 6](implementation-plan.md#phase-6-payroll-accounting-only-frozen-bank-csv-export).
 
-**Key contract**: Before any payroll legal action—applicability/form selection, rate/contribution computation, deadline, statement/certificate, posting, payment/remittance, export, or filing—require `source_verified=true`, a non-stale rule snapshot, and complete facts; otherwise REVIEW/BLOCK only the affected action. P6 owns s392 salary Forms 130/138 and the distinct s393(1) Table 8(iii) specified-bank/senior-citizen Forms 130/138 cross-lane route. Table 8(iii) is non-salary but uses the payroll-canonical artifact contract. Bank debit/reconciliation remain distinct states; only observed debit clears payable.
+**Key contract**: Before any payroll legal action—applicability/form selection, rate/contribution computation, deadline, statement/certificate, posting, payment/remittance, export, or filing—require `source_verified=true`, a non-stale rule snapshot, and complete facts; otherwise REVIEW/BLOCK only the affected action. P6 owns s392 salary Forms 130/138 and the distinct s393(1) Table 8(iii) specified-bank/senior-citizen Forms 130/138 cross-lane route. Table 8(iii) is non-salary but uses the payroll-canonical artifact contract. The legacy salary statement branch uses source-gated Form 24Q for old-law periods and Form 138 for the new-law effective regime, selected from the frozen effective snapshot; effective-period selection, correction, and acknowledgement transition details remain OPEN+BLOCK until period-specific official sources attach. Bank debit/reconciliation remain distinct states; only observed debit clears payable.
 
-**Exit conditions**: Payroll posting complete; bank-file state machine working; statutory gate enforced for s392 salary and the s393(1) Table 8(iii) cross-lane route.
+**Exit conditions**: Payroll posting complete; bank-file state machine working; statutory gate enforced for s392 salary, the s393(1) Table 8(iii) cross-lane route, and the source-gated Form 24Q/Form 138 legacy statement selection branch.
 
 ## Phase 7: Independently Gated Compliance Slices (Per-Action Research Gates)
 
