@@ -154,14 +154,14 @@ Account codes remain tenant-wide unique, immutable, and never reused, while acco
 - Purpose: `capital-introduced` (shared across both legs)
 - Both legs in one atomic transaction; both BookSets reconcile; the proprietor's personal bank decreases and the investment commitment increases; the business bank increases and the capital obligation increases.
 
-**Example 2—Personal bank directly pays a business expense:** A proprietor uses their personal SBI account to pay a software vendor ₹20,000 on behalf of the consulting business.
-- Personal leg: `Dr due-from-business-expense / Cr personal-bank ₹20k`
-- Business leg: `Dr business-software-expense ₹20k / Dr eligible-input-tax ₹3.6k / Cr vendor-payable ₹23.6k` (GST-eligible treatment per applicable business GSTIN and rule snapshot)
-- Purpose: `proprietor-funded-expense` (shared across both legs)
-- Funding settlement in a separate atomic transfer: business `Dr vendor ₹23.6k / Cr due-to-owner ₹23.6k`; personal `Dr due-from-business ₹23.6k / Cr bank ₹23.6k`
-- Both legs in one atomic transaction; each BookSet reconciles; no fictional receipt into the business bank.
+**Example 2—Personal bank directly pays a business expense:** A proprietor uses their personal SBI account to pay a software bill of ₹23,600, comprising a ₹20,000 base amount plus ₹3,600 GST, on behalf of the consulting business.
+- Purpose: `due-to/due-from-proprietor` (shared across both legs; not capital)
+- Personal BookSet leg: `Dr amount-due-from-business ₹23,600 / Cr personal-SBI-bank ₹23,600`
+- Business BookSet leg: `Dr software-expense ₹20,000 / Dr input-GST ₹3,600` only where eligibility is separately established under the existing rules; otherwise use the appropriate non-creditable tax/expense treatment without guessing, and `Cr amount-due-to-proprietor ₹23,600`.
+- This is one atomic transaction with the same shared gross amount of ₹23,600 across the linked legs. There is no fictional receipt into the business bank and no second ₹23,600 cash settlement in this event.
+- If the business later reimburses the proprietor, that is a separate linked event: business `Dr amount-due-to-proprietor ₹23,600 / Cr business-bank ₹23,600`; personal `Dr personal-SBI-bank ₹23,600 / Cr amount-due-from-business ₹23,600`. It reduces the mirrored due-to/due-from balances and moves ₹23,600 from business bank to personal bank; it is not part of the original direct-payment event.
 
-**Consolidated personal-tax reporting:** The transfer representation ensures that when a TaxCase aggregates both personal and business BookSets for annual income-tax filing, the same-tenant movement is not double-counted as an expense in the personal BookSet and again as an unrelated business expense.
+**Consolidated personal-tax reporting:** The same shared gross amount is one economic event across the linked personal and business legs. When a TaxCase aggregates both BookSets for annual income-tax filing, it must not double-count the ₹23,600 personal outflow and the business software expense as two unrelated expenses; the due-to/due-from mirror and any later reimbursement are linked movements, not additional expense or income.
 
 **Open choice:** Exact ledger-account vocabulary, UI/CLI shape, and form-eligibility proof await the canonical migration and architecture review.
 

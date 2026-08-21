@@ -444,7 +444,7 @@ Owner-approved. Partial batch completion is a distinct nonzero result with per-i
 - **Linked but distinct**: The sole proprietor's personal assets, income, and deductions are modeled separately within the same tenant as business/GST books, enabling consolidated compliance but preserving accounting clarity.
 
 **Detailed Personal-Tax Decisions**:
-Detailed technical decisions for personal-tax implementation (PT-001 through PT-016) remain separately gated and documented in [Personal Tax Discovery Packet](personal-tax-scope.md). PT-001 (tenant model), PT-002 (BookSet boundary and record scope), and PT-009 (file-first data handling) are owner-approved/not-architect-reviewed; PT-003 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED and require separate review.
+Detailed technical decisions for personal-tax implementation (PT-001 through PT-016) remain separately gated and documented in [Personal Tax Discovery Packet](personal-tax-scope.md). PT-001 (tenant model), PT-002 (BookSet boundary and record scope), PT-003 (atomic same-tenant inter-BookSet transfer), and PT-009 (file-first data handling) are OWNER-APPROVED; NOT ARCHITECT-REVIEWED. PT-004 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED and require separate review.
 
 **Advance-Tax Behavior—Not Owner-Approved by T-007**:
 The old advance-tax manual-vs-auto default choice is **NOT** owner-approved by this scope decision. Advance-tax behavior (s404/408 estimated-amount input, auto-projection, deadline tracking) remains a separate personal-tax research item and must be preserved as TENTATIVE detail within the personal-tax scope, not claimed as approved by T-007's scope decision.
