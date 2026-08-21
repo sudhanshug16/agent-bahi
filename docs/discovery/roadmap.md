@@ -57,188 +57,101 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 - research payroll-owned Form 130/Form 138 details, including their s393(1) Table 8(iii) specified-senior-citizen use, and keep general non-payroll Forms 131/132/140/141/143/144 separate;
 - verify current form/instruction-kit snapshots (AOC-4, AOC-4 CFS, MGT-7, ADT-1, DPT-3, MSME-1) and gate implementation on `source_verified=true` plus an effective rule snapshot.
 
-## Phase 1 Gate: Review and Approval
+---
 
-Before Phase 1 implementation begins:
+## Canonical Implementation Plan
 
-1. [Pre-Implementation Architecture](../architecture.md) document exists, combining SETTLED constraints and RECOMMENDED defaults.
-2. Sudhanshu reviews [Provisional Architecture Decisions](architecture-decisions.md) and [Pre-Implementation Architecture](../architecture.md), confirming, adjusting, or overriding each RECOMMENDED entry.
-3. Architecture document passes contradiction review (no statements in conflict with discovery docs or each other).
-4. Required proof spikes validate all provisional technology stack choices (STK-001 through STK-006):
-   - **Bun runtime and workspaces** (STK-001): Pin exact Bun version; verify `bun install`, workspaces, and lockfile on target platforms (macOS arm64, Linux x64/arm64).
-   - **Multi-dialect ORM spike** (STK-002): Test Drizzle (primary) and Kysely (fallback) on bun-sqlite, Bun SQL PostgreSQL, and MySQL; verify schema definition, query generation, and type inference on all three dialects.
-   - **SQLite configuration** (STK-003): Verify foreign_keys=ON, WAL mode, SQLITE_BUSY handling, and transaction isolation on target filesystem.
-   - **Migration and test execution** (STK-004): Run fresh-install migrations on all three dialects; test every supported upgrade path; verify schema consistency across dialects.
-   - **Zod and schema generation** (STK-005): Verify Zod runtime validation, JSON schema generation for CLI commands, and compatibility with Clipanion/skill definitions.
-   - **Clipanion CLI adapter** (STK-005): Verify Clipanion command registry can be generated from domain-owned declarations; test parser bindings and help output.
-   - **Decimal math** (STK-005): Verify decimal.js precision, rounding rules for INR calculations (paise), currency conversion, and tax calculation; test against golden examples.
-   - **Build and distribution** (STK-006): Test ESM TypeScript build on all target platforms; verify compiled output and package/bin fallback; confirm database drivers (MySQL, PostgreSQL optional) work on all platforms.
+**The authoritative implementation sequence is defined in [Implementation Plan](implementation-plan.md)**. This roadmap aligns with that sequence and preserves discovery milestones and research gates. Phases are numbered Gate0, P1–P9 in the implementation plan for clarity.
 
-**This gate must be passed before any Phase 1 implementation code is written.**
+---
 
-## Phase 1: Canonical Data Model and CLI Safety Foundation
+## Gate0: Proof Spikes (Hard Blocker Before Phase 1)
 
-**Goal**: Establish the authoritative schema, rules, and explicit safe command surface that all phases depend on.
+Validates all provisional technology stack choices before implementation begins. See [Implementation Plan: Gate0](implementation-plan.md#gate0-proof-spikes-hard-blocker-before-phase-1).
 
-**Scope**:
-- Chart of accounts with account types, hierarchies, and India GL standards
-- Tenant-scoped entity and account boundaries with no tenant relationship or intercompany model
-- Document types (Invoice, Bill, Payment, Journal Entry, etc.)
-- Ledger posting mechanics and invariant constraints
-- Explicit CLI commands with deterministic validation and engine-owned permission/gate checks
-- Optional tenant-defined reporting dimensions (tags) attached at transaction or line level; allocations use explicit split document lines with one tag per split line and totals that reconcile to the source amount; tags are orthogonal to accounting and do not affect posting, balance, tax, or compliance
-- Implement against the [Accounting Contracts](accounting-contracts.md) as the canonical pre-implementation domain contract; unresolved owner choices remain gated there.
+**Six proof spikes** (STK-001 through STK-006): Bun runtime, ORM cross-dialect, SQLite configuration, migrations/upgrades, schema generation/CLI parsing, build/distribution.
 
-**Exit Conditions**:
-- Core tables defined with primary/foreign key relationships
-- Invariants codified and enforced (debit = credit, account balances, document state validity)
-- CLI operations are explicit, deterministic, and reject invalid changes before state mutation
-- Schema passes integration tests across all document workflows
+**Gate criterion**: All spikes pass; owner confirms architecture and all [Tentative Decisions](tentative-decisions.md) T-001..T-010.
 
-## Phase 2: Skill Contracts and Manifests
+## Phase 1: Foundation, Tenant Model, and Migrations
 
-**Goal**: Define and version the skill contract and initial job-skill catalog without implementing skills or embedding accounting rules.
+**Goal**: Establish conceptual aggregates, tenant/GSTIN isolation, and command registry contracts. See [Implementation Plan: Phase 1](implementation-plan.md#phase-1-foundation-tenant-model-and-migrations).
 
-**Scope**:
-- Define versioned skill contract in `skill-architecture.md`: purpose, compatible engine/rule versions, required commands, inputs, evidence, deterministic gates, permitted external calls, approval policy, exception routes, verification, and outputs
-- Establish the initial job-skill catalog as contract declarations only (no skill implementation code)
-- Specify skill prerequisites, command boundaries, validation rules, and exception routes
-- Document how skills observe, validate, and report outcomes through evidence and audit metadata
-- Design skill versioning, compatibility ranges, and deprecation policies
-- Define the relationship between skills and the deterministic rules engine (skills orchestrate, engine enforces rules)
+**Key contract**: Tenant and GSTIN context (auto-select, explicit fail on ambiguity); ledger invariants (debit=credit after rounding); idempotency semantics; migration infrastructure.
 
-**Exit Conditions**:
-- The initial skill catalog is fully specified by versioned contracts with prerequisites, command boundaries, validation, and exception routes
-- Skill-contract schema is defined and validated against the initial catalog
-- Engine CLI commands referenced by skills are stable and can support orchestration
-- Skill versioning and compatibility policy is documented
-- Documentation provides clear guidance for future skill implementation and review
+**Exit conditions**: Tenant/GSTIN isolation enforced; command registry stable; migration strategy proven in proof spikes. Physical schema RFC required for implementation (does not imply approval).
 
-## Phase 3: Deterministic Lifecycle and Posting Engine
+## Phase 2: Skill Contracts and Catalog (Declarations Only)
 
-**Goal**: Implement the document state machine, deterministic posting pipeline, and agent safety boundaries for all document types.
+**Goal**: Define versioned skill contract and initial 14-job catalog as contract declarations, no implementation code. See [Implementation Plan: Phase 2](implementation-plan.md#phase-2-skill-contracts-and-catalog-schema-declarations-only).
 
-**Scope**:
-- Implement document state machine: Draft → Validated → Posted → Settled, where partial/open is derived while Posted and Settled requires zero signed open balance after allocation plus an approved balanced credit/write-off/refund journal
-- Posting pipeline with audit trail, deterministic numbering, and immutable postings
-- Reversal and correction patterns with full lineage (original, reversal, replacement, reason)
-- Agent safety gates: permission checks, edit boundaries, and automation policy enforcement at each state
-- Implement high-consequence commit gates (prepare/preview → validate → commit with plan hashing)
-- Reconciliation of posted entries to external evidence and source documents; proposals are non-posting and persistence requires recorded human confirmation bound to the exact plan digest, source line, target, amounts, FX snapshot, versions, tenant, actor, and timestamp
+**Exit conditions**: Skill catalog complete; all skills declare only Phase 1 commands; forward references marked DEFERRED; no embedded accounting rules.
 
-**Exit Conditions**:
-- Documents transition deterministically through all states with locked history
-- Reversals and corrections produce clean immutable audit trails
-- All agent operations validated against permission gates and automation policy
-- Posted entries are never mutable except through reversal/replacement lineage
-- Reconciliation links postings to evidence and source documents
-- Bank reconciliation, period close, and payroll finalization use explicit prepare/commit gates. Reconciliation proposals remain non-posting; persistence requires recorded human confirmation bound to the exact plan digest, source line, target, amounts, FX snapshot, versions, tenant, actor, and timestamp. Agents/skills/workflows cannot approve reconciliation.
+## Phase 3: Ledger, Documents, Posting Engine
 
-## Phase 4: Daily Workflows, Executable Skills, and Zoho Parity
+**Goal**: Implement document state machine and deterministic posting pipeline. See [Implementation Plan: Phase 3](implementation-plan.md#phase-3-ledger-documents-posting-engine).
 
-**Goal**: Build executable skills and CLI workflows for routine daily accounting operations, achieving Zoho Books automation parity as the minimum baseline.
+**Scope**: Draft → Validated → Posted → Settled; posting balance (debit=credit); reversals/corrections immutable lineage; atomic posting.
 
-**Scope**:
-- Implement initial job-skills from Phase 2 contracts (invoice creation, bill recording, payment matching, expense categorization, journal entries)
-- Use the [Accounting Contracts](accounting-contracts.md) for the shared `Draft -> Validated -> Posted -> Settled` lifecycle, immutable correction lineage, account-role templates, and explicit allocation/reconciliation boundaries.
-- Invoice and bill creation with validation, aging tracking, and automated tax treatment
-- Payment matching and clearing with cash-first atomic payment posting, exact paid-currency FX formulas, and exchange-gain/loss calculation
-- Expense recording and categorization, including native evidence, employee claims, advances, reimbursements, and corporate-card workflows
-- Manual journal entry creation with validation and audit trail
-- Skills orchestrate engine commands, validate results, and return evidence/audit metadata
-- Automated tests verify Zoho Books parity: same day's transactions produce equivalent ledger state
+**Exit conditions**: Postings immutable and balanced; document lifecycle complete. **No approval gates, reconciliation proposals, external operations, or payroll logic** (deferred to P4/P6/P7).
 
-**Exit Conditions**:
-- Initial skill catalog is fully implemented and tested against Phase 2 contracts
-- User can book a typical day's transactions end-to-end via CLI or skills
-- All daily workflows produce deterministic ledger entries and audit trails
-- Zoho Books automation parity is achieved as the minimum initial automation baseline
-- Skill failures are routed to explicit exceptions, not silently applied
-- No Zoho Books reference needed for daily bookkeeping; agent-bahi is self-contained and deterministic
+## Phase 4: Evidence, Bank Reconciliation, High-Consequence Gates, External Operations
 
-## Phase 5: Payroll and Employee Compliance
+**Goal**: Bank statement import, ephemeral proposals, high-consequence approval gates (prepare/preview → validate → commit), external operation outbox. See [Implementation Plan: Phase 4](implementation-plan.md#phase-4-evidence-bank-reconciliation-high-consequence-gates-external-operations).
 
-**Goal**: Implement full India payroll as a deterministic, first-class workstream after the core ledger foundations.
+**Key contract**: Reconciliation proposals ephemeral and non-persistent until explicit human confirmation (plan-hash binding required). External operations durable and idempotent. Skills cannot approve high-consequence actions.
 
-**Scope**:
-- Employee statutory profiles, salary structures/components/formulas, and effective-dated rules
-- Pay schedules, payroll periods, and approved summarized payroll inputs such as payable days, LOP days, and overtime amounts/hours; no attendance, leave, shift, HRMS, or attendance-import domain
-- Regular, bonus, arrears, correction, and off-cycle runs with draft, approval, posting, and locking
-- Reimbursements, perquisites, loans, advances, payslips, wage/overtime/deduction reports, and requested employee outputs for secure external delivery; no employee self-service portal
-- Payroll TDS under s392, declarations/proofs, Form 16/Form 130, and payroll-owned Form 138 quarterly statements (also used for s393(1) Table 8(iii)), PF, ESI, PT, LWF, and statutory filing/remittance references; general non-payroll Forms 131/132/140/141/143/144 remain in the statutory TDS contract
-- Deterministic bank-import CSV export using versioned bank presets; no bank transfer initiation or auto-pay
-- Full-and-final settlement and auditable reversal/correction lineage
+**Exit conditions**: Proposals ephemeral until confirmed; gates enforce human confirmation; external operations safe.
 
-**Exit Conditions**:
-- Pay runs are balanced and reproducible from frozen inputs and effective-dated jurisdiction rules
-- Every payroll output, payable, remittance, filing, and bank export artifact has an auditable source link
-- Bank export, upload, bank acceptance, debit, and reconciliation are distinct states; only export is in scope, and a generated file is not proof of payment
-- Unresolved statutory ambiguity blocks or routes to explicit review; no skill invents amounts or silently posts
+## Phase 5: Reporting, FX, Assets, Employee Expenses
 
-## Phase 6: Bank Reconciliation, Close, and Financial Reporting
+**Goal**: P&L/BS/aging reports, realized AND unrealized FX, fixed-asset register, employee-expense workflows. See [Implementation Plan: Phase 5](implementation-plan.md#phase-5-reporting-fx-assets-employee-expenses).
 
-**Goal**: Enable month/quarter/year-end close and basic financial statements.
+**Key contract**: `--basis` parameter only for P&L. BS, TB, AR/AP aging reject `--basis` (ledger/as-of). FX: realized at settlement; unrealized period-end revaluation. Asset uniqueness exactly on (tenant_id, source_document_id, source_line_id). SLM parameterized; method changes blocked until T-003 approval.
 
-**Scope**:
-- Bank statement import and reconciliation, including evidence of actual salary payment after export
-- Period close procedures and freeze
-- Trial balance, P&L, and balance sheet generation
-- Variance analysis and close checklists
+**Exit conditions**: Reporting complete; FX separation verified; assets tracked; basis parameter enforcement correct.
 
-**Exit Conditions**:
-- Month-end close is repeatable and documented
-- Reconciliation identifies uncleared items
-- Financial reports match manual verification
+## Phase 6: Payroll Accounting Only (Frozen Bank CSV Export)
 
-## Phase 7: Effective-Dated India Compliance Calculations, Calendars, Review Gates, and Official-Format Exports
+**Goal**: Employee profiles, salary structures, pay runs, frozen bank-CSV export. See [Implementation Plan: Phase 6](implementation-plan.md#phase-6-payroll-accounting-only-frozen-bank-csv-export).
 
-**Goal**: Implement India-specific compliance and statutory reporting with time-aware calculations.
+**Key contract**: Statutory computation gate: before any PF/ESI/PT/LWF/TDS computation, posting, payment, certificate, or export require `source_verified=true` + non-stale rule snapshot; REVIEW/BLOCK only affected action. Salary TDS under s392 (Form 130/Form 138) remains in payroll lane. Bank debit/reconciliation distinct states; only observed debit clears payable.
 
-**Scope**:
-- Effective-dated calculations for tax, withholding, and filing compliance
-- GST/TDS/TCS computation and reconciliation
-- Compliance calendars and filing deadlines
-- Filing-specific statutory output formats (GST, CMA, income tax, etc.)
-- Filing-specific review and submission decisions; no global government-submission policy
-- GST-specific predecessor gates, portal evidence, and effective-dated rule
-  selection after the research follow-ups above are separately settled
+**Exit conditions**: Payroll posting complete; bank-file state machine working; statutory gate enforced.
 
-**Exit Conditions**:
-- Statutory reports match compliance software output
-- Effective-dated rules handle retroactive adjustments
-- Filing outputs can be generated and validated; submission is not implied until its filing-specific decision is explicitly settled
+## Phase 7: Independently Gated Compliance Slices (Per-Action Research Gates)
 
-## Phase 8: Database Adapters and Tenant Isolation
+**Goal**: GST, non-payroll TDS/TCS (s393/s394), income-tax, MCA compliance with per-action research gates. See [Implementation Plan: Phase 7](implementation-plan.md#phase-7-independently-gated-compliance-slices-provisional-rules-block-only-affected-actions).
 
-**Goal**: Support pluggable storage backends while preserving independent tenant operation.
+**Key contract**: Each compliance action gated on `source_verified=true` + non-stale rule snapshot. Missing/stale rules REVIEW/BLOCK only affected action; unrelated work proceeds. s393 branch (Forms140/141/144) and s394 branch (Form143) separately gated. T-009 blocks Form140/141 transport pending research.
 
-**Scope**:
-- PostgreSQL and MySQL adapters (SQLite remains default)
-- Tenant-scoped data isolation and audit trails
-- Explicit single-tenant command validation across adapters
+**Research gates preserved**: GSTR-3B stability, e-invoice/e-way bill transport, composition scheme, TDS/TCS rate verification, MCA form snapshot verification remain open until explicitly settled per T-001..T-010.
 
-**Exit Conditions**:
-- Each tenant operates independently with correct isolation
-- Database adapter tests pass on all supported backends
+**Exit conditions**: GST, income-tax, MCA compliance logic complete; s393/s394 separately gated; T-009 blocks Form140/141; every action requires rule snapshot.
 
-## Phase 9: Zoho Books Import—Validated Against the Already Documented Private Fixture
+## Phase 8A: Full Multi-Dialect Semantic Conformance (After Phase 7)
 
-**Goal**: Safely migrate historical data from Zoho Books as a final step.
+**Goal**: Prove semantic equivalence on SQLite/PostgreSQL/MySQL. See [Implementation Plan: Phase 8A](implementation-plan.md#phase-8a-full-multi-dialect-semantic-conformance-after-phase-7-smoke-tests-since-phase-1).
 
-**Scope**:
-- Archive validation, checksums, and integrity checks
-- CSV parsing with duplicate column handling
-- Foreign key ordering and referential validation
-- Idempotent upserts and resumability
-- Detailed reconciliation and audit reports
+**Key contract**: Normalized semantic snapshots (not binary equality); logical-ID matching on migrations; full-replay test; smoke tests (running since Phase 1).
 
-**Exit Conditions**:
-- All 966 rows from the fixture archive import cleanly
-- Reconciliation report confirms no data loss
-- Post-import balances match source
-- System operates normally with imported data
+**Exit conditions**: Semantic conformance verified; normalized final state identical across dialects.
 
-**Note**: No importer implementation is in the current phase. The native core and skills layer (Phases 1–8) must be complete and tested before any Zoho Books data is loaded. Import validation requirements are pre-specified in `zoho-backup-fixture.md` and will not be modified during development.
+## Phase 8B: Bounded Skill Runtime (Deterministic CLI-Only Invocation)
+
+**Goal**: Skill execution engine with CLI-only invocation, manifest loading, exception routing, gate enforcement. See [Implementation Plan: Phase 8B](implementation-plan.md#phase-8b-bounded-skill-runtime-deterministic-cli-only-invocation).
+
+**Key contract**: Skills invoke CLI commands only; no direct external APIs, secrets, or evidence/confirmation bypass. Cannot approve high-consequence actions (return error if not confirmed).
+
+**Exit conditions**: Skill runtime complete; deterministic CLI invocation; gates enforced.
+
+## Phase 9: Zoho Migration (Final; Exact Fixture Checksum, Quarantine Unsupported Rows)
+
+**Goal**: Fixture-based import with exact checksum, duplicate-header preservation, per-cell provenance, unsupported-row quarantine, cross-dialect reconciliation. See [Implementation Plan: Phase 9](implementation-plan.md#phase-9-zoho-migration-final-exact-fixture-checksum-quarantine-unsupported-rows).
+
+**Key contract**: 44 CSV files, 966 rows, SHA-256 `fda43a99d165dec5766953484cf1377c789ae4eb50abfa3636657d2fc36ce296` (from [zoho-backup-fixture.md](zoho-backup-fixture.md)). Unsupported rows (inventory, RBAC, identity) explicitly quarantined with provenance; never claim all rows mapped.
+
+**Exit conditions**: All supported rows imported with provenance; unsupported rows counted and logged; GL balances match Zoho; duplicate-header ambiguity resolved.
 
 ## Deferred / Future
 
