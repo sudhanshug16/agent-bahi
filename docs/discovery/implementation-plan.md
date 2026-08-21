@@ -1,14 +1,14 @@
 # Implementation Plan: Gate0 through Phase 9
 
-**Status**: Specification-level sequencing document. Does not authorize implementation. All tentative decisions await owner review.
+**Status**: Specification-level sequencing document. TypeScript + Bun is owner-selected. This document does not authorize Gate0, Phase 1, or implementation; remaining library choices and phase prerequisites require their own evidence and owner decisions.
 
 **Canonical References**: [Architecture](../architecture.md) | [Accounting Contracts](accounting-contracts.md) | [Data Model Requirements](data-model-requirements.md) | [Statutory Workflow Contracts](statutory-workflow-contracts.md) | [GST Matrix](gst-compliance-matrix.md) | [TDS/TCS Matrix](tds-tcs-compliance-matrix.md) | [Income-Tax Matrix](annual-income-tax-compliance-matrix.md) | [MCA Matrix](mca-companies-act-compliance-matrix.md) | [Tentative Decisions](tentative-decisions.md) | [Skill Architecture](skill-architecture.md)
 
 ---
 
-## Tentative Decisions (T-001 through T-010 OWNER-APPROVED; Phase-Scoped Gates)
+## Owner-Approved and Owner-Selected Decisions (Phase-Scoped Gates)
 
-See [Tentative Decisions](tentative-decisions.md) for full details. Entries T-001 through T-010 are owner-approved and binding. T-011 remains provisional and awaits owner review. They do not authorize implementation; only the decision applicable to a phase or action gates that work.
+See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-010 records. Those entries are owner-approved and binding. TypeScript + Bun is owner-selected. These decisions do not authorize implementation; only the decision applicable to a phase or action gates that work.
 
 - **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#t-001).
 - **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; MIT license; no code reuse). See [Tentative Decisions](tentative-decisions.md#t-002).
@@ -20,24 +20,22 @@ See [Tentative Decisions](tentative-decisions.md) for full details. Entries T-00
 - **T-008**: Controlled user corrections and deletions (allow even after FY/report/audit/filing via explicit unlock preview/reason/confirmation; reversal/replacement lineage; every affected report, filing case, and audit pack marked STALE/DRIFTED with deliberate regeneration/review/re-close required; prior exported/submitted artifacts stay immutable).
 - **T-009**: Form 140/141 statutory export (fail-closed pending official current format/utility/schema/portal verification; internal neutral data allowed; no statutory export adapter without verified schema).
 - **T-010**: Post-filing return case/evidence/correction (preserve ARN/status/rejection/notices/correction lineage; no unverified automatic revised/amended/defective-return submission).
-- **T-011**: Initial language/runtime candidate only: TypeScript + Bun is a provisional recommendation evaluated by reversible Gate0 proof spikes. It is not approval of TypeScript + Bun, any library/tool (including ORM, parser, validator, decimal package, database driver, migration tool, or build tool), or implementation. Owner direction after docket review is required before spikes; owner approves, changes, or rejects T-011 after evidence before Phase 1.
-
 ---
 
 ## Gate0: Proof Spikes (Hard Blocker Before Phase 1)
 
-**Current state**: Documentation-only; Gate0 is not authorized. After Sudhanshu reviews the [Owner Review Docket](owner-review-docket.md), his explicit direction/authorization is required to run these reversible proof spikes. That direction is not approval of TypeScript + Bun. The spikes evaluate T-011 and produce evidence for the post-spike owner decision.
+**Current state**: Documentation-only; Gate0 is not authorized. After Sudhanshu reviews the [Owner Review Docket](owner-review-docket.md), his explicit direction/authorization is required to run these reversible proof spikes. TypeScript + Bun is already owner-selected. Gate0 supplies mandatory evidence before implementation; it does not authorize Phase 1 or approve any library. A blocker discovered during or after Gate0 stops the affected work and requires a new owner decision.
 
 **Duration**: 2–3 weeks. All must pass before Phase 1 implementation begins.
 
-- **STK-001**: Bun runtime, workspaces, lockfile on target platforms (macOS arm64, Linux x64/arm64).
-- **STK-002**: ORM spike (Drizzle/Kysely) on bun-sqlite, PostgreSQL, MySQL; schema equivalence verified.
+- **STK-001**: Bun-native runtime, workspaces, and lockfile on target platforms (macOS arm64, Linux x64/arm64). Resolve the authoritative latest stable Bun release at Gate0; record its exact version, `bun --revision`, artifact checksums, and lockfile/CI/release pins. Do not hard-code a guessed current version today.
+- **STK-002**: Bun-native persistence first; if needed, individually proof-gate ORM/driver candidates such as Drizzle, Kysely, or better-sqlite3 on bun-sqlite, PostgreSQL, and MySQL, with schema equivalence verified.
 - **STK-003**: SQLite pragmas, WAL, foreign_keys=ON, SQLITE_BUSY handling, network-filesystem rejection.
 - **STK-004**: Schema migrations and upgrade paths on all three dialects.
-- **STK-005**: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
-- **STK-006**: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
+- **STK-005**: Bun-native parser, validation, and exact decimal APIs first; if needed, individually proof-gate Clipanion, Zod, decimal.js, and any other npm-compatible TypeScript package for INR/paise, FX, and tax.
+- **STK-006**: Bun build and one Bun-embedded single-file executable per target platform (macOS arm64, Linux x64/arm64), including required MySQL/PostgreSQL drivers and migration assets. Prove that released operation invokes no Node runtime, Node subprocess, Node lifecycle hook, separate Bun runtime, source distribution, or package/bin fallback.
 
-**Exit**: All spike reports complete; the evidence is recorded for Sudhanshu to approve, change, or reject T-011. No library or implementation is pre-approved by Gate0. Phase 1 cannot begin until that T-011 decision and the other Phase 1 prerequisites are complete.
+**Exit**: All spike reports complete with target-platform evidence and the exact Bun release record. No library or implementation is pre-approved by Gate0. Phase 1 cannot begin until Gate0 evidence, a separately reviewed physical-schema RFC, applicable Phase 1 decisions, and explicit Phase 1 authorization are complete.
 
 ---
 
@@ -45,7 +43,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. Entries T-00
 
 **Duration**: 4–6 weeks. Deliverables: conceptual aggregates (tenant/GSTIN context, command registry), migration infrastructure, isolation enforcement.
 
-**Prerequisites**: Gate0 proof spikes pass; Sudhanshu approves, changes, or rejects T-011 after reviewing the evidence; the physical-schema RFC is separately reviewed; and applicable Phase 1 decisions are approved. Later-phase tentative IDs block only their affected phase/action, not all of Phase 1.
+**Prerequisites**: Gate0 proof spikes pass; the physical-schema RFC is separately reviewed; applicable Phase 1 decisions are approved; and Phase 1 is explicitly authorized. Later-phase tentative IDs block only their affected phase/action, not all of Phase 1. A later blocker stops the affected work and requires a new owner decision.
 
 **Scope**:
 - Tenant and GSTIN context (auto-select, explicit fail on ambiguity).
@@ -242,7 +240,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. Entries T-00
 
 **Scope**:
 - Skill manifest loading (allowlist-based; hashes, versions; no arbitrary filesystem execution).
-- Command invocation (subprocess execution of CLI only; no direct external APIs, secrets, or evidence/confirmation bypass).
+- Command invocation (subprocess execution of the packaged `agent-bahi` executable only; never Node/npm scripts, a separate runtime, direct external APIs, secrets, or evidence/confirmation bypass).
 - Evidence gathering (CLI-sourced or user-provided; attached to postings with metadata).
 - Idempotent skill-run replay (checkpoints, state persistence, resumable).
 - Exception routing (validation/missing evidence/ambiguity/review-required/external-retryable/external-terminal/conflict/permission/internal).
@@ -315,4 +313,4 @@ See [Tentative Decisions](tentative-decisions.md) for full details. Entries T-00
 
 **Phase Sequence**: Gate0 (proof spikes) → P1 (foundation) → P2 (skill contracts) → P3 (ledger) → P4 (evidence/bank) → P5 (reports/FX/assets/expenses) → P6 (payroll) → P7 (compliance) → P8A (dialects) → P8B (skills runtime) → P9 (Zoho).
 
-**Sign-Off Gate**: After docket review, Sudhanshu explicitly directs the reversible Gate0 proof spikes. Gate0 evaluates T-011; then Sudhanshu approves, changes, or rejects T-011. Phase 1 begins only after that decision, a reviewed physical-schema RFC, and approval of applicable Phase 1 decisions. Later-phase tentative IDs remain scoped to their affected phase/action.
+**Sign-Off Gate**: After docket review, Sudhanshu explicitly directs the reversible Gate0 proof spikes. Gate0 records mandatory runtime, package, dialect, migration, and target-platform evidence; it does not authorize Phase 1 or approve libraries. Phase 1 begins only after that evidence, a reviewed physical-schema RFC, approval of applicable Phase 1 decisions, and separate Phase 1 authorization. Later-phase tentative IDs remain scoped to their affected phase/action; a later blocker requires a new owner decision.

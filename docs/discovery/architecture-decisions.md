@@ -1,11 +1,11 @@
-# Provisional Architecture Decisions
+# Architecture Decisions
 
-**Status**: Discovery phase documentation only. No implementation is authorized until Sudhanshu reviews and confirms.
+**Status**: Discovery phase documentation only. TypeScript + Bun is owner-selected. No implementation is authorized until Sudhanshu reviews and confirms the remaining prerequisites.
 
 ## Status Definitions
 
 - **SETTLED**: Already chosen by Sudhanshu or documented in existing discovery docs (see [decisions.md](decisions.md)).
-- **RECOMMENDED**: Chosen as the working default for the future architecture, but Sudhanshu may override before implementation begins.
+- **RECOMMENDED**: Chosen as a working default for the future architecture, but Sudhanshu may override before implementation begins. A RECOMMENDED library is not approved for use.
 - **OPEN RESEARCH**: External law, portal specification, or runtime fact that cannot be decided by preference; requires external verification before a gate can be satisfied.
 - **DEFERRED**: Intentionally outside the current implementation boundary; preserved with extension seams for future work.
 
@@ -13,13 +13,13 @@
 
 Sudhanshu requested multi-position debates to be conducted as part of architecture planning. However, this discovery session has only apprentice-tier workers available, while the required [Neta](https://neta.dev) decide playbook mandates architect-tier debaters for credible architecture decisions.
 
-**Therefore**: No debate was performed for the RECOMMENDED entries below. Every new recommendation is provisional and records the strongest viable alternative and reversal trigger so architect-tier debates can resume later if needed. Sudhanshu will have the final say on each recommendation during review.
+**Therefore**: No debate was performed for the remaining RECOMMENDED entries below. Each records the strongest viable alternative and reversal trigger so architect-tier debates can resume later if needed. TypeScript + Bun is owner-selected and is not part of a pending routine stack decision. Sudhanshu will have the final say on the remaining recommendations during review.
 
 ## Non-Negotiable Settled Constraints
 
 These are confirmed by Sudhanshu or existing discovery docs and form the foundation for all RECOMMENDED entries below.
 
-- **Product identity** ([decisions.md § Confirmed](decisions.md#confirmed)): Package/product/repository name is `agent-bahi`. Technology stack is TypeScript + Bun as the current working direction and default. Final stack choices (ORM, CLI parser, decimal math, database drivers, migrations, build/package) are RECOMMENDED (see STK-001 through STK-006) and remain gated by Phase 1 proof spikes; see [Roadmap Phase 1 Gate](roadmap.md#gate0-reversible-proof-spikes-owner-directed-hard-evidence-gate-before-phase-1).
+- **Product identity** ([decisions.md § Confirmed](decisions.md#confirmed)): Package/product/repository name is `agent-bahi`. The owner-selected runtime is TypeScript + Bun. ORM, CLI parser, validator, decimal math, database driver, migration, and build/package libraries remain unapproved candidates and are individually proof-gated. Gate0 must establish the authoritative latest stable Bun release and record its exact version, `bun --revision`, artifact checksums, and lockfile/CI/release pins; do not hard-code a guessed current version today. Gate0 is mandatory evidence before implementation, but requires explicit owner authorization and does not authorize Phase 1 or approve libraries.
 
 - **Engine and skills separation** ([decisions.md § Confirmed](decisions.md#confirmed)): Deterministic accounting/compliance engine owns rules, calculations, permissions/gates, and invariants. Versioned skills orchestrate, gather evidence, propose actions, and verify work; they never embed accounting law.
 
@@ -397,13 +397,13 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: CI using a different Bun version than developer laptops, breaking changes in a Bun minor version.
 - **Reversal trigger**: Upgrade Bun intentionally and test; do not auto-upgrade.
 
-**STK-002: ORM-free domain/application layers with provisional Drizzle**
+**STK-002: ORM-free domain/application layers with proof-gated persistence candidates**
 
-- **Recommendation**: Domain and application layers have no ORM imports. Provisional persistence choice is Drizzle ([https://orm.drizzle.team](https://orm.drizzle.team)) for bun-sqlite (default) and Bun SQL PostgreSQL. MySQL driver path documented. Kysely ([https://kysely.dev](https://kysely.dev)) is the strongest fallback if Drizzle hits issues. Do not settle until an all-dialect spike passes unit/integration tests and migration handling is proven on all three.
-- **Alternative**: Other ORMs (TypeORM, Prisma, Sequelize); hand-written SQL.
-- **Rationale**: ORM-free domain/application enables future adapter swaps. Drizzle is lightweight and supports multi-dialect without code duplication. Spike validates before commit.
+- **Recommendation**: Domain and application layers have no ORM imports. Prefer Bun-native database APIs first. Drizzle ([https://orm.drizzle.team](https://orm.drizzle.team)), Kysely ([https://kysely.dev](https://kysely.dev)), better-sqlite3, and other npm-compatible ORM/driver candidates may be evaluated only when needed, one candidate at a time, under the pinned Bun runtime. No candidate is approved until the all-dialect proof passes on bun-sqlite, PostgreSQL, and MySQL, including unit/integration behavior and migration handling.
+- **Alternative**: Other ORMs (TypeORM, Prisma, Sequelize); hand-written SQL; another Bun-native adapter.
+- **Rationale**: ORM-free domain/application enables future adapter swaps. Bun-native APIs minimize runtime and dependency risk; any package candidate must prove it executes correctly under pinned Bun without introducing a separate runtime.
 - **Silent failure prevented**: Domain logic coupled to ORM, migration locking, dialect-specific bugs discovered mid-implementation.
-- **Reversal trigger**: After the spike, if Drizzle hits unsupported dialect issues, Kysely is the fallback; the architecture is set.
+- **Reversal trigger**: If a candidate fails any dialect, migration, target-platform, or Bun-runtime proof, stop that path and obtain a new owner decision before selecting another candidate.
 
 **STK-003: SQLite with strict settings**
 
@@ -415,31 +415,27 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 **STK-004: Separate migration histories with shared logical checksums**
 
-- **Recommendation**: Commit separate SQLite, PostgreSQL, and MySQL migration histories (e.g., `migrations/sqlite/`, `migrations/postgres/`, `migrations/mysql/`) with shared logical migration IDs and checksums. Never use production schema push/sync. Run fresh-install and every-supported-upgrade tests on all dialects before release. Reference migration tools: Drizzle ([https://orm.drizzle.team/docs/get-started/bun-sqlite-new](https://orm.drizzle.team/docs/get-started/bun-sqlite-new)), Kysely ([https://kysely.dev/docs/dialects](https://kysely.dev/docs/dialects)).
+- **Recommendation**: Commit separate SQLite, PostgreSQL, and MySQL migration histories (e.g., `migrations/sqlite/`, `migrations/postgres/`, `migrations/mysql/`) with shared logical migration IDs and checksums. Never use production schema push/sync. Run fresh-install and every-supported-upgrade tests on all dialects before release. Migration libraries are unapproved candidates and must individually prove Bun execution, dialect behavior, and checksum/replay safety before use.
 - **Alternative**: Single migration language; or schema auto-migration.
 - **Rationale**: Dialect-specific migrations catch issues early. Shared checksums enable verification that all dialects apply equivalent changes. Testing all upgrades prevents production surprises.
 - **Silent failure prevented**: SQLite migration succeeding but PostgreSQL failing undetected, auto-migration drifting schema from intent, upgrade path broken for existing data.
 - **Reversal trigger**: After all dialects are validated, migration changes can be versioned/deployed with confidence.
 
-**STK-005: Provisional libraries**
+**STK-005: Bun-native-first, individually proof-gated libraries**
 
-- **Recommendation**: Libraries (provisional, all replaceable through domain-owned contracts):
-  - Parser: Clipanion only as parser adapter; see [https://github.com/arcanis/clipanion](https://github.com/arcanis/clipanion).
-  - Schema/validation: Zod for runtime schemas and JSON schema generation; see [https://zod.dev](https://zod.dev).
-  - Decimal math: decimal.js behind a domain math wrapper; see [https://github.com/MikeMcl/decimal.js](https://github.com/MikeMcl/decimal.js).
-  - Testing: bun:test; see [https://bun.com/docs/guides/test/run-tests](https://bun.com/docs/guides/test/run-tests).
-- **Alternative**: Other parser, validation, decimal, test frameworks.
-- **Rationale**: Each library is used through a domain-owned interface, enabling swaps without application rewrites.
+- **Recommendation**: Prefer Bun-native APIs and `bun:test` first. If a third-party npm-compatible TypeScript package is needed, evaluate it individually through a proof spike and run it under the pinned Bun runtime. Clipanion (parser), Zod (validation), decimal.js (exact decimal), database drivers such as better-sqlite3, migration libraries, and build libraries remain candidates only; none is pre-approved. Keep every selected package behind a domain-owned contract where applicable.
+- **Alternative**: Bun-native implementation; another package that passes the same proof; no package where the native API is sufficient.
+- **Rationale**: Individual proof gates prevent an untested package from silently becoming part of the runtime or accounting path.
 - **Silent failure prevented**: Tight coupling to a library version, breaking changes in library forcing full rewrite.
-- **Reversal trigger**: If a library hits unsupported features, the domain interface enables a swap to an alternative without touching domain logic.
+- **Reversal trigger**: If a package fails Bun execution, correctness, security, licensing, or target-platform proof, stop and require a new owner decision before adopting an alternative.
 
-**STK-006: Build/package distribution**
+**STK-006: Bun-embedded single-file distribution**
 
-- **Recommendation**: Build and package as ESM TypeScript with bun:build. Test on platform binaries (macOS arm64, Linux x64/arm64) plus package/bin fallback. Compiled distribution (e.g., prebuilt binaries) is not considered viable for v1 until migration assets and optional database drivers (MySQL, PostgreSQL) work reliably on all platforms. Reference: [https://bun.com/docs/bundler/executables](https://bun.com/docs/bundler/executables).
-- **Alternative**: Immediate prebuilt binaries; or source-only distribution.
-- **Rationale**: Source + Bun runtime is simpler for early releases. Prebuilt binaries add native binding complexity (esp. optional DB drivers). Platform testing ensures compatibility.
-- **Silent failure prevented**: Compiled binary missing a database driver, Linux users unable to use PostgreSQL, migrating users hitting platform incompatibilities.
-- **Reversal trigger**: After native driver integration is stable and tested on all platforms, prebuilt binaries can be published.
+- **Recommendation**: Release one Bun-embedded, platform-specific single-file executable for each supported target: macOS arm64, Linux x64, and Linux arm64. The released operation must not require or invoke a separate Node runtime, Node subprocess, Node lifecycle hook, separate Bun runtime, source distribution, or package/bin fallback. Skills may subprocess only the packaged `agent-bahi` executable. Prove migrations, optional MySQL/PostgreSQL drivers, and all required assets on each target. Reference: [https://bun.com/docs/bundler/executables](https://bun.com/docs/bundler/executables).
+- **Alternative**: None for released operation; a proof failure blocks release and requires a new owner decision.
+- **Rationale**: A Bun-embedded executable makes the runtime boundary explicit and keeps the shipped operation identical across supported platforms.
+- **Silent failure prevented**: A release silently depending on an unpinned runtime, Node/npm script, missing database driver, or platform-incompatible migration asset.
+- **Reversal trigger**: A blocker in packaging or target-platform proof stops release and requires a new owner decision; it does not authorize a source/runtime or package/bin fallback.
 
 ### Quality / Testing
 
@@ -518,4 +514,4 @@ The following are external facts that cannot be decided by preference and must b
 
 ---
 
-**This docket is provisional. Sudhanshu reviews, adjusts, and confirms before implementation can proceed.**
+**This architecture record remains documentation-only. Sudhanshu reviews, adjusts, and confirms the remaining recommendations and prerequisites before implementation can proceed.**

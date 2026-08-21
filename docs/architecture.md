@@ -4,9 +4,9 @@
 
 **Date/As-of**: 2026-08-20
 
-**Scope**: This document is a working architecture informed by [Provisional Architecture Decisions](discovery/architecture-decisions.md), [Discovery Decisions](discovery/decisions.md), [Data Model Requirements](discovery/data-model-requirements.md), and cross-cutting research baselines. The domain-level bookkeeping contract is the canonical pre-implementation detail for the accounting records and posting templates: see [Accounting Contracts](discovery/accounting-contracts.md). Statutory compliance workflows and verified compliance baselines are documented in [Statutory Workflow Contracts](discovery/statutory-workflow-contracts.md) with linked matrices for [TDS/TCS](discovery/tds-tcs-compliance-matrix.md), [Annual Income-Tax](discovery/annual-income-tax-compliance-matrix.md), and [MCA Companies Act](discovery/mca-companies-act-compliance-matrix.md). MCA claims are operational only with `source_verified=true` and an exact `effective_rule_snapshot`; OPEN+BLOCK items do not authorize implementation. It combines SETTLED constraints from discovery with RECOMMENDED provisional architecture choices. New recommendations remain provisional because architect-tier debates could not run in an apprentice-only session; Sudhanshu reviews and adjusts all RECOMMENDED entries before implementation.
+**Scope**: This document is a working architecture informed by [Architecture Decisions](discovery/architecture-decisions.md), [Discovery Decisions](discovery/decisions.md), [Data Model Requirements](discovery/data-model-requirements.md), and cross-cutting research baselines. The domain-level bookkeeping contract is the canonical pre-implementation detail for the accounting records and posting templates: see [Accounting Contracts](discovery/accounting-contracts.md). Statutory compliance workflows and verified compliance baselines are documented in [Statutory Workflow Contracts](discovery/statutory-workflow-contracts.md) with linked matrices for [TDS/TCS](discovery/tds-tcs-compliance-matrix.md), [Annual Income-Tax](discovery/annual-income-tax-compliance-matrix.md), and [MCA Companies Act](discovery/mca-companies-act-compliance-matrix.md). MCA claims are operational only with `source_verified=true` and an exact `effective_rule_snapshot`; OPEN+BLOCK items do not authorize implementation. It combines SETTLED constraints with remaining RECOMMENDED architecture choices. TypeScript + Bun is owner-selected; the remaining recommendations still require evidence, review, and any applicable owner decision.
 
-**Authorization**: This document authorizes no implementation. Sudhanshu must review, adjust, and confirm the architecture. Proof spikes and OPEN RESEARCH gates remain hard blockers before Phase 1 begins. The definition of ready (§22) must be satisfied.
+**Authorization**: This document authorizes no Gate0, Phase 1, or implementation. Sudhanshu must explicitly authorize Gate0 after reviewing the docket. Gate0 is mandatory evidence before implementation, but does not authorize Phase 1 or approve libraries. Proof spikes and OPEN RESEARCH gates remain hard blockers, and any later blocker stops the affected work and requires a new owner decision. The definition of ready (§22) must be satisfied.
 
 ---
 
@@ -20,7 +20,7 @@
 - **Adapters**: PostgreSQL and MySQL supported through pluggable persistence ports and proven migration consistency across all dialects before release.
 - **Tenancy model**: One legal entity = one independent tenant. Sudhanshu's three legal entities (two private limited companies and one sole proprietorship) are three separate tenants. Cross-tenant/intercompany paired posting is **DEFERRED and PROHIBITED in V1**; mistaken inter-entity payments are represented separately in each tenant with explicit due-to/due-from or correction journals only when the user records them, never through a cross-tenant atomic write.
 - **GST registrations**: One tenant may have multiple GSTIN registrations; GST work, amounts, obligations, and evidence are scoped by tenant and GSTIN.
-- **Technology direction**: TypeScript + Bun is the current working direction. Final stack selections for ORM, CLI parser, decimal math, database drivers, and migrations are RECOMMENDED choices gated by Phase 1 proof spikes (§18).
+- **Technology direction**: TypeScript + Bun is the owner-selected runtime. Prefer Bun-native APIs first. ORM, parser, validator, decimal, database-driver, migration, and build libraries remain unapproved candidates that require individual proof under the pinned Bun runtime; Gate0 records evidence but does not approve them.
 
 ### Non-Goals
 
@@ -141,7 +141,7 @@ Logical packages (provisional names, boundaries are architectural, exact package
 
 ### Infrastructure/Adapter Layer
 
-- **`infrastructure/persistence`**: Repository implementations; Drizzle or Kysely dialect-agnostic contracts (implements application Repository port).
+- **`infrastructure/persistence`**: Repository implementations; Bun-native persistence first, with individually proof-gated Drizzle, Kysely, better-sqlite3, or other candidate adapters implementing the application Repository port.
 - **`infrastructure/dialects`**: SQL migrations and dialect-specific handling (SQLite, PostgreSQL, MySQL).
 - **`infrastructure/evidence`**: Content-addressed evidence storage; local filesystem default; S3/cloud adapter option (implements application EvidenceStore port).
 - **`infrastructure/external-adapters`**: Bank APIs, IRP/e-invoice, e-way bill, GST portal integrations (implements application ExternalAdapter port).
@@ -150,7 +150,7 @@ Logical packages (provisional names, boundaries are architectural, exact package
 ### CLI and Skills Layer
 
 - **`cli/command-registry`**: Domain-owned command definitions; parser bindings; help generation; schema export.
-- **`cli/adapter`**: Clipanion or fallback CLI parser; human and JSON output; exit-code taxonomy.
+- **`cli/adapter`**: Bun-native parser first; Clipanion or another individually proof-gated parser candidate may provide human and JSON output; exit-code taxonomy remains domain-owned.
 - **`skills/manifests`**: Skill version contracts, prerequisites, automation gates, exception routes.
 - **`skills/implementations`**: Skill orchestration logic; CLI invocation; evidence gathering; validation.
 
@@ -166,7 +166,7 @@ Logical packages (provisional names, boundaries are architectural, exact package
 - Application imports domain, core types, authorization hooks, error types.
 - Domain imports core types only. No ORM, no CLI, no external libraries except rule/compliance data structures.
 - Infrastructure (adapters) implements application-owned outbound ports only; never imports domain business logic.
-- Skills import CLI schemas and command definitions; invoke CLI as a subprocess; never import domain or application business logic.
+- Skills import CLI schemas and command definitions; subprocess only the packaged `agent-bahi` executable, never Node/npm scripts or another runtime; never import domain or application business logic.
 
 ### Forbidden Dependencies
 
@@ -385,7 +385,7 @@ Tenant
 
 **Posted amounts**: Currency-aware integer minor units (e.g., paise for INR, cents for USD). No ambiguity in balance checks.
 
-**Intermediates**: Tax calculations, exchange-rate conversions, and FX intermediates use exact decimal arithmetic (decimal.js domain wrapper), never binary floats.
+**Intermediates**: Tax calculations, exchange-rate conversions, and FX intermediates use an exact decimal domain wrapper, never binary floats. Bun-native exact arithmetic is preferred; decimal.js remains an unapproved candidate requiring individual proof.
 
 **Preserved metadata**: For every conversion or calculation, store:
 - Original currency and amount.
@@ -1158,16 +1158,17 @@ Never hide partial success; never silently apply majority rule.
 
 Domain and application layers import no ORM. Persistence contracts (ports) are defined in the application layer; adapters implement them in infrastructure.
 
-### Provisional Technology Stack (Proof Spike Candidates)
+### Technology Stack and Proof-Gated Candidates
 
-**Note**: All choices are provisional and cited from [Provisional Architecture Decisions](discovery/architecture-decisions.md). They remain gated by Phase 1 proof spikes (§18) before commit.
+**Note**: TypeScript + Bun is owner-selected. Prefer Bun-native APIs first. Third-party npm-compatible TypeScript packages are allowed only when needed, must be individually proof-gated, and must execute under the pinned Bun runtime. ORM, parser, validator, decimal, database-driver, migration, and build libraries remain unapproved candidates. Gate0 is mandatory evidence before implementation but is not authorized by this document, does not authorize Phase 1, and does not approve libraries.
 
-- **ORM**: Drizzle (primary) or Kysely (fallback). Both support bun-sqlite, PostgreSQL, MySQL with identical contract; multi-dialect spike validates before commit.
-- **CLI parser**: Clipanion (primary) with fallback for Bun help/JSON schema generation.
-- **Schema/validation**: Zod for runtime schemas and JSON schema generation.
-- **Decimal math**: decimal.js behind a domain math wrapper (never floats).
+- **Persistence**: Bun-native database APIs first. Drizzle, Kysely, better-sqlite3, and other ORM/driver candidates may be evaluated individually against bun-sqlite, PostgreSQL, and MySQL; none is pre-approved.
+- **CLI parser**: Bun-native parsing first. Clipanion and other parser candidates remain unapproved and require individual proof.
+- **Schema/validation**: Bun-native validation first. Zod and other validator candidates remain unapproved and require individual proof.
+- **Decimal math**: Bun-native exact arithmetic first. decimal.js and other decimal candidates remain unapproved and require individual proof; all paths use the domain wrapper and never floats.
+- **Migrations**: Separate SQLite, PostgreSQL, and MySQL histories with shared logical IDs and checksums. Migration libraries remain unapproved candidates and must prove fresh install, every supported upgrade, replay/checksum behavior, and pinned-Bun execution.
 - **Testing**: bun:test (Bun native).
-- **Build/distribution**: ESM TypeScript with bun:build; platform binaries and package/bin fallback.
+- **Build/distribution**: Bun build and one Bun-embedded platform-specific single-file executable for macOS arm64, Linux x64, and Linux arm64. Released operation must not require or invoke Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback.
 
 ### SQLite Default Configuration
 
@@ -1637,16 +1638,16 @@ Zoho fixture validation separate; not the accounting oracle.
 
 ### Explicit Pre-Implementation Spikes
 
-All decisions in [architecture-decisions.md § RECOMMENDED Decisions](discovery/architecture-decisions.md) marked STK-001 through STK-006 must be resolved by passing proof spikes. **This gate must be passed before Phase 1 implementation begins.**
+STK-001 through STK-006 must be resolved by passing proof spikes. **This gate must be passed before Phase 1 implementation begins, but Gate0 itself does not authorize Phase 1 or approve any library.** Sudhanshu must explicitly authorize Gate0; a blocker discovered during or after it stops the affected work and requires a new owner decision.
 
 #### STK-001: Exact Pinned Bun
 
-- Pin exact Bun version in `package.json`, CI, and release artifacts.
-- Verify `bun install`, workspaces, lockfile on macOS arm64, Linux x64/arm64.
+- At Gate0 resolve the authoritative latest stable Bun release; then record its exact version, `bun --revision`, artifact checksums, and lockfile/CI/release pins. Do not hard-code a guessed current version today.
+- Verify Bun-native install, workspaces, lockfile, and embedded runtime on macOS arm64, Linux x64, and Linux arm64.
 
 #### STK-002: Multi-Dialect ORM
 
-- Test Drizzle (primary) and Kysely (fallback).
+- Prefer Bun-native persistence. If needed, test one candidate at a time, such as Drizzle, Kysely, or better-sqlite3; no candidate is pre-approved.
 - Identical contract on bun-sqlite, Bun SQL PostgreSQL, MySQL.
 - Verify schema definition, query generation, type inference on all three.
 - Verify migrations fresh and all upgrade paths.
@@ -1662,19 +1663,18 @@ All decisions in [architecture-decisions.md § RECOMMENDED Decisions](discovery/
 - Every supported upgrade path on all three.
 - Schema consistency verification.
 
-#### STK-005: Zod, JSON Schema, Clipanion
+#### STK-005: Parser, validation, and exact decimal candidates
 
-- Zod runtime validation, JSON schema generation for CLI.
-- Clipanion command registry from domain-owned declarations.
-- Parser bindings and help output.
-- decimal.js precision, rounding for INR (paise), tax, FX.
+- Prefer Bun-native parser, validation, JSON schema, and exact decimal APIs.
+- If needed, individually proof-gate Zod, Clipanion, decimal.js, or another npm-compatible TypeScript package under pinned Bun.
+- Verify command registry remains domain-owned, parser bindings and help output are deterministic, and decimal precision/rounding is exact for INR (paise), tax, and FX.
 
 #### STK-006: Build and Distribution
 
-- ESM TypeScript with bun:build on all target platforms.
-- Compiled output, package/bin fallback.
-- Optional DB drivers (MySQL, PostgreSQL) work on all platforms.
-- **Prebuilt binaries**: Not viable for v1 until native driver integration is stable and tested.
+- Bun build on all target platforms.
+- Release exactly one Bun-embedded single-file executable for each of macOS arm64, Linux x64, and Linux arm64.
+- Required DB drivers (MySQL, PostgreSQL) and migration assets work on all platforms.
+- Prove skills invoke only the packaged `agent-bahi` executable and that no released path invokes Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback.
 
 Each spike produces a decision update, not production code.
 
@@ -1729,7 +1729,7 @@ Every slice acceptance requires:
 
 ### Architect-Tier Debates Pending
 
-The following RECOMMENDED decisions in [architecture-decisions.md](discovery/architecture-decisions.md) remain provisional without architect-tier debate:
+The following remaining RECOMMENDED decisions in [architecture-decisions.md](discovery/architecture-decisions.md) remain subject to architect-tier debate or explicit owner acceptance:
 
 - **ARC-001** through **ARC-014** (core architecture).
 - **CLI-001** through **CLI-007** (CLI contract).
@@ -1740,7 +1740,7 @@ The following RECOMMENDED decisions in [architecture-decisions.md](discovery/arc
 - **STK-001** through **STK-006** (technology stack).
 - **QA-001 through QA-003** (quality).
 
-Architect debates must resolve or Sudhanshu must explicitly accept provisional recommendations before implementation.
+Architect debates must resolve or Sudhanshu must explicitly accept the remaining recommendations before implementation. This does not reopen the owner-selected TypeScript + Bun runtime.
 
 ### Five Provisional Owner Choices (Already Recommended)
 
@@ -1754,7 +1754,7 @@ Architect debates must resolve or Sudhanshu must explicitly accept provisional r
 
 - **Shared multi-tenant database** vs. database-per-tenant (architecture deployed later; code-level change not needed).
 - **Modular monolith** vs. initial microservices (monolith chosen; API adapter deferred).
-- **Drizzle/Clipanion/Zod/decimal candidates** (proven by spikes before commit).
+- **Drizzle/Kysely/better-sqlite3/Clipanion/Zod/decimal and other package candidates** (individually proven under pinned Bun before use).
 - **External adapter policy**: Opt-in per filing, no global auto-submission policy.
 - **Inventory extension seams**: Stable item/line references vs. placeholder tables (stable references chosen).
 
@@ -1822,10 +1822,10 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 
 ## 22. Definition of Ready for Implementation
 
-**⚠️ CRITICAL: The current state is documentation-only; this document authorizes no Gate0 or implementation.** Phase 1 is ready only when every item below is satisfied:
+**⚠️ CRITICAL: The current state is documentation-only; this document authorizes no Gate0, Phase 1, or implementation.** TypeScript + Bun is owner-selected, but Phase 1 is ready only when every item below is satisfied:
 
-1. [ ] **Docket review and Gate0 direction**: Sudhanshu reviews the [Owner Review Docket](discovery/owner-review-docket.md) and [Tentative Decisions](discovery/tentative-decisions.md), then explicitly directs/authorizes the reversible Gate0 proof spikes. This direction is not approval of TypeScript + Bun.
-2. [ ] **Gate0 evidence and T-011 decision**: STK-001 through STK-006 complete on macOS arm64 and Linux x64/arm64; the evidence evaluates T-011; Sudhanshu then approves, changes, or rejects T-011 before Phase 1. No library or implementation is pre-approved by Gate0.
+1. [ ] **Docket review and Gate0 direction**: Sudhanshu reviews the [Owner Review Docket](discovery/owner-review-docket.md) and [Tentative Decisions](discovery/tentative-decisions.md), then explicitly directs/authorizes the reversible Gate0 proof spikes. This direction does not authorize Phase 1 or approve any library.
+2. [ ] **Gate0 evidence**: STK-001 through STK-006 complete on macOS arm64 and Linux x64/arm64, including the exact Bun release/revision/checksum and lockfile/CI/release pin record. No library or implementation is pre-approved by Gate0. A blocker stops the affected work and requires a new owner decision.
 3. [ ] **Architecture and applicable Phase 1 decisions**: Architecture contradiction review is clean, architect-tier debates are resolved or explicitly waived, and decisions applicable to Phase 1 are approved. Later-phase tentative IDs block only their affected phase/action, not all of Phase 1.
 4. [ ] **Physical-schema RFC**: The data-model RFC covering tables, keys, constraints, and indexes is reviewed separately before Phase 1 authorization. Schema documentation does not imply physical-schema approval.
 5. [ ] **No silent defaults**: Every architectural choice in code is explicit in code comments or cites a decision ID; unresolved decisions are not silently implemented.
@@ -1839,13 +1839,13 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 ## Appendix: Quick Links to Discovery Documents
 
 **OWNER REVIEW & APPROVAL** (prerequisite):
-- [Owner Review Docket](discovery/owner-review-docket.md): Compact index of tentative decisions T-001–T-011 awaiting owner approval.
+- [Owner Review Docket](discovery/owner-review-docket.md): Compact index of the remaining owner-review records; T-001–T-010 are owner-approved and TypeScript + Bun is owner-selected.
 - [Tentative Decisions and Overnight Protocol](discovery/tentative-decisions.md): Full details for each T-ID with rationale, reversal paths, and owner-review status.
 - [Implementation Plan](discovery/implementation-plan.md): Gate0 proof spikes, Phase 1–9 sequencing, prerequisites.
 
 **DOMAIN & ARCHITECTURE**:
 - [Decisions](discovery/decisions.md): Confirmed decisions and working defaults.
-- [Provisional Architecture Decisions](discovery/architecture-decisions.md): SETTLED, RECOMMENDED, OPEN RESEARCH, DEFERRED.
+- [Architecture Decisions](discovery/architecture-decisions.md): SETTLED, RECOMMENDED, OPEN RESEARCH, DEFERRED.
 - [Data Model Requirements](discovery/data-model-requirements.md): Entities, invariants, canonical records.
 - [Accounting Contracts](discovery/accounting-contracts.md): Canonical pre-implementation domain contracts and account-role posting templates.
 - [CLI Contract](discovery/cli-contract.md): Reports, reconciliation, period controls.
