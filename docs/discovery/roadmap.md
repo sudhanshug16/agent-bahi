@@ -63,17 +63,17 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 
 **The authoritative implementation sequence is defined in [Implementation Plan](implementation-plan.md)**. This roadmap aligns with that sequence and preserves discovery milestones and research gates. Phases are numbered Gate0, P1–P9 in the implementation plan for clarity.
 
-**Tentative decisions (T-001 through T-011) await owner review and approval before any implementation authorization.** See [Owner Review Docket](owner-review-docket.md) for compact index.
+**Tentative decisions (T-001 through T-011) are provisional and await owner review.** They do not authorize implementation; later-phase tentative IDs gate only their affected phase/action. See [Owner Review Docket](owner-review-docket.md) for the compact index.
 
 ---
 
-## Gate0: Proof Spikes (Hard Blocker Before Phase 1)
+## Gate0: Reversible Proof Spikes (Owner-Directed; Hard Evidence Gate Before Phase 1)
 
-Validates all provisional technology stack choices before implementation begins. See [Implementation Plan: Gate0](implementation-plan.md#gate0-proof-spikes-hard-blocker-before-phase-1).
+The current state is documentation-only and does not authorize Gate0. After reviewing the [Owner Review Docket](owner-review-docket.md), Sudhanshu must explicitly direct/authorize these reversible proof spikes. That direction is not approval of TypeScript + Bun. See [Implementation Plan: Gate0](implementation-plan.md#gate0-proof-spikes-hard-blocker-before-phase-1).
 
 **Six proof spikes** (STK-001 through STK-006): Bun runtime, ORM cross-dialect, SQLite configuration, migrations/upgrades, schema generation/CLI parsing, build/distribution. Technology choice (T-011) is contingent on spike results.
 
-**Gate criterion**: All spikes pass; owner approves [Owner Review Docket](owner-review-docket.md) and all [Tentative Decisions](tentative-decisions.md) T-001..T-011 before Phase 1 begins.
+**Gate criterion**: All spikes pass and produce evidence evaluating T-011. After the evidence, Sudhanshu approves, changes, or rejects T-011 before Phase 1. Phase 1 also requires a reviewed physical-schema RFC and approval of applicable Phase 1 decisions; later-phase tentative IDs do not block all of Phase 1.
 
 ## Phase 1: Foundation, Tenant Model, and Migrations
 
@@ -81,7 +81,7 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Key contract**: Tenant and GSTIN context (auto-select, explicit fail on ambiguity); ledger invariants (debit=credit after rounding); idempotency semantics; migration infrastructure.
 
-**Exit conditions**: Tenant/GSTIN isolation enforced; command registry stable; migration strategy proven in proof spikes. Physical schema RFC required for implementation (does not imply approval).
+**Exit conditions**: Tenant/GSTIN isolation enforced; command registry stable; migration strategy proven in proof spikes; T-011 decided after Gate0 evidence; physical-schema RFC reviewed; and applicable Phase 1 decisions approved. Physical schema documentation does not imply approval.
 
 ## Phase 2: Skill Contracts and Catalog (Declarations Only)
 

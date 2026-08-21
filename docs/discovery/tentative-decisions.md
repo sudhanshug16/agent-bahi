@@ -16,6 +16,7 @@ This document records overnight planning decisions that establish working defaul
 
 ## Initial Tentative Entries
 
+<a id="t-001"></a>
 ### Entry T-001: External Statutory Submissions Workflow—Fallback Default When No Filing-Specific Decision Exists
 
 **Status**: TENTATIVE_AGENT_DEFAULT
@@ -72,6 +73,7 @@ Awaiting owner review. This is a working default to unblock skill architecture d
 
 ---
 
+<a id="t-002"></a>
 ### Entry T-002: Frappe Books as Behavior/Concept Reference Only
 
 **Status**: TENTATIVE_AGENT_DEFAULT
@@ -133,6 +135,7 @@ Awaiting owner review. Do not commit any LICENSE file changes. This entry docume
 
 ---
 
+<a id="t-003"></a>
 ### Entry T-003: Fixed-Asset Depreciation Schedules—Book vs. Tax with Tentative SLM Default
 
 **Status**: TENTATIVE_AGENT_DEFAULT
@@ -190,6 +193,7 @@ Awaiting owner review. Book method (SLM default) may be adjusted per owner prefe
 
 ---
 
+<a id="t-004"></a>
 ### Entry T-004: Exchange-Rate Provider and FX Workflow—Tentative/Open Pending Source Audit
 
 **Status**: TENTATIVE_AGENT_DEFAULT (with significant OPEN_RESEARCH component)
@@ -241,6 +245,7 @@ Awaiting owner review and dedicated source audit. No specific rate provider is l
 
 ---
 
+<a id="t-005"></a>
 ### Entry T-005: V1 Scope Focus—Regular Small-Business GST/Accounting Profiles
 
 **Status**: TENTATIVE_AGENT_DEFAULT
@@ -321,6 +326,7 @@ Awaiting owner review. V1 scope is a product/business choice; it determines deli
 
 ---
 
+<a id="t-006"></a>
 ### Entry T-006: Tentative Numeric Proposal for Batch Exit-Code Signal—Not Implementation-Binding
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
@@ -357,6 +363,7 @@ Awaiting owner review. This entry proposes exit code 9 as the numeric signal for
 
 ---
 
+<a id="t-007"></a>
 ### Entry T-007: Advance-Tax Estimated-Amount Input—Manual Entry or Auto-Projection
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
@@ -400,6 +407,7 @@ Awaiting owner review. This entry documents the tentative default (manual entry,
 
 ---
 
+<a id="t-008"></a>
 ### Entry T-008: Retroactive Depreciation Recalculation—Block or Auto-Recalculate
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
@@ -428,7 +436,7 @@ India tax/audit compliance requires immutable depreciation schedules linked to f
 Owner may add a post-correction reporting feature (e.g., "show depreciation impact if we had known the correct cost earlier"). This is a reporting feature, not a mutation feature, and would not alter posted entries.
 
 **Dependencies**:
-- [T-003: Fixed-Asset Depreciation](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedules%E2%80%94book-vs-tax-with-tentative-slm-default).
+- [T-003: Fixed-Asset Depreciation](tentative-decisions.md#t-003).
 - Period-lock and correction-lineage model (settled in [decisions.md](decisions.md#confirmed)).
 - Fixed-asset module scope (Phase scope: ARC-012).
 
@@ -441,6 +449,7 @@ Awaiting owner review. This entry documents the tentative default (block with co
 
 ---
 
+<a id="t-009"></a>
 ### Entry T-009: Form 140/141 Statutory Export—Research-Gated, Fail-Closed
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
@@ -483,6 +492,7 @@ Awaiting owner review and dedicated Form 140/141 export research. This entry doc
 
 ---
 
+<a id="t-010"></a>
 ### Entry T-010: Post-Filing Return Case/Evidence/Correction—Research-Gated Submission
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
@@ -525,14 +535,17 @@ Awaiting owner review and dedicated s263(5)-(7) branch/procedure research. This 
 
 ---
 
+<a id="t-011"></a>
 ### Entry T-011: Initial Language and Runtime—TypeScript + Bun (Recommended; Gate0 Proof Spikes Required)
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
 
 **Question**: What programming language and runtime should agent-bahi use for the initial implementation?
 
+**Exact Meaning and Provisional Status**: T-011 is a provisional recommendation about the initial language/runtime candidate only. It is not approval of TypeScript + Bun, Gate0, implementation, or any library/tool choice, including an ORM, CLI parser, validator, decimal package, database driver, migration tool, or build tool. The current state is documentation-only. After Sudhanshu reviews the owner-review docket, he must explicitly direct/authorize the reversible Gate0 proof spikes; that direction is not approval of TypeScript + Bun. Gate0 evaluates T-011, and Sudhanshu approves, changes, or rejects T-011 from the resulting evidence before Phase 1.
+
 **Recommended Working Default**:
-- **Primary recommendation**: TypeScript + Bun (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver).
+- **Primary recommendation**: TypeScript + Bun as a candidate (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver). This does not pre-approve those libraries or any other dependency.
 - **Proof spikes (Gate0) validate all major dependencies before Phase 1 authorization**:
   - STK-001: Bun runtime, workspaces, lockfile (macOS arm64, Linux x64/arm64).
   - STK-002: ORM (Drizzle/Kysely) on bun-sqlite, PostgreSQL, MySQL; schema equivalence verified.
@@ -540,7 +553,7 @@ Awaiting owner review and dedicated s263(5)-(7) branch/procedure research. This 
   - STK-004: Schema migrations and upgrade paths on all three dialects.
   - STK-005: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
   - STK-006: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
-- **No language/runtime implementation authorization until Gate0 spikes pass and owner confirms technology choices.**
+- **No language/runtime implementation authorization** exists in this entry. Gate0 is not authorized by the documentation; it requires the owner's explicit direction after docket review.
 
 **Alternatives**:
 - Node.js + TypeScript (mature ecosystem; slower cold startup, larger binaries; established JavaScript CI/CD tooling).
@@ -548,7 +561,7 @@ Awaiting owner review and dedicated s263(5)-(7) branch/procedure research. This 
 - Other JVM languages (Java, Kotlin, Scala): Heavy runtime; not recommended for CLI tool distribution.
 
 **Rationale**:
-Bun is a modern JavaScript runtime designed for tooling (CLI, scripts, backend services) with native TypeScript support, integrated package management, and optimized SQLite integration. TypeScript provides type safety and reduces runtime errors in domain logic and compliance calculations. Gate0 proof spikes validate that Bun ecosystem components (ORM, validation, CLI parsing, migrations, build/distribution) work reliably on all target platforms and with all supported databases (SQLite, PostgreSQL, MySQL). This is a working default to unblock architecture and Phase 1 planning; it is not a binding technology lock until owner review confirms after proof spikes pass.
+Bun is a modern JavaScript runtime designed for tooling (CLI, scripts, backend services) with native TypeScript support, integrated package management, and optimized SQLite integration. TypeScript provides type safety and reduces runtime errors in domain logic and compliance calculations. Gate0 proof spikes validate whether the candidate ecosystem and dependencies work reliably on all target platforms and with all supported databases (SQLite, PostgreSQL, MySQL). This is a working default for documentation and Phase 1 planning only; it is not a binding technology lock or library preapproval.
 
 **Product Impact**:
 - **Development velocity**: Bun's built-in features (TypeScript, package management, testing) reduce toolchain complexity.
@@ -557,7 +570,7 @@ Bun is a modern JavaScript runtime designed for tooling (CLI, scripts, backend s
 - **Multi-database support**: Proof spikes validate ORM cross-dialect equivalence (SQLite default, PostgreSQL/MySQL optional).
 
 **Reversal Path**:
-Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selection keeps TypeScript and changes only the runtime (mature ecosystem, larger cold-start footprint). Rust selection requires different language, module system, and CLI design. This choice must be made before Phase 1 implementation begins; mid-implementation language switches are prohibitively expensive.
+Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selection keeps TypeScript and changes only the runtime (mature ecosystem, larger cold-start footprint). Rust selection requires different language, module system, and CLI design. The owner decision must be made before Phase 1 implementation begins; mid-implementation language switches are prohibitively expensive.
 
 **Proof Spike Gates**:
 - STK-001 through STK-006 must all pass on target platforms (macOS arm64, Linux x64/arm64).
@@ -565,8 +578,9 @@ Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selec
 - If any spike reveals a blocker (e.g., Bun ORM incompatibility with PostgreSQL, missing decimal precision library), result is documented and owner makes override decision.
 
 **Affected Gate/Phase**:
-- **Gate0**: All proof spikes (STK-001 through STK-006) are hard blockers. Gate0 must pass before Phase 1 begins.
-- **Phase 1 and beyond**: Contingent on Gate0 completion and owner technology confirmation.
+- **Before Gate0**: Docket review and Sudhanshu's explicit direction/authorization for reversible proof spikes are required. This direction is not approval of T-011.
+- **Gate0**: STK-001 through STK-006 evaluate T-011 and the candidate dependencies; their evidence is a hard predecessor to Phase 1, but does not itself approve the stack.
+- **Phase 1**: Requires the Gate0 evidence, Sudhanshu's approve/change/reject decision on T-011, a reviewed physical-schema RFC, and applicable Phase 1 decisions. Later-phase tentative IDs block only their affected phase/action.
 
 **Dependencies**:
 - Proof spike results (STK-001 through STK-006) are prerequisites, not recommendations.
@@ -580,7 +594,7 @@ Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selec
 - TypeScript: Industry standard for type-safe JavaScript; proven in countless CLI and backend projects.
 
 **Owner Review Status**:
-Awaiting owner review after Gate0 proof spikes pass. This entry documents the tentative default (TypeScript + Bun) and the hard proof-spike prerequisite. Owner may confirm this choice, select Node.js, or select Rust after spike results are available. No language/runtime implementation is authorized until owner confirms.
+Awaiting docket review and explicit owner direction for Gate0. This entry documents the provisional TypeScript + Bun candidate, not approval of it or of any library. After spike evidence is available, Sudhanshu may approve, change, or reject T-011. No language/runtime implementation is authorized until that decision and the other Phase 1 readiness conditions are complete.
 
 ---
 
@@ -595,7 +609,7 @@ Entries T-001 through T-011 extend and clarify settled decisions from [decisions
 - **T-005** clarifies V1 scope in support of settled [Engine ownership](decisions.md#confirmed), [Automation policy](decisions.md#confirmed), and [Multi-GSTIN tenant modeling](decisions.md#confirmed). E-invoice and e-way-bill adapters (CMP-006, CMP-007) are explicitly **RESEARCH-GATED and DEFERRED**, not V1-authorized; see [architecture-decisions.md](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [architecture-decisions.md](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for research gates.
 - **T-006** (new): Proposes exit code 9 as numeric signal for partial-success batches. Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those.
 - **T-007** (migrated from statutory-workflow-contracts.md examples): Advance-tax estimated-amount input. Tentative default: capture operator input with provenance; no auto-projection; no tax liability computation or gate bypass from input alone. Annual-tax contract gates remain canonical. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction via period reopen and correction journal. Supports [T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedules%E2%80%94book-vs-tax-with-tentative-slm-default) and fixed-asset module scope.
+- **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction via period reopen and correction journal. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
 - **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 statutory export—research-gated, fail-closed. Tentative default: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Post-filing return case/evidence/correction. Tentative default: preserve case details and correction lineage; no return-amendment or defective-return submission adapter until s263(5)-(7) branches and official procedures researched and verified. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
 - **T-011** (new): Initial language and runtime choice—TypeScript + Bun recommended, contingent on Gate0 proof spikes (STK-001 through STK-006) passing on all target platforms (macOS arm64, Linux x64/arm64). Alternatives: Node.js + TypeScript or Rust. Reversible before Phase 1 begins; hard dependency on proof-spike validation.

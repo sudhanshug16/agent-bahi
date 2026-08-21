@@ -675,7 +675,7 @@ Each module owns and must never own the listed state:
 
 **Fixed-asset method status**: Separate book and tax schedules are the stable
 model seam, but the exact methods/defaults remain **T-003 TENTATIVE -
-NOT OWNER-APPROVED**. See [Tentative Decision T-003](discovery/tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default).
+NOT OWNER-APPROVED**. See [Tentative Decision T-003](discovery/tentative-decisions.md#t-003).
 The choice is reversible; no SLM, WDV, rate, or tax schedule behavior is an
 implementation authorization.
 
@@ -1813,32 +1813,17 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 
 ## 22. Definition of Ready for Implementation
 
-**⚠️ CRITICAL: Implementation is NOT authorized merely because documentation exists.** All of the following must be true before Phase 1 implementation begins:
+**⚠️ CRITICAL: The current state is documentation-only; this document authorizes no Gate0 or implementation.** Phase 1 is ready only when every item below is satisfied:
 
-1. [ ] **Sudhanshu review of owner-review docket and tentative decisions**: [Owner Review Docket](discovery/owner-review-docket.md) (T-001 through T-011) reviewed; owner confirms, adjusts, or rejects each tentative decision. **This review is a hard prerequisite for Gate0 and Phase 1.** See [Tentative Decisions and Overnight Protocol](discovery/tentative-decisions.md) for full details and reversal paths.
+1. [ ] **Docket review and Gate0 direction**: Sudhanshu reviews the [Owner Review Docket](discovery/owner-review-docket.md) and [Tentative Decisions](discovery/tentative-decisions.md), then explicitly directs/authorizes the reversible Gate0 proof spikes. This direction is not approval of TypeScript + Bun.
+2. [ ] **Gate0 evidence and T-011 decision**: STK-001 through STK-006 complete on macOS arm64 and Linux x64/arm64; the evidence evaluates T-011; Sudhanshu then approves, changes, or rejects T-011 before Phase 1. No library or implementation is pre-approved by Gate0.
+3. [ ] **Architecture and applicable Phase 1 decisions**: Architecture contradiction review is clean, architect-tier debates are resolved or explicitly waived, and decisions applicable to Phase 1 are approved. Later-phase tentative IDs block only their affected phase/action, not all of Phase 1.
+4. [ ] **Physical-schema RFC**: The data-model RFC covering tables, keys, constraints, and indexes is reviewed separately before Phase 1 authorization. Schema documentation does not imply physical-schema approval.
+5. [ ] **No silent defaults**: Every architectural choice in code is explicit in code comments or cites a decision ID; unresolved decisions are not silently implemented.
+6. [ ] **Per-action research gates**: Missing or stale legal/compliance research REVIEW/BLOCKs only the affected compliance action; unrelated bookkeeping, draft entry, and already-researched statutory slices proceed. See [Discovery Roadmap: verified statutory compliance baseline](discovery/roadmap.md#cross-cutting-discovery-milestone-verified-statutory-compliance-baseline-2026-08-21).
+7. [ ] **Implementation plan**: The [Implementation Plan](discovery/implementation-plan.md) contains the Phase 1 acceptance tests, slice definitions, and assignments, with applicable Phase 1 decisions reflected.
 
-2. [x] **Architecture document contradiction review**: This document (`docs/architecture.md`) passes clean contradiction review (post-fix)—no statements conflict with discovery docs or each other.
-
-3. [ ] **Proof spikes complete**: All STK-001 through STK-006 spikes pass on target platforms (macOS arm64, Linux x64/arm64); results documented and decisions confirmed. Technology choice (T-011: TypeScript + Bun) is contingent on spike results; alternatives (Node.js+TypeScript or Rust) require owner override after spike results.
-
-4. [ ] **Per-action research gates enforced, not global blockers**: Legal/compliance research that affects Phase 7 (GST, TDS/TCS, income-tax, MCA) is gated per-action, not as a global Phase 1 blocker. Missing or stale rule snapshots REVIEW/BLOCK only the affected compliance action (e.g., "Form 140 export blocked pending research") while unrelated core bookkeeping, draft entry, and already-researched statutory slices proceed. See [Discovery Roadmap: Cross-cutting discovery milestone](discovery/roadmap.md#cross-cutting-discovery-milestone-verified-statutory-compliance-baseline-2026-08-21) for details.
-
-5. [ ] **Architect-tier debates resolved**: All RECOMMENDED entries in architecture-decisions.md have architect debate outcomes, or Sudhanshu explicitly waives debate and accepts provisional recommendations.
-
-6. [ ] **Implementation plan written**: Detailed Phase 1 acceptance tests, slice definitions, and team-assignment plan documented. See [Implementation Plan](discovery/implementation-plan.md).
-
-7. [ ] **Physical schema RFC reviewed before Phase 1**: Data-model RFC (covering tables, keys, constraints, indexes) must be reviewed separately before Phase 1 implementation authorization. Schema existence in documentation does NOT imply approval. Physical implementation is NOT authorized until RFC review confirms.
-
-8. [ ] **No silent defaults in code**: Every architectural choice is explicit in code comments or decision IDs cited; no default implementation of unresolved decisions.
-
-**PREREQUISITE CHECKLIST** (before Phase 1 authorization):
-- [ ] Owner approves [Owner Review Docket](discovery/owner-review-docket.md) (T-001 through T-011).
-- [ ] Gate0 proof spikes (STK-001–STK-006) pass on all target platforms; technology choice confirmed or overridden.
-- [ ] Architect-tier debates resolved (RECOMMENDED entries in architecture-decisions.md).
-- [ ] Physical data-model RFC reviewed and approved.
-- [ ] Phase 1 slice/acceptance-test plan documented and signed off.
-
-**No implementation is authorized by this document alone.** Sudhanshu's explicit confirmation of all items above is a hard requirement before Phase 1 begins. [Implementation Plan](discovery/implementation-plan.md) defines exact prerequisites for each subsequent phase.
+**No implementation is authorized by this document alone.** The [Implementation Plan](discovery/implementation-plan.md) defines the detailed prerequisites for later phases and actions.
 
 ---
 

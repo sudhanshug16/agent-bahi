@@ -6,24 +6,27 @@
 
 ---
 
-## Tentative Decisions (All NOT OWNER-APPROVED; Gate Phase 1 on Owner Confirmation)
+## Tentative Decisions (All NOT OWNER-APPROVED; Phase-Scoped Gates)
 
-See [Tentative Decisions](tentative-decisions.md) for full details. All entries below await owner review and confirmation.
+See [Tentative Decisions](tentative-decisions.md) for full details. All entries below are provisional and await owner review. They do not authorize implementation; only the decision applicable to a phase or action gates that work.
 
-- **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#entry-t-001).
-- **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; Apache-2.0 recommended; no code reuse). See [Tentative Decisions](tentative-decisions.md#entry-t-002).
+- **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#t-001).
+- **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; Apache-2.0 recommended; no code reuse). See [Tentative Decisions](tentative-decisions.md#t-002).
 - **T-003**: Fixed-asset depreciation policy (separate book/tax schedules; SLM method parameterized and reversible; not implementation authorization).
 - **T-004**: FX provider and fallback selection (provisional; gates Phase 5 spike).
-- **T-005**: Regular-GST V1 profile baseline (AATO applicability, effective-dated rules, GSTR-1 output; composition scheme deferred).
+- **T-005**: Regular-GST V1 profile baseline (AATO applicability, effective-dated rules, GSTR-1 output plus GSTR-3B reconciliation/manual filing; e-invoice/e-way bill deferred and research-gated; composition scheme deferred).
 - **T-006**: Batch partial-success numeric proposal (exit code for partially-committed multi-item operations; tests must not assume specific numeric value).
 - **T-007**: Provenance-only operator-entered advance-tax estimate under s404/s408; no auto-projection, computed tax/liability, installment calculation, sufficiency validation, or payment advice. Any derived amount is REVIEW/BLOCK pending verified rules and full computation inputs.
 - **T-008**: Retroactive depreciation correction policy (immutability and reversal pattern).
 - **T-009**: Form140/141 statutory export research only (non-payroll TDS s393 routing forms; not s392 salary withholding and not Form143/TCS). Form140/141 export/transport remains blocked pending research.
 - **T-010**: Post-filing correction and revised-return boundary (amended returns, form corrections after filing).
+- **T-011**: Initial language/runtime candidate only: TypeScript + Bun is a provisional recommendation evaluated by reversible Gate0 proof spikes. It is not approval of TypeScript + Bun, any library/tool (including ORM, parser, validator, decimal package, database driver, migration tool, or build tool), or implementation. Owner direction after docket review is required before spikes; owner approves, changes, or rejects T-011 after evidence before Phase 1.
 
 ---
 
 ## Gate0: Proof Spikes (Hard Blocker Before Phase 1)
+
+**Current state**: Documentation-only; Gate0 is not authorized. After Sudhanshu reviews the [Owner Review Docket](owner-review-docket.md), his explicit direction/authorization is required to run these reversible proof spikes. That direction is not approval of TypeScript + Bun. The spikes evaluate T-011 and produce evidence for the post-spike owner decision.
 
 **Duration**: 2–3 weeks. All must pass before Phase 1 implementation begins.
 
@@ -34,7 +37,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - **STK-005**: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
 - **STK-006**: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
 
-**Exit**: All spike reports complete; owner confirms technology choices (or overrides with new decision). Architecture reviewed and confirmed by owner.
+**Exit**: All spike reports complete; the evidence is recorded for Sudhanshu to approve, change, or reject T-011. No library or implementation is pre-approved by Gate0. Phase 1 cannot begin until that T-011 decision and the other Phase 1 prerequisites are complete.
 
 ---
 
@@ -42,7 +45,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 
 **Duration**: 4–6 weeks. Deliverables: conceptual aggregates (tenant/GSTIN context, command registry), migration infrastructure, isolation enforcement.
 
-**Prerequisites**: Gate0 proof spikes pass; owner approves architecture.
+**Prerequisites**: Gate0 proof spikes pass; Sudhanshu approves, changes, or rejects T-011 after reviewing the evidence; the physical-schema RFC is separately reviewed; and applicable Phase 1 decisions are approved. Later-phase tentative IDs block only their affected phase/action, not all of Phase 1.
 
 **Scope**:
 - Tenant and GSTIN context (auto-select, explicit fail on ambiguity).
@@ -312,4 +315,4 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 
 **Phase Sequence**: Gate0 (proof spikes) → P1 (foundation) → P2 (skill contracts) → P3 (ledger) → P4 (evidence/bank) → P5 (reports/FX/assets/expenses) → P6 (payroll) → P7 (compliance) → P8A (dialects) → P8B (skills runtime) → P9 (Zoho).
 
-**Sign-Off Gate**: Proof spikes pass. Owner confirms architecture and all T-001..T-011 via [Owner Review Docket](owner-review-docket.md). Only then does Phase 1 implementation begin.
+**Sign-Off Gate**: After docket review, Sudhanshu explicitly directs the reversible Gate0 proof spikes. Gate0 evaluates T-011; then Sudhanshu approves, changes, or rejects T-011. Phase 1 begins only after that decision, a reviewed physical-schema RFC, and approval of applicable Phase 1 decisions. Later-phase tentative IDs remain scoped to their affected phase/action.
