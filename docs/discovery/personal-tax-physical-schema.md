@@ -163,22 +163,25 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.14a `submission_bindings`
 
-- **Fields:** `binding_id`, `tenant_id`, `tax_case_id`, `filing_sequence`, `selected_export_id`, selected_at timestamp, selected_by actor, binding state (SELECTED or SUPERSEDED).
-- **Primary key:** `binding_id`.
-- **Unique keys:** `UNIQUE(tenant_id, tax_case_id, filing_sequence)` – at most one active selection per TaxCase/filing sequence.
-- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `selected_export_id` to ExportRun (which references FilingSnapshot in same TaxCase).
-- **Immutability:** tenant_id, tax_case_id, filing_sequence, and selected_export_id are immutable once any SubmissionAttempt exists for this binding. Before first attempt, selection may be replaced (state transitions from SELECTED to SUPERSEDED, new binding created with same (tenant, tax_case, filing_sequence)).
-- **Concurrency gate:** UNIQUE(tenant_id, tax_case_id, filing_sequence) constraint prevents two concurrent selections for the same TaxCase/sequence. SubmissionAttempt may only reference a binding in SELECTED state with no prior attempts.
-- **Gate:** Selection may be changed only before first SubmissionAttempt. Once first attempt/evidence exists, this binding becomes immutable and subsequent corrections use a successor TaxCase (PT-016) with its own new selection binding.
+- **Fields:** `tenant_id`, `tax_case_id`, `filing_sequence`, `selected_export_id`, `last_selection_at` timestamp, `last_selection_by` actor, first_attempt_exists (boolean or nullable timestamp).
+- **Primary key:** `(tenant_id, tax_case_id, filing_sequence)` — exactly one binding row per TaxCase/filing sequence for entire lifetime.
+- **Unique keys:** same as PK; enforces at most one binding per TaxCase/sequence.
+- **Candidate keys:** `(tenant_id, filing_sequence)` composite may index for efficient queries if needed.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `selected_export_id` to ExportRun (export must reference FilingSnapshot in same TaxCase, enforced via export's FK).
+- **Before First Attempt:** `selected_export_id` is mutable (UPDATE only, no INSERT of duplicate key). Each change to `selected_export_id` updates `last_selection_at` and `last_selection_by` atomically. Selection change history is recorded in audit_records with tenant_id, binding (tenant, case, sequence), old/new export_id, actor, timestamp.
+- **After First Attempt:** `first_attempt_exists` becomes non-null (set by first SubmissionAttempt insert or update trigger). Row becomes immutable; any attempted update to `selected_export_id` after this flag is set fails closed.
+- **Concurrency gate:** UNIQUE(tenant_id, tax_case_id, filing_sequence) constraint ensures exactly one active binding. Database-level row lock during selection update prevents concurrent modifications.
+- **Gate:** Selection may be changed only by UPDATE before first SubmissionAttempt. Once first attempt exists, this binding becomes immutable and subsequent corrections use a successor TaxCase (PT-016) with its own new (tenant, case_sequence) binding row.
 
 ### 2.15 `submission_attempts`
 
-- **Fields:** `attempt_id`, `tenant_id`, `tax_case_id`, `binding_id`, portal receipt/acknowledgement, raw portal status/response, capture timestamp, actor.
+- **Fields:** `attempt_id`, `tenant_id`, `tax_case_id`, `filing_sequence`, portal receipt/acknowledgement, raw portal status/response, capture timestamp, actor.
 - **Primary key:** `attempt_id`.
-- **Unique keys:** one per submission_binding (first attempt locks the binding immutable).
-- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `binding_id` to SubmissionBinding (which ensures selected export belongs to same tenant/case).
-- **Immutability:** attempt ID, tax_case_id, binding_id, receipt/status, and response are immutable.
-- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase. Post-submission (once attempt exists), correction work uses a linked successor TaxCase (PT-016) with independent FilingSnapshot, ExportRun, and new SubmissionBinding.
+- **Unique keys:** `UNIQUE(tenant_id, tax_case_id, filing_sequence)` – at most one first attempt per binding. Subsequent attempts (retries) use a different composite key or are recorded as separate events in audit_records.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase (verifies case exists); `(tenant_id, tax_case_id, filing_sequence)` to SubmissionBinding (composite FK via matching PK).
+- **Immutability:** attempt ID, tax_case_id, filing_sequence, receipt/status, and response are immutable after first insert. Subsequent retry events are separate rows with different attempt_ids.
+- **Binding Lock:** First insert into submission_attempts for a (tenant, case, sequence) binding atomically sets the binding's first_attempt_exists flag, preventing further selection changes on that binding.
+- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash (via submission_bindings lookup) to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase, and the selection binding is updated (if no attempts yet). Post-submission (once attempt exists), correction work uses a linked successor TaxCase (PT-016) with independent FilingSnapshot, ExportRun, and new (tenant, successor_case, sequence) binding row.
 
 ### 2.16 `tax_case_bookset_membership`
 
