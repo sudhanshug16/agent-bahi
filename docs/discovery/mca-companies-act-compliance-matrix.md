@@ -1,179 +1,134 @@
 # MCA Companies Act Compliance Matrix — Verified Official Baseline
 
 **Research cutoff:** 21 August 2026  
-**Effective period:** Companies Act 2013, from incorporation date  
+**Effective period:** Companies Act, 2013 and the cited rules/orders as effective for the obligation
 **Status:** Research baseline only; not legal advice and not implementation authority.
 
-This matrix records verified baselines for statutory compliance under the Companies Act 2013. Every claim herein is sourced from official MCA documentation or marked **OPEN**. Unverified thresholds, form structures, and applicability criteria remain blocked and do not gate filing, penalties, or automatic posting. Critical error: small companies do NOT have a statutory-audit exemption; every company must appoint an auditor under section 139.
+This matrix is the source-of-truth boundary for current Companies Act documentation. A legal claim may be used operationally only when its audit row is **VERIFIED**, `source_verified=true`, and the exact effective source is frozen in `effective_rule_snapshot`. **OPEN** and **TENTATIVE** claims hard-block preparation, filing, automatic posting, and deadline selection. Historical records may be imported and preserved, but historical form names never authorize a current filing.
 
----
+The Companies Act statutory audit is separate from the section 63 income-tax audit. A mandatory Companies Act audit does not determine an income-tax return deadline; tax due dates remain in the separate, profile-driven income-tax contract.
 
-## Legal Research Audit Table
+## Legal research audit table
 
-| Claim ID | Authority | Section/Source | Source URL | Status | Implementation Gate |
-|---|---|---|---|---|---|
-| SMALL-001 | Small company definition | Section 2(85) + G.S.R. 700(E) | https://www.mca.gov.in/ | VERIFIED | Paid-up capital ≤ ₹4 crore AND turnover ≤ ₹40 crore (verify G.S.R. 700(E)) |
-| AUDIT-001 | Every company must appoint auditor | Section 139 | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | VERIFIED | NO exemption for small company or OPC; every company audited |
-| AUDIT-ELIG-001 | Auditor qualification/disqualification | Section 141 + Schedule IV | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | OPEN | Verify current Schedule IV criteria |
-| AUDIT-COMM-001 | Audit Committee composition | Section 177 + Rule 6-7 | https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf | OPEN | Verify applicability threshold and composition rules |
-| STMT-001 | Financial statement filing | Section 137 + Rules | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | OPEN | Verify filing deadline per company type |
-| REPORT-001 | Board report mandatory disclosures | Section 134 + Schedule VI | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | OPEN | Verify current Schedule VI mandatory disclosures |
-| AGM-001 | AGM timing — first AGM | Section 106, Rule 2A | https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf | VERIFIED | Within 9 months of FY close; no extension for first AGM |
-| AGM-002 | AGM timing — subsequent AGM | Section 106, Rule 2A | https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf | VERIFIED | Within 6 months of FY close; max 3-month extension only for non-first |
-| AGM-OPC-001 | OPC AGM exemption | Section 106 | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | VERIFIED | OPC exempt from AGM requirement; file within 180 days FY close |
-| FORM-AOC-001 | Consolidated statement form | AOC-4 CFS | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/ | OPEN | Verify Form AOC-4 CFS structure and applicability |
-| FORM-MGT-001 | Board Meetings return | Form MGT-7 | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/ | OPEN | Verify Form MGT-7 structure and filing deadline |
-| FORM-ADT-001 | Auditor appointment notice | Form ADT-1 | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_ADT-1.pdf | OPEN | Within 15 days of appointment meeting |
-| FORM-DPT-001 | Director/KMP return | Form DPT-3 | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf | VERIFIED (link provided) | Annual return of directors and KMP |
-| FORM-MSME-001 | MSME disclosure | Form MSME-1 | https://www.mca.gov.in/Ministry/pdf/MSMESpecifiedCompanies_22012019.pdf | OPEN | Verify applicability criteria and filing deadline |
-| OBSOL-001 | Obsolete Form 23AC | Pre-2013 form | N/A | **REJECTED** | Do not use; Companies Act 2013 only |
-| OBSOL-002 | Obsolete Form 23ACA | Pre-2013 form | N/A | **REJECTED** | Do not use; Companies Act 2013 only |
-| OBSOL-003 | Non-existent Form DPT-7 | Unverified | N/A | **REJECTED** | No such form in current MCA e-form suite; use DPT-3 only |
+| Audit ID | Claim | Authority and nearby official source | Status | Operational gate |
+|---|---|---|---|---|
+| MCA-AUDIT-001 | Every company appoints an auditor under s139; small-company and OPC status do not create an audit exemption. | [Companies Act s139](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Require Companies Act auditor state for every company; keep it separate from s63 tax-audit state. |
+| MCA-AUDIT-002 | Non-government first auditor: Board within 30 days of registration; on failure, members appoint at an EGM within 90 days under s139(6). | [Companies Act s139(6)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Use this first-auditor state machine only for non-government companies. |
+| MCA-AUDIT-003 | Government-company first auditor: CAG within 60 days; if CAG does not appoint, Board in the next 30 days; if Board fails, members within the next 60 days at an EGM under s139(7). | [Companies Act s139(7)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Keep the government-company path separate from s139(6). |
+| MCA-AUDIT-004 | Subsequent auditor appointment follows s139(1) at the applicable AGM and term; s139(1) does not create a generic within-30-days appointment rule. | [Companies Act s139(1)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Never infer a 30-day subsequent-appointment deadline. |
+| MCA-AUDIT-005 | Casual vacancy: Board fills a non-government vacancy within 30 days; only a resignation-caused vacancy also requires member approval at a general meeting within three months of the Board recommendation, under s139(8). | [Companies Act s139(8)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Track vacancy cause; do not require three-month member approval for every vacancy. |
+| MCA-AUDIT-006 | Removal before term expiry requires a company special resolution and prior Central Government approval; the auditor must have a reasonable opportunity of being heard, under s140(1). | [Companies Act s140(1)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Block removal without both approvals and hearing evidence. |
+| MCA-AUDIT-007 | A resigning auditor files the prescribed resignation statement with the company and Registrar within 30 days under s140(2), and with CAG where applicable. | [Companies Act s140(2)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Track auditor filing separately from company appointment or vacancy state. |
+| MCA-AUDIT-008 | Auditor eligibility and disqualification come from s141 and the Companies (Audit and Auditors) Rules; Schedule IV is not auditor qualification authority. | [Companies Act s141](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf), [Audit and Auditors Rules, rules 3–4](https://www.mca.gov.in/Ministry/pdf/NCARules_Chapter10.pdf) | **VERIFIED** | Do not use Schedule IV for auditor qualification checks; unresolved rule detail remains blocked. |
+| MCA-AUDIT-009 | Financial statements are Board-approved before signature; s134(1) sets the signature alternatives and OPC one-director rule, and the auditor report is attached under s134(2). | [Companies Act s134](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Enforce approval-before-signature and all applicable signatures. |
+| MCA-AUDIT-010 | Board-report disclosures are sourced from s134(3) and the Accounts Rules, not Schedule VI. | [Companies Act s134(3)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf), [Accounts Rules](https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf) | **VERIFIED for source boundary** | Detailed disclosure field mapping remains OPEN until the applicable current rule snapshot is attached. |
+| MCA-AUDIT-011 | s137 governs financial-statement filing, including the 30-day AGM path, provisional unadopted filing, no-AGM path, and OPC member-adopted 180-day path. | [Companies Act s137](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Do not substitute s394 or let a missing adoption block the statutory provisional path. |
+| MCA-AUDIT-012 | An OPC has no AGM under s96; member business is communicated and entered in signed, dated minutes under s122(3), and one-director Board business follows s122(4). | [Companies Act ss96 and 122](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Require member adoption evidence; never model OPC as Board-only or as “no member approval.” |
+| MCA-AUDIT-013 | Annual return under s92(4) is due within 60 days of the AGM, or, if no AGM was held, within 60 days of the date it should have been held with reasons. | [Companies Act s92(4)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Never reuse the OPC 180-day financial-statement deadline for annual return. |
+| MCA-AUDIT-014 | MGT-7 applies other than to OPCs and small companies; MGT-7A is the abridged form for OPCs and small companies from FY 2020-21. | [MGT Rules amendment 2021](https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf) | **VERIFIED for form split** | Select by the frozen company classification and FY; detailed fields remain source-kit gated. |
+| MCA-AUDIT-015 | Small-company classification first applies all s2(85) exclusions, then tests current thresholds of paid-up capital not over ₹4 crore and turnover not over ₹40 crore under G.S.R. 700(E). An OPC qualifies only if every condition is met. | [Companies Act s2(85)](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf), [G.S.R. 700(E)](https://www.mca.gov.in/content/dam/mca/pdf/notification-small-company-2015.pdf) | **VERIFIED** | Reject public, holding/subsidiary, s8, special-Act, and other statutory exclusions before threshold testing. |
+| MCA-AUDIT-016 | AGM: first within nine months of first FY close; later within six months of FY close; Registrar extension up to three months applies only after the first AGM. | [Companies Act s96](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Do not map this to s106 or Rule 2A; do not extend the first AGM. |
+| MCA-AUDIT-017 | s121 AGM report is a 30-day Registrar filing only for listed public companies; ordinary company minutes are retained internally under the minutes provisions. | [Companies Act ss118–121](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Do not create generic AGM-minutes filing or s121 obligations for every company. |
+| MCA-AUDIT-018 | s177 Audit Committee composition/functions are governed by s177 and applicable Board Powers Rule 6; there is no separate Registrar-filed “Audit Committee Report” created by these provisions. | [Companies Act s177](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf), [Board Powers Rule 6 amendment](https://www.mca.gov.in/Ministry/pdf/CompaniesMeetingBoardPowersSecondRules_14072017.pdf) | **OPEN+BLOCK for applicability profile** | Composition/functions are source-verified; exact company applicability must be resolved from the current Rule 6/rule 4 profile before execution. |
+| MCA-AUDIT-019 | Standalone financial statements use AOC-4; consolidated financial statements, if required, use AOC-4 CFS. CFS is not automatic merely because an associate exists; apply s129(3) and Accounts Rule 6 exemptions first. | [Accounts Rules, rule 12](https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf), [Accounts Rule 6 amendment](https://www.mca.gov.in/Ministry/pdf/CompaniesAccountsAmendmentRules_28072016.pdf), [Companies Act s129](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED for routing; OPEN for profile** | AOC-4 CFS is blocked until the CFS obligation and Rule 6 exemption facts are frozen. |
+| MCA-AUDIT-020 | DPT-3 is the return of deposits and particulars of money or loans not treated as deposits; it is not a director/KMP return. The official kit states the annual 30 June filing for applicable non-government companies using information as at 31 March duly audited by the company auditor. | [DPT-3 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf) | **VERIFIED** | Model applicability and the kit’s 30 June/31 March audited-data rule; reject director/KMP semantics. |
+| MCA-AUDIT-021 | MSME-1 is a half-yearly return for applicable outstanding payments to micro and small enterprise suppliers; the specified order establishes the 30 April and 31 October cycle. It is not a company-classification test or generic Board-report disclosure. | [MSME specified-companies order](https://www.mca.gov.in/Ministry/pdf/MSMESpecifiedCompanies_22012019.pdf) | **VERIFIED for stated order; OPEN for tenant applicability** | Require the applicable order/profile facts before generating the return. |
+| MCA-AUDIT-022 | 23AC was the historical balance-sheet filing and 23ACA the historical Profit and Loss filing; they are not current Companies Act 2013 filings. | [MCA legacy e-form mapping](https://www.mca.gov.in/Ministry/pdf/eformsMapping.pdf) | **VERIFIED** | Preserve valid historical records/imports; reject these forms for current filings without deleting historical encoding. |
+| MCA-AUDIT-023 | DPT-7 is not a current filing route. Current deposit matters route to DPT-3; historical records referring to another form are preserved as history. | [DPT-3 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf), [MCA forms mapping](https://www.mca.gov.in/Ministry/pdf/eformsMapping.pdf) | **VERIFIED for current route** | Reject DPT-7 as current; do not delete historical references or silently rewrite imports. |
+| MCA-AUDIT-024 | Companies Act annual accounts use s137; s394 is not the annual-accounts filing section. | [Companies Act s137](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf) | **VERIFIED** | Reject s394 as an annual-accounts mapping. |
 
----
+## Company classification and audit boundary
 
-## CONFIRMED OFFICIAL FACT: Company Classification and Audit Requirement
+Apply s2(85) exclusions before thresholds. A company is not small if it is public, a holding or subsidiary company, registered under s8, governed by a special Act, or excluded by another applicable statutory rule. Only after exclusions pass may the profile test paid-up capital of **≤ ₹4 crore** and turnover of **≤ ₹40 crore** under G.S.R. 700(E). An OPC can qualify only if it passes the exclusions and both thresholds. See **MCA-AUDIT-015**.
 
-**CRITICAL ERROR CORRECTION**: Small companies do NOT have a statutory-audit exemption. Every company must appoint an auditor under section 139, without exception. The definition of small company (section 2(85)) determines certain reporting exemptions (e.g., reduced disclosures in Board Report) but does NOT exempt from audit.
+Every company, including a small company and an OPC, must have the Companies Act auditor state required by s139. This is not the same state as an income-tax s63 audit. A company’s mandatory Companies Act audit must never be used to infer the income-tax return due-date branch. See **MCA-AUDIT-001** and the separate income-tax matrix.
 
-| Company Type | Definition | Audit Required? | Certificate Form | Official Source | Status | Implementation Gate |
-|---|---|---|---|---|---|
-| **Small company** | Paid-up capital ≤ ₹4 crore **AND** turnover ≤ ₹40 crore (G.S.R. 700(E)) | **YES — mandatory audit (s139)** | Statutory Auditor Report (s143) | Section 139, Section 2(85), G.S.R. 700(E) | VERIFIED | Every small company must appoint auditor; reject "audit exemption" claims |
-| **Large company** | Does not meet small-company criteria | **YES — mandatory audit (s139)** | Statutory Auditor Report (s143) | Section 139 | VERIFIED | Always audit-required |
-| **Holding company** | Holds subsidiary or associated company | **YES — consolidated audit (s143)** | Consolidated Statutory Auditor Report | Section 143 | VERIFIED | Consolidated financial statement audit mandatory |
-| **Subsidiary/Associate** | Held by another company | **YES — standalone + consolidated audit** | Statutory Auditor Report + Consolidated | Section 143 | VERIFIED | Both standalone and consolidated required |
-| **One-person company (OPC)** | Single member (s2(62)) | **YES — mandatory audit (s139)** | Statutory Auditor Report (s143) | Section 139, Section 2(62) | VERIFIED | OPC status does NOT exempt from audit |
+## Auditor state machines
 
----
-
-## CONFIRMED OFFICIAL FACT: Auditor Appointment and Continuance (Sections 139, 140, 141)
-
-Auditor appointment is mandatory and follows strict procedural requirements. Auditor removal, resignation, and casual vacancies are separate legal processes.
-
-| Obligation | Applicability | Appointment Process | Qualifications/Disqualification | Term and Continuance | Official Source | Status | Implementation Gate |
-|---|---|---|---|---|---|---|
-| **First auditor** | Company after incorporation | Board meeting within 30 days of incorporation; appointment by Board or shareholder at first meeting; notice to ROC per Rule | Section 141, Schedule IV | **OPEN: term and continuance rules** | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | OPEN | Verify appointment timing and notice requirements |
-| **Auditor appointment (subsequent)** | End of auditor term or vacancy | AGM by ordinary resolution within 30 days of prior auditor removal/resignation/end of term | Section 141 disqualification criteria | **OPEN: rotation rule and time-bar on re-appointment** | Section 139, Section 141, Schedule IV | OPEN | Verify if auditor rotation (max consecutive term) and time-bar exist |
-| **Auditor removal** | At any time before expiry | AGM special resolution after notice to auditor and opportunity to respond | Section 141 criteria | — | Section 140 | VERIFIED | Statutory notice and right-to-respond required |
-| **Auditor resignation** | At any time | Auditor delivers written notice per conditions in s139(11) | Prescribed conditions in s139(11) | — | Section 139(11) | OPEN | Verify conditions for valid resignation notice |
-| **Casual vacancy (removal/resignation between AGMs)** | During audit term | Board appoints replacement within 30 days; AGM confirmation at next meeting | Section 141, s139(8) | — | Section 139(8) | VERIFIED | Board appointment temporary; AGM ratification required |
-
-**AUDITOR QUALIFICATION**: Schedule IV defines qualifications. Do not assume CA/CS/CPA automatically qualify; verify against current Schedule IV.
-
----
-
-## CONFIRMED OFFICIAL FACT: Financial Reporting and AGM (Sections 106, 107, 134, 137, 143)
-
-Financial statements, Board Report, and AGM are separate but linked obligations. Filing timing depends on AGM timing and company type.
-
-| Obligation | Applicability | Preparation and Scope | Signature/Approval | Filing Deadline | Registrar Acknowledgement | Official Source | Status | Implementation Gate |
-|---|---|---|---|---|---|---|---|
-| **Financial statements** | Every company | Balance Sheet, P&L, notes, Audit Report (s143), Board Report (s134), CFS if holding (s129) | Board approval before signature; see s134 sequence | Per s137 filing rules (depends on AGM timing) | Registrar reference + date | https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf | VERIFIED (framework) | Verify exact filing deadline from s137/company type |
-| **Provisional filing** | Company with unadopted statements | Financial statements filed within 30 days after AGM IF Board approves but shareholders not yet adopted | Board signature only; shareholder adoption NOT yet received | Within 30 days after AGM | Marked "provisional" by Registrar | Section 137 | VERIFIED (concept) | Implement provisional filing as distinct state; do not confuse with final |
-| **Board Report (s134)** | Every company | Mandatory disclosures per Schedule VI (dividend policy, director comments, auditor findings if any, related-party transactions, etc.) | Director signature + Company Secretary certification | With financial statements | Linked to statements filing | Section 134, Schedule VI | OPEN | Verify current Schedule VI mandatory disclosures |
-| **Audit Committee Report** | Company with Audit Committee (s177) | Audit findings, independence, non-audit services, internal audit, risk oversight | Audit Committee Chair signature | With Board Report or separate | Registrar filing | Section 141, Section 177 | OPEN | Verify scope and reporting requirements |
-| **Annual General Meeting** | Every company EXCEPT OPC | Within 6 months of FY close (first AGM within 9 months); AGM agenda includes approval of statements, auditor, dividend (if proposed) | Shareholder ordinary resolution (simple majority) | Not a filing deadline; AGM is a separate event | Minutes filed within 30 days of AGM | Section 106, Rule 2A | VERIFIED | Verify first-AGM 9-month rule and subsequent 6-month rule |
-| **OPC exemption from AGM** | One-person company | No AGM held; financial statements filed directly within 180 days of FY close | Director signature only; no shareholder approval | Within 180 days of FY close | Registrar reference | Section 106, Section 2(62) | VERIFIED | OPC files financial statements without AGM approval |
-
-**AGM Timing Note**: First AGM must be within 9 months of FY close (no 3-month extension available). Subsequent AGMs within 6 months (with up to 3-month extension available for non-first AGM if cause shown).
-
----
-
-## CONFIRMED OFFICIAL FACT: Statutory Forms and Filing Obligations
-
-All statutory forms are filed via eMCA portal. Form structure, field mapping, and filing deadlines remain **OPEN** except where noted as VERIFIED.
-
-| Form | Applicability | Filing Deadline | Purpose | Official Instruction Kit | Status | Implementation Gate |
-|---|---|---|---|---|---|
-| **AOC-4** | Standalone financial statement filing | 30 days after AGM (or 180 days for OPC) | Balance Sheet + P&L data | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/ | OPEN | Verify Form AOC-4 current structure |
-| **AOC-4 CFS** | Consolidated financial statement (holding company) | 30 days after AGM | Consolidated Balance Sheet + P&L | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/ | OPEN | Verify Form AOC-4 CFS structure and applicability |
-| **MGT-7** | Annual return of meetings and resolutions | 30 days after AGM | Board meetings, shareholder meetings, resolutions | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/ | OPEN | Verify Form MGT-7 structure and field mapping |
-| **MGT-7A** | Abridged annual return (OPC/small company) | 30 days after AGM (or 180 days for OPC) | Simplified version of MGT-7 for small company or OPC | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/ | OPEN | Verify applicability (small company or OPC) and structure |
-| **ADT-1** | Auditor appointment notice | Within 15 days of auditor appointment meeting | Auditor name, DIN, appointment date, remuneration, qualifications | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_ADT-1.pdf | VERIFIED (kit available) | Within 15 days of appointment |
-| **DPT-3** | Return of directors and KMP | Within 30 days of change or per annual requirement | Director DIN, name, designation, appointment/retirement dates, KMP details | https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf | VERIFIED (kit available) | Block if director/KMP details missing |
-| **MSME-1** | MSME classification and outstanding-payment disclosure | Half-yearly: 30 April and 31 October (when applicable) | Company MSME status, outstanding payments to micro/small suppliers | https://www.mca.gov.in/Ministry/pdf/MSMESpecifiedCompanies_22012019.pdf | OPEN | Verify MSME applicability and filing deadline |
-| **Form 23AC** | **OBSOLETE** | N/A | Pre-2013 Act; do not use | N/A | **REJECTED** | Delete from any encoding; reject if encountered |
-| **Form 23ACA** | **OBSOLETE** | N/A | Pre-2013 Act; do not use | N/A | **REJECTED** | Delete from any encoding; reject if encountered |
-| **Form DPT-7** | **NON-EXISTENT** | N/A | No such form in current MCA suite | N/A | **REJECTED** | Delete from any encoding; use DPT-3 only; never reference |
-
----
-
-## PRODUCT VALIDATION POLICY
-
-These are product rules for deterministic company compliance workflows. They are not claims that official sources prescribe particular software design.
-
-| Policy | Required Behavior | Failure Prevented |
+| State path | Required transition | Evidence and gate |
 |---|---|---|
-| **Audit applicability — no exemption** | Every company (including small company and OPC) must have a statutory auditor. Do not create an "audit exemption" logic for any company type. | Small company incorrectly treated as audit-exempt. |
-| **Small-company thresholds** | Small-company status is determined from paid-up capital ≤ ₹4 crore AND turnover ≤ ₹40 crore per G.S.R. 700(E). Verify both conditions. | Wrong company classification; incorrect reporting exemptions. |
-| **OPC-specific rules** | One-person company has no AGM; files financial statements within 180 days of FY close without shareholder approval. Do not assume all companies have AGM. | OPC treated as regular company; AGM incorrectly required. |
-| **AGM timing — first vs. subsequent** | First AGM within 9 months of FY close (no extension). Subsequent AGMs within 6 months (with max 3-month extension available). Do not apply 6-month rule to first AGM. | First AGM blocked with wrong deadline. |
-| **Auditor appointment process** | Auditor appointed by Board (first) or AGM (subsequent), with written notice to Registrar within required timeframe per Rule. Do not assume Board appointment is permanent; AGM confirmation may be required. | Auditor appointment not properly documented. |
-| **Form selection and applicability** | Determine company type (regular, small, OPC, holding, subsidiary) and AGM status. Select applicable forms (MGT-7 vs. MGT-7A, AOC-4 vs. AOC-4 CFS). Do not use obsolete 23AC/23ACA or non-existent DPT-7. | Wrong form filed; obsolete form used. |
-| **Provisional vs. final filing** | Provisional filing within 30 days after AGM if statements not yet adopted by shareholders. Final filing occurs when shareholders adopt. Do not conflate; mark status clearly. | Provisional statements treated as final; adoption not tracked. |
-| **Audit Committee** | **OPEN**: Audit Committee applicability threshold and composition rules require verification from current Section 177 + Rule 6-7. Do not assume all companies have Audit Committee. | Audit Committee incorrectly required/not required. |
-| **No Companies Act audit at s63 threshold** | Companies Act section 139 audit is mandatory; section 63 (income-tax) audit is a separate tax obligation. Do not confuse statutory company audit with tax audit. | Tax audit requirements applied to company statutory compliance incorrectly. |
+| Non-government first auditor | Registration → Board appointment within 30 days → if Board fails, members appoint at EGM within the next 90 days → office until conclusion of first AGM. | Board/EGM resolution and auditor consent/eligibility evidence; **MCA-AUDIT-002**. |
+| Government-company first auditor | Registration → CAG appointment within 60 days → if no CAG appointment, Board in next 30 days → if Board fails, members appoint within next 60 days at EGM. | CAG, Board, or member appointment evidence matching the branch; **MCA-AUDIT-003**. |
+| Subsequent appointment | Applicable AGM appointment/re-appointment under s139(1) → term/rotation profile check → notice to Registrar only where the current rule requires it. | Do not invent a generic 30-day appointment rule; **MCA-AUDIT-004**, **MCA-AUDIT-008**. |
+| Casual vacancy | Vacancy → Board fills within 30 days for non-CAG company → if caused by resignation, member approval at a general meeting within three months of Board recommendation. | Vacancy cause, Board resolution, and approval evidence when resignation-caused; **MCA-AUDIT-005**. |
+| Removal | Proposed removal → auditor hearing opportunity → prior Central Government approval → company special resolution. | All four events required; **MCA-AUDIT-006**. |
+| Resignation | Auditor resignation → prescribed statement filed by auditor with company and Registrar within 30 days, plus CAG where applicable → vacancy path. | Auditor filing evidence; **MCA-AUDIT-007**. |
+| Eligibility | Candidate → s141 eligibility/disqualification and Audit Rules certificate checks → appointment. | Use s141 and Audit Rules, never Schedule IV; unresolved rule/profile facts block; **MCA-AUDIT-008**. |
 
----
+ADT-1 is the prescribed Registrar notice named by Audit Rules rule 4 for the fourth proviso to s139(1), with the 15-day notice period in s139(1). Keep whether that notice is required profile-driven and source-snapshot-driven; do not turn it into an invented universal appointment deadline. See [Audit Rules rule 4](https://www.mca.gov.in/Ministry/pdf/NCARules_Chapter10.pdf) and **MCA-AUDIT-008**.
 
-## TENANT CONFIGURATION: Hard Review/Block Inputs
+## Financial statements, signatures, AGM, and OPC
 
-The following facts are mandatory before deterministic company compliance can proceed:
+### s134 signing sequence
 
-- **Company registration and CIN**: Legal entity name, CIN, registration date, registered office;
-- **Financial year**: FY start/end (standard 1 April – 31 March or exempted variation with Registrar approval);
-- **Company classification**: Small company (s2(85) verification), large, OPC (s2(62)), private, public, holding, subsidiary, or other;
-- **Auditor appointment**: Auditor name, DIN, qualifications verified against Schedule IV, appointment meeting date, Registrar notice;
-- **Annual accounts and Audit Report**: Complete Balance Sheet, P&L, notes, Statutory Auditor Report (s143), Board Report (s134);
-- **AGM conduct (except OPC)**: AGM date (within 9 months for first, 6 months for subsequent), shareholder resolutions for statement and auditor approval, voting record, AGM minutes;
-- **Form filing requirements**: Applicable forms per company type (AOC-4, AOC-4 CFS, MGT-7 or MGT-7A, ADT-1, DPT-3, MSME-1 if applicable);
-- **Filing credentials**: Registrar e-filing credentials, DSC for authorized signatory (Director, Company Secretary);
-- **Prior-year filing status**: Registrar filing history, prior audit status, any pending compliance objections.
+1. The Board approves the financial statements first.
+2. The statements are then signed on behalf of the Board by the chairperson when Board-authorised **or** by two directors, one being the managing director if any, plus the CEO if a director, CFO, and company secretary wherever appointed.
+3. For an OPC, one director signs.
+4. The auditor report is attached to every financial statement.
 
-Do not assume audit exemption for any company type. Do not assume AGM held without documented evidence. Do not use obsolete forms.
+These are s134(1)–(2) controls, not optional workflow conventions. Board-report disclosures come from s134(3) and the Accounts Rules; they are not sourced from Schedule VI. A provisional s137 filing still uses the statutory signing and attachment requirements. See **MCA-AUDIT-009**, **MCA-AUDIT-010**, and **MCA-AUDIT-011**.
 
----
+### AGM and OPC paths
 
-## OPEN RESEARCH
+| Company/path | Rule | Filing/record gate |
+|---|---|---|
+| First AGM | Within nine months of first FY close; no Registrar extension applies to the first AGM. | s96 evidence; **MCA-AUDIT-016**. |
+| Later AGM | Within six months of FY close; Registrar may extend by up to three months for a later AGM. | s96 evidence and extension record; **MCA-AUDIT-016**. |
+| Ordinary company minutes | Retain minutes internally under the Act; no generic “minutes filing” is created. | s118/121 profile check; only listed public companies file the s121 AGM report within 30 days; **MCA-AUDIT-017**. |
+| OPC member adoption | No AGM. The member communicates the required ordinary/special business; the resolution is entered in the minutes book, signed and dated. | Require member resolution/minutes evidence under s122(3); **MCA-AUDIT-012**. |
+| OPC Board business | If there is one director, Board business is entered in the minutes book and signed/dated by that director. | Do not replace member adoption with Board-only approval; **MCA-AUDIT-012**. |
+| Financial-statement filing | s137: adopted statements within 30 days of AGM; if not adopted, unadopted statements within 30 days of AGM are recorded provisionally, then adopted statements within 30 days of adjourned AGM; OPC member-adopted statements within 180 days of FY close. | Preserve provisional state and signing rules; **MCA-AUDIT-011**. |
+| Annual return | s92(4): within 60 days of AGM, or if no AGM, within 60 days of the date it should have been held plus reasons. | Never reuse 180 days for annual return; **MCA-AUDIT-013**. |
 
-The following items must remain visible and block implementation until resolved with official sources:
+## Current forms and rejected mappings
 
-1. **Schedule IV auditor qualifications and disqualifications**: Current Schedule IV criteria must be verified from official source. Status: **OPEN**.
+| Form | Current role and timing | Status/gate | Source |
+|---|---|---|---|
+| AOC-4 | Standalone financial-statement filing under s137/rule 12. | Purpose verified; current field schema and tenant applicability remain source-kit gated. | [Accounts Rules rule 12](https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf) |
+| AOC-4 CFS | Consolidated financial-statement filing only when s129(3) requires CFS after applicable Accounts Rule 6 exemptions are tested. An associate does not automatically require CFS. | Routing verified; CFS applicability/profile and current field schema OPEN+BLOCK. | [s129](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf), [Accounts Rule 6](https://www.mca.gov.in/Ministry/pdf/CompaniesAccountsAmendmentRules_28072016.pdf), [rule 12](https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf) |
+| MGT-7 | Annual return for companies other than OPCs and small companies. | Form split verified; exact current field mapping OPEN until the official kit is frozen. | [MGT Rules amendment 2021](https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf) |
+| MGT-7A | Abridged annual return for OPCs and small companies from FY 2020-21. | Form split verified; exact current field mapping OPEN until the official kit is frozen. | [MGT Rules amendment 2021](https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf) |
+| ADT-1 | Registrar notice of auditor appointment where rule 4/current profile requires it; 15-day period under s139(1). | Profile-driven; do not universalise the deadline as appointment timing. | [Companies Act](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf), [Audit Rules](https://www.mca.gov.in/Ministry/pdf/NCARules_Chapter10.pdf) |
+| DPT-3 | Return of deposits and particulars of money or loans not treated as deposits; annual 30 June route for applicable non-government companies using 31 March information duly audited by the company auditor. | Verified from the official kit; reject director/KMP semantics. | [DPT-3 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf) |
+| MSME-1 | Half-yearly return for applicable outstanding payments to micro/small suppliers; order cycle is 30 April and 31 October. It is not classification or a generic Board-report disclosure. | Order purpose/dates verified; current company applicability profile OPEN+BLOCK. | [MSME specified-companies order](https://www.mca.gov.in/Ministry/pdf/MSMESpecifiedCompanies_22012019.pdf) |
+| 23AC / 23ACA | Historical 1956 Act balance-sheet and Profit and Loss filings. | Preserve valid historical records/imports; reject for current 2013 Act filing and never delete historical encoding. | [MCA legacy e-form mapping](https://www.mca.gov.in/Ministry/pdf/eformsMapping.pdf) |
+| DPT-7 | Not a current filing route. | Reject current use; preserve historical references and route current deposit matters to DPT-3. | [DPT-3 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf) |
 
-2. **Section 177 Audit Committee applicability and composition**: Exact threshold for mandatory Audit Committee and director-independence criteria must be verified from Section 177 + Rules 6-7. Status: **OPEN**.
+## Product validation policy
 
-3. **Auditor rotation and time-bar rules**: If auditor rotation is mandated, maximum consecutive term and time-bar on re-appointment must be verified. Status: **OPEN**.
+| Policy | Required behavior | Silent failure prevented |
+|---|---|---|
+| Source gate | Every claim carries an audit ID, official source, `source_verified`, and `effective_rule_snapshot`; OPEN/TENTATIVE means REVIEW/BLOCK. | Stale or guessed legal rule silently executes. |
+| Company audit | Always create Companies Act audit state for every company, including small company and OPC; maintain a separate s63 tax-audit state. | Tax audit or small-company assumptions suppress statutory audit. |
+| Signature gate | Board approval precedes s134 signatures; collect all applicable signatories and auditor report; OPC requires one director signature. | Unsigned or improperly approved statements are filed. |
+| AGM/OPC gate | Branch by s96/s122; require OPC member adoption evidence; do not file a generic AGM report or minutes. | OPC “Board only” and false minutes-filing paths. |
+| Form gate | Select AOC-4/AOC-4 CFS, MGT-7/MGT-7A, ADT-1, DPT-3, and MSME-1 only from frozen company/FY/profile facts and official source snapshots. | Wrong form, wrong deadline, or wrong purpose. |
+| Filing evidence | Submission is not acceptance; retain SRN/Registrar acknowledgement, timestamp, signer, and acceptance evidence. | Upload incorrectly marked filed. |
+| Historical boundary | Import and preserve 23AC/23ACA and other historical references; reject them for current filings without deletion. | Historical evidence is destroyed or reused operationally. |
+| Tax boundary | Never infer an income-tax return deadline from the Companies Act audit obligation. | Mandatory company audit incorrectly selects a tax deadline. |
 
-4. **Schedule VI Board Report mandatory disclosures**: Current Schedule VI must be verified from official MCA notification for all mandatory disclosures (dividend policy, related-party transactions, BRSR if applicable, etc.). Status: **OPEN**.
+## Open items that hard-block operations
 
-5. **Form AOC-4 and AOC-4 CFS field structure**: Current forms and field mapping must be verified from official MCA instruction kits. Status: **OPEN**.
+1. **Audit Committee applicability profile (MCA-AUDIT-018):** resolve the current Rule 6/rule 4 company-class test and tenant facts. Composition/functions may not be executed until this is frozen.
+2. **Board-report field mapping (MCA-AUDIT-010):** resolve the applicable current s134(3)/Accounts Rules disclosures; do not use Schedule VI as a source.
+3. **AOC-4/AOC-4 CFS field schema and CFS exemption profile (MCA-AUDIT-019):** attach the current official source snapshot and test s129(3)/Rule 6 facts. An associate alone is insufficient.
+4. **MGT-7/MGT-7A field schema (MCA-AUDIT-014):** attach the current official form/instruction-kit snapshot; form split is verified but field execution is blocked.
+5. **MSME-1 tenant applicability (MCA-AUDIT-021):** resolve whether the company and outstanding-payment facts fall within the cited order.
+6. **ADT-1 applicability profile (MCA-AUDIT-008):** preserve the rule-based 15-day notice claim but resolve current applicability for the tenant before generation.
 
-6. **Form MGT-7 and MGT-7A field structure**: Board-meeting details, shareholder-meeting details, and resolution recording must be verified from official instruction kits. Status: **OPEN**.
+## Official source list
 
-7. **Form MSME-1 applicability and filing deadline**: Current MSME classification criteria and half-yearly filing requirements must be verified. Status: **OPEN**.
+- [Companies Act, 2013](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf)
+- [Companies (Audit and Auditors) Rules, 2014, Chapter 10](https://www.mca.gov.in/Ministry/pdf/NCARules_Chapter10.pdf)
+- [Companies (Accounts) Rules source](https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf)
+- [Companies (Accounts) Rule 6 amendment](https://www.mca.gov.in/Ministry/pdf/CompaniesAccountsAmendmentRules_28072016.pdf)
+- [Companies (Management and Administration) Amendment Rules, 2021](https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf)
+- [Board Powers Rule 6 amendment](https://www.mca.gov.in/Ministry/pdf/CompaniesMeetingBoardPowersSecondRules_14072017.pdf)
+- [DPT-3 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf)
+- [MSME specified-companies order](https://www.mca.gov.in/Ministry/pdf/MSMESpecifiedCompanies_22012019.pdf)
+- [G.S.R. 700(E) small-company thresholds](https://www.mca.gov.in/content/dam/mca/pdf/notification-small-company-2015.pdf)
+- [Legacy e-form mapping](https://www.mca.gov.in/Ministry/pdf/eformsMapping.pdf)
 
-8. **Company statutory audit vs. section 63 tax audit**: Boundary between Companies Act section 139/143 statutory audit and Income-tax section 63 tax audit must be clarified to prevent double-counting or conflation. Status: **OPEN** (linked to [annual-income-tax-compliance-matrix.md](annual-income-tax-compliance-matrix.md)).
+## Repair history
 
-9. **Audit Committee meeting and reporting requirements**: Scope, frequency, and reporting to Board/shareholders must be verified. Status: **OPEN**.
-
-10. **Provisional filing conditions and deadline extension**: Exact conditions under s137 for provisional filing within 30 days after AGM must be verified. Status: **OPEN**.
-
----
-
-## Official Source List (Verified as of 21 August 2026)
-
-- [Companies Act 2013 — Full text](https://www.mca.gov.in/content/dam/mca/pdf/CompaniesAct2013.pdf)
-- [Company Incorporation Rules 2014](https://www.mca.gov.in/bin/ebook/dms/getdocument?doc=MTgwNDY3Mzc5&docCategory=Notifications&type=open)
-- [Companies (Management and Administration) Rules 2014](https://www.mca.gov.in/Ministry/pdf/Rules_09072015.pdf)
-- [Companies (Management and Administration) Amendment Rules 2021](https://www.mca.gov.in/Ministry/pdf/CompaniesMgmtAdminAmndtRules_11032021.pdf)
-- [eMCA e-form instruction kits](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/)
-- [Form DPT-3 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_DPT-3.pdf)
-- [Form ADT-1 Instruction Kit](https://www.mca.gov.in/content/dam/mca-aem-forms/instructionkits/Instruction%20Kit_ADT-1.pdf)
-- [G.S.R. 700(E) — Small Company Thresholds](https://www.mca.gov.in/content/dam/mca/pdf/notification-small-company-2015.pdf)
-- [MSME Specified Companies Notification 2019](https://www.mca.gov.in/Ministry/pdf/MSMESpecifiedCompanies_22012019.pdf)
-
----
-
-## Prior Work and Repair History
-
-**Rejected draft (21 August 2026)**: Initial version incorrectly stated small companies have audit exemption, conflated Companies Act section 139 with section 63 income-tax audit, and included obsolete Form 23AC/23ACA and non-existent Form DPT-7. Comprehensive repair applied 21 August 2026 using official Companies Act 2013 section 139 mandate (every company audited), proper company-classification definitions, correct AGM timing rules (9 months first, 6 months subsequent), and explicit rejection of obsolete/non-existent forms. All pre-repair claims removed; unverified form structures and applicability criteria marked OPEN with fail-closed gates.
+The 21 August 2026 repair removed rejected small-company audit-exemption, DPT-3 director/KMP, DPT-7 current-filing, Schedule IV auditor-qualification, s106/Rule 2A AGM, generic minutes-filing, Schedule VI Board-report-source, OPC Board-only, associate-implies-CFS, s394 annual-accounts, and tax-deadline-from-company-audit claims. It preserves historical form references and keeps every unresolved operational detail OPEN+BLOCK.

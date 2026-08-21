@@ -28,7 +28,7 @@ defines obligation scope, due-event calculation, validation gates, human/profess
 
 - [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Tax Deducted at Source and Tax Collected at Source under Income-tax Act 2025/Rules 2026 (effective 1 April 2026). Rates and thresholds derive from s393/s394 and effective rule snapshots; Forms 141/140 are routing outputs, not rate sources.
 - [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Annual return filing, separate tax computation, Form 26 as the s63 audit report only, audit applicability (section 63), and advance-tax obligations under current law. Marks unresolved form selection and computation inputs as OPEN.
-- [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Company statutory compliance (audit, AGM, Registrar filings, statutory forms) under Companies Act 2013. Marks form instruction kits, audit committee applicability, and exemption criteria as OPEN. Explicitly rejects obsolete Form 23AC/23ACA and unverified Form DPT-7.
+- [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Current Companies Act statutory compliance under official MCA sources: mandatory audit for every company, corrected auditor/OPC/AGM/signature paths, conditional forms, historical-form preservation, and explicit `source_verified`/`effective_rule_snapshot` gates. OPEN+BLOCK items remain visible; current DPT-3 is deposits/money-not-treated-as-deposits, not director/KMP data.
 
 This documentation milestone does not approve implementation, portal submission, or compliance decision automation; it establishes verified baselines and marks all unverified items OPEN.
 
@@ -43,9 +43,9 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 
 - verify TDS/TCS rates and thresholds from the official s393/s394 sources and effective rule snapshots; use Form 140/Form 141 only for statement routing;
 - verify annual-return form code and structure from official Notification 22 and Form Navigator;
-- verify company audit applicability and exemptions from current MCA notification;
+- verify company classification and profile-driven MCA applicability from the cited Act/rules/orders; never infer a small-company or OPC audit exemption;
 - research payroll Form 130/Form 138 details and keep them separate from non-payroll Form 140/Form 141;
-- verify all form-instruction kits (AOC-4, MGT-7, ADT-1, DPT-3, MSME-1) and gate implementation on verified forms only.
+- verify current form/instruction-kit snapshots (AOC-4, AOC-4 CFS, MGT-7, ADT-1, DPT-3, MSME-1) and gate implementation on `source_verified=true` plus an effective rule snapshot.
 
 ## Phase 1 Gate: Review and Approval
 

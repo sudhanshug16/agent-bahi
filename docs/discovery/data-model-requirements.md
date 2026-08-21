@@ -311,7 +311,7 @@ Baseline research and workflow requirements are documented in:
 - [Statutory Workflow Contracts](statutory-workflow-contracts.md) — Defines obligation scope, due-event calculation, validation gates, human/professional review, evidence tracking, and portal-filing boundaries.
 - [TDS/TCS Compliance Matrix](tds-tcs-compliance-matrix.md) — Verified research baseline for Tax Deducted at Source and Tax Collected at Source obligations under Income-tax Act 2025 and Rules 2026.
 - [Annual Income-Tax Compliance Matrix](annual-income-tax-compliance-matrix.md) — Verified research baseline for annual income-tax return filing, separate tax computation, Form 26 s63 audit report, and advance-tax obligations.
-- [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Verified research baseline for company statutory compliance under Companies Act 2013, including audit, AGM, and Registrar filings.
+- [MCA Companies Act Compliance Matrix](mca-companies-act-compliance-matrix.md) — Verified research baseline for current Companies Act company audit, auditor state machines, s134/s137 financial statements, AGM/OPC/member paths, annual returns, and Registrar filings. MCA obligations require `source_verified=true` and an exact `effective_rule_snapshot`; OPEN+BLOCK applicability or field details cannot execute.
 
 Data model requirements for statutory compliance include:
 - effective-dated rule versioning (Acts, Rules, Notifications) with applicability facts;
