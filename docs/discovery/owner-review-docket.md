@@ -1,10 +1,10 @@
 # Owner Review Docket: Tentative Decisions T-001 through T-011
 
-**⚠️ BANNER: T-001 through T-011 remain TENTATIVE — NOT OWNER-APPROVED. PT-001 and PT-009 are OWNER-APPROVED; NOT ARCHITECT-REVIEWED. PT-002 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED.**
+**✓ STATUS UPDATE: T-001 through T-011 are now OWNER-APPROVED. PT-001 and PT-009 are OWNER-APPROVED; NOT ARCHITECT-REVIEWED. PT-002 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED.**
 
-Defaults were used for planning while Sudhanshu was unavailable. **The current state is documentation-only and authorizes neither Gate0 nor implementation.** Sudhanshu must first review this docket, then explicitly direct/authorize the reversible Gate0 proof spikes. That direction authorizes only the spikes; it is **not** approval of TypeScript + Bun. Gate0 evaluates T-011, after which Sudhanshu approves, changes, or rejects T-011 before Phase 1. This table is a compact index, not a duplicate specification. Follow the link to each entry for full rationale, alternatives, risks, and reversal path.
+T-001 through T-011 are owner-approved as settled decision frameworks, while remaining subject to research gates and implementation authorization. Sudhanshu has approved each T-decision as a binding framework, though specific implementation (language/runtime, library choices, statutory artifacts, filing adapters) remains gated by research closure, proof-spike validation, or explicit future approval. Gate0 proof spikes (STK-001 through STK-006) are authorized and will produce evidence for the TypeScript + Bun candidate; that evidence is not approval but a prerequisite for Sudhanshu's post-spike decision before Phase 1. This table is a compact index, not a duplicate specification. Follow the link to each entry for full rationale, alternatives, risks, and reversal path.
 
-**Docket review followed by Sudhanshu's explicit direction is required before Gate0 may run.** Phase 1 additionally requires the post-spike T-011 decision, a reviewed physical-schema RFC, and approval of applicable Phase 1 decisions. Later-phase tentative IDs block only their affected phase or action, not all of Phase 1. See [Definition of Ready](../architecture.md#22-definition-of-ready-for-implementation).
+**T-001 through T-011 are owner-approved.** Gate0 proof spikes (STK-001 through STK-006) are authorized and will produce evidence for the T-011 candidate; that evidence is prerequisite for Sudhanshu's post-spike approve/change/reject decision before Phase 1. Phase 1 additionally requires that post-spike T-011 decision, a reviewed physical-schema RFC, and approval of applicable Phase 1 decisions. Later-phase tentative IDs (not yet approved; currently T-pending for Phase 3+) block only their affected phase or action, not all of Phase 1. See [Definition of Ready](../architecture.md#22-definition-of-ready-for-implementation).
 
 ---
 
@@ -65,9 +65,8 @@ A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope
 
 ## Next Steps
 
-1. **Sudhanshu reviews this docket** and each T-ID entry.
-2. **Sudhanshu explicitly directs/authorizes the reversible Gate0 proof spikes** (STK-001–STK-006); this direction is not approval of TypeScript + Bun.
-3. **Gate0 proof spikes run**, producing evidence to evaluate T-011 and the other technical assumptions.
-4. **Sudhanshu approves, changes, or rejects T-011 after the evidence**, then reviews the physical-schema RFC and applicable Phase 1 decisions before Phase 1 begins. Later-phase tentative IDs remain scoped to their affected phase/action.
+1. **Gate0 proof spikes (STK-001–STK-006) are authorized and run**, producing evidence to validate the T-011 TypeScript + Bun candidate on all target platforms (macOS arm64, Linux x64/arm64).
+2. **Sudhanshu reviews Gate0 evidence**, then approves, changes, or rejects the TypeScript + Bun candidate before Phase 1 begins. This decision is separate from the T-011 owner-approval already recorded; it is the post-spike implementation decision.
+3. **Phase 1 readiness** requires that post-spike T-011 decision, a reviewed physical-schema RFC, and approval of applicable Phase 1 decisions. Later-phase tentative IDs (not yet owner-approved; currently awaiting review) remain scoped to their affected phase/action.
 
 **Reference**: [Definition of Ready for Implementation](../architecture.md#22-definition-of-ready-for-implementation), [Implementation Plan](implementation-plan.md).

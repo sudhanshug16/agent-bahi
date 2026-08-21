@@ -19,7 +19,7 @@ This document records overnight planning decisions that establish working defaul
 <a id="t-001"></a>
 ### Entry T-001: External Statutory Submissions Workflow—Fallback Default When No Filing-Specific Decision Exists
 
-**Status**: TENTATIVE_AGENT_DEFAULT
+**Status**: OWNER-APPROVED
 
 **Scope and Override Rule**:
 - **T-001 is the fallback default only** where no filing-specific settled/owner-approved decision exists.
@@ -69,14 +69,14 @@ Owner may approve filing-specific adapters for individual filings (GSTR-3B, TDS,
 - GST Portal documentation: Portal accepts JSON and manual filing; ARN is the canonical evidence.
 
 **Owner Review Status**:
-Awaiting owner review. This is a working default to unblock skill architecture documentation and Phase 1 design (e.g., what CLI commands are required for export). Owner may override this default for any specific filing by approving a filed-specific adapter after dedicated research.
+Owner-approved as the fallback default for external statutory submissions where no filing-specific decision has been settled. This entry establishes the prepare/validate/export pattern and manual portal evidence-recording flow as the canonical approach for filings without specific boundary decisions. Filing-specific decisions (such as GSTR-1) always override this default; T-001 applies only where the specific filing boundary is undefined or explicitly deferred.
 
 ---
 
 <a id="t-002"></a>
 ### Entry T-002: Frappe Books as Behavior/Concept Reference Only
 
-**Status**: TENTATIVE_AGENT_DEFAULT
+**Status**: OWNER-APPROVED
 
 **Question**: To what extent should agent-bahi reference, adapt, or reuse Frappe Books concepts, code, or documentation?
 
@@ -131,18 +131,20 @@ Or, owner may request deeper Frappe integration (e.g., schema adoption) after si
 - [Zoho Books and Frappe Books Feature Parity Matrix](zoho-frappe-parity.md) documents Frappe Books AGPL-3.0 license and compares feature parity with Zoho Books, confirming Frappe as concept/behavior reference only.
 
 **Owner Review Status**:
-Awaiting owner review. Do not commit any LICENSE file changes. This entry documents the reasoning for Apache-2.0 recommendation so owner can approve/reject the license choice in a separate decision. If owner approves a different license (AGPL-3.0, MIT, other), that becomes a new SETTLED_OWNER_DECISION.
+Owner-approved. Frappe Books is reference-only for behavior and concepts; no source code, schema, prose, or assets are copied or adapted from it. Agent-bahi's documentation is independent and cites external references appropriately. Apache-2.0 license recommendation remains subject to explicit approval; this entry establishes the reference-only policy and rationale for Apache-2.0 to enable commercial agent/integration use.
 
 ---
 
 <a id="t-003"></a>
 ### Entry T-003: Fixed-Asset Depreciation Schedules—Book vs. Tax with Tentative SLM Default
 
-**Status**: TENTATIVE_AGENT_DEFAULT
+**Status**: OWNER-APPROVED
 
-The separate book/tax schedule model remains **T-003 TENTATIVE - NOT
-OWNER-APPROVED**. This entry records a reversible working default only; it does
-not approve a depreciation method, tax rate, or filing behavior.
+The separate book/tax schedule model is owner-approved. This entry establishes
+the separate-schedule architecture with SLM as the default book method and
+statutory rule-pack-driven tax method. Specific depreciation rates, method
+overrides, and rule-pack contents remain research-gated; this entry does not
+lock tax rates or method specifics.
 
 **Question**: How should book and tax depreciation be modeled and calculated in the fixed-asset module?
 
@@ -189,14 +191,14 @@ existing asset schedules must be audited for impact on prior-year reporting.
   schedules and configurable SLM/tax-rule selection are **NOT CONFIRMED**.
 
 **Owner Review Status**:
-Awaiting owner review. Book method (SLM default) may be adjusted per owner preference. Tax rule-pack selection is OPEN_RESEARCH; implementation is gated by research closure. If owner has specific depreciation method requirements (e.g., accelerated depreciation for certain asset classes), document separately.
+Owner-approved. Separate book/tax schedules and SLM as the default book method are settled. Tax rule-pack selection remains OPEN_RESEARCH; implementation is gated by research closure and statutory rule snapshot. If owner has specific depreciation method requirements (e.g., accelerated depreciation for certain asset classes), those are documented in tax rule-pack research and applied via effective-dated rules.
 
 ---
 
 <a id="t-004"></a>
 ### Entry T-004: Exchange-Rate Provider and FX Workflow—Tentative/Open Pending Source Audit
 
-**Status**: TENTATIVE_AGENT_DEFAULT (with significant OPEN_RESEARCH component)
+**Status**: OWNER-APPROVED (with significant OPEN_RESEARCH component)
 
 **Question**: Which exchange-rate source (RBI, bank rates, market rates, third-party API) should agent-bahi use for multi-currency transactions, and how should rates be selected and recorded?
 
@@ -241,7 +243,7 @@ Owner may settle a specific rate source (e.g., "RBI EOD only", "Bank Statement o
 - India tax authority (CBDT): May have prescribed rate source per statute/year (research required).
 
 **Owner Review Status**:
-Awaiting owner review and dedicated source audit. No specific rate provider is locked in; the multi-source fallback pattern is tentative and stable. Once research determines authoritative source(s), owner may lock the default. Existing transactions' recorded rates are immutable regardless of future default changes.
+Owner-approved for the immutable document-rate snapshot architecture and configurable default-source pattern with explicit fallback chain. No specific rate provider is locked; the multi-source fallback pattern is approved and stable. Once research determines authoritative source(s) (OPEN_RESEARCH), owner may refine the default configuration. Existing transactions' recorded rates remain immutable regardless of future default changes.
 
 ---
 
@@ -250,7 +252,7 @@ Awaiting owner review and dedicated source audit. No specific rate provider is l
 <a id="entry-t-005-v1-scope-focus—regular-small-business-gst-accounting-profiles"></a>
 ### Entry T-005: V1 Scope Focus—Regular Small-Business GST/Accounting Profiles
 
-**Status**: TENTATIVE_AGENT_DEFAULT
+**Status**: OWNER-APPROVED
 
 **Question**: Which business profile and tax regimes should V1 prioritize in its coverage roadmap and testing?
 
@@ -324,14 +326,14 @@ Or, owner may narrow V1 further (e.g., single-entity only, no payroll) to accele
 - Open research: "Composition scheme (CMP-08, GSTR-4)", "E-invoice applicability", "E-way bill state-specific rules" in [architecture-decisions.md](architecture-decisions.md#open-research--deferred-list).
 
 **Owner Review Status**:
-Awaiting owner review. V1 scope is a product/business choice; it determines delivery timeline and initial user feedback profile. Owner may adjust scope based on business priorities. This entry documents the tentative default (regular GST small-business) to unblock Phase 1 planning and architecture, which now has a clear target user profile for design decisions. E-invoice and e-way-bill adapters remain **TENTATIVE - NOT OWNER-APPROVED** and are explicitly deferred until their research gate is satisfied.
+Owner-approved. V1 scope is locked to regular-GST small-business profile (annual turnover below ₹50 crore guidance): regular GST registration, GSTR-1 output, GSTR-3B reconciliation, invoicing, billing, payment, expense, and basic payroll workflows. Composition scheme, simplified scheme, unregistered suppliers, and multi-state complexity are explicitly out of V1 scope. E-invoice and e-way-bill adapters remain **RESEARCH-GATED and DEFERRED** (not V1-approved); see [architecture-decisions.md § CMP-006](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [§ CMP-007](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for their research gates.
 
 ---
 
 <a id="t-006"></a>
 ### Entry T-006: Tentative Numeric Proposal for Batch Exit-Code Signal—Not Implementation-Binding
 
-**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+**Status**: OWNER-APPROVED
 
 **Note**: Exit-code behavior and batch semantics are defined in [architecture-decisions.md § CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation) (canonical for actual implementation). This entry proposes only a numeric code selection and JSON outcome schema, not the binding contract. Implementation must follow the architecture entries' behavior definitions.
 
@@ -361,14 +363,14 @@ Owner may select a different unused numeric code (10, 11, or other) instead of 9
 - [CLI-006: Batch atomicity declared per operation](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation) (canonical; this entry does not override).
 
 **Owner Review Status**:
-Awaiting owner review. This entry proposes exit code 9 as the numeric signal for partial success; the actual implementation contract (when to exit 0, when to exit non-zero, atomicity declaration, JSON schema details) is canonical in architecture-decisions.md and must not be redefined here.
+Owner-approved. Exit code 9 is adopted as the numeric signal for partial-success batches (at least one item succeeded AND at least one item was skipped, blocked, or failed). The actual implementation contract (when to exit 0, when to exit non-zero, atomicity declaration, JSON schema details) is canonical in [architecture-decisions.md § CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [§ CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those specifications.
 
 ---
 
 <a id="t-007"></a>
 ### Entry T-007: Advance-Tax Estimated-Amount Input—Manual Entry or Auto-Projection
 
-**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+**Status**: OWNER-APPROVED
 
 **Question**: How should agent-bahi handle advance-tax (s404/408) estimated-amount input? Should it auto-calculate from FY income projection, or require manual operator entry?
 
@@ -405,14 +407,14 @@ Owner may add optional auto-projection as an operator convenience (not a require
 - Accounting practice: Estimates are owner/tenant responsibility, not auto-derived.
 
 **Owner Review Status**:
-Awaiting owner review. This entry documents the tentative default (manual entry, no auto-projection) to unblock statutory-workflow design. Owner may request optional auto-projection as a future convenience feature.
+Owner-approved. Advance-tax estimated amount is captured as operator/tenant input only, with provenance metadata and no auto-projection or tax-liability computation from input alone. Annual-tax contract and official s408 rules remain the canonical gates for installment-due, relief-amount, and tax-liability claims. Optional auto-projection may be added as a future convenience feature after annual-tax gate review.
 
 ---
 
 <a id="t-008"></a>
 ### Entry T-008: Retroactive Depreciation Recalculation—Block or Auto-Recalculate
 
-**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+**Status**: OWNER-APPROVED
 
 **Question**: If an asset's acquisition date, cost, or depreciation rate changes retroactively (after prior-year depreciation has been calculated and posted), should agent-bahi auto-recalculate prior-year depreciation or block the change?
 
@@ -447,14 +449,14 @@ Owner may add a post-correction reporting feature (e.g., "show depreciation impa
 - Tax audit practice: Examiners scrutinize depreciation-schedule changes and require documented support.
 
 **Owner Review Status**:
-Awaiting owner review. This entry documents the tentative default (block with correction path) to unblock depreciation module design. Owner may adjust the correction workflow or add after-the-fact reporting features.
+Owner-approved. Retroactive depreciation changes are blocked after posting; corrections use explicit period reopen with documented reason and correction journal. Immutable depreciation history remains linked to filed returns without silent recalculations. Owner may add after-the-fact reporting features (e.g., "show depreciation impact if we had known the correct cost earlier") but these remain read-only and do not alter posted entries.
 
 ---
 
 <a id="t-009"></a>
 ### Entry T-009: Form 140/141 Statutory Export—Research-Gated, Fail-Closed
 
-**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+**Status**: OWNER-APPROVED
 
 **Question**: Should agent-bahi generate and export statutory Form 140/141 artifacts, or defer this until official portal/submission flow is researched and settled?
 
@@ -490,14 +492,14 @@ After Form 140/141 field structure, RPU/FVU/portal utility, and current official
 - Rule 219 specifies Form 140 due dates but does not prescribe export format; portal utility must be verified separately.
 
 **Owner Review Status**:
-Awaiting owner review and dedicated Form 140/141 export research. This entry documents the tentative default (fail-closed; no export until research closes) to prevent premature export claims. Owner may fund research and approve export adapter after closure.
+Owner-approved for the policy: always allow text and CSV operator exports of prepared/validated data; do not invent or default to arbitrary JSON as statutory artifact; government upload artifact only after official current format/utility/schema/portal verification and then exactly in mandated format. Form 140/141 export adapter is research-gated and deferred until official utility/schema/portal flow is verified. Internal neutral data may be prepared and stored; no statutory export adapter exists until research closure and owner approval of the specific form/transport.
 
 ---
 
 <a id="t-010"></a>
 ### Entry T-010: Post-Filing Return Case/Evidence/Correction—Research-Gated Submission
 
-**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+**Status**: OWNER-APPROVED
 
 **Question**: How should agent-bahi handle post-filing return corrections, rejections, or disputes? What submission mechanisms are needed beyond the initial return filing?
 
@@ -533,18 +535,18 @@ After official s263(5)-(7) branches are researched and applicable regime/form/de
 - Current ITD Form Navigator and official guidance are required to confirm any submission mechanism.
 
 **Owner Review Status**:
-Awaiting owner review and dedicated s263(5)-(7) branch/procedure research. This entry documents the tentative default (case/evidence/lineage preservation; submission deferred) to prevent premature amendment/revised-return claims. Owner may fund research and approve branch-specific adapters after closure.
+Owner-approved for the policy: preserve original filing, ARN/status/rejection/notices/evidence, and explicit ledger/correction/remedial lineage; no unverified automatic revised/amended/defective-return submission. Case details (filing ARN, rejection reason, filing timestamp, taxpayer branch) and correction lineage are immutably stored. Return-amendment or defective-return submission adapters are research-gated and deferred until s263(5)-(7) branches and official procedures are verified. Correction journals document post-filing ledger adjustments separately from submission mechanisms.
 
 ---
 
 <a id="t-011"></a>
 ### Entry T-011: Initial Language and Runtime—TypeScript + Bun (Recommended; Gate0 Proof Spikes Required)
 
-**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+**Status**: OWNER-APPROVED
 
 **Question**: What programming language and runtime should agent-bahi use for the initial implementation?
 
-**Exact Meaning and Provisional Status**: T-011 is a provisional recommendation about the initial language/runtime candidate only. It is not approval of TypeScript + Bun, Gate0, implementation, or any library/tool choice, including an ORM, CLI parser, validator, decimal package, database driver, migration tool, or build tool. The current state is documentation-only. After Sudhanshu reviews the owner-review docket, he must explicitly direct/authorize the reversible Gate0 proof spikes; that direction is not approval of TypeScript + Bun. Gate0 evaluates T-011, and Sudhanshu approves, changes, or rejects T-011 from the resulting evidence before Phase 1.
+**Exact Meaning and Binding Status**: T-011 is owner-approved as a reversible framework for evaluating the initial language/runtime candidate. It is not approval of TypeScript + Bun implementation, any specific library/tool choice, or Gate0 completion. Gate0 is authorized and will evaluate T-011 through proof spikes (STK-001 through STK-006); those spikes are not approvals but evidence-gathering gates. After Gate0 evidence is available, Sudhanshu approves, changes, or rejects the TypeScript + Bun candidate based on that evidence before Phase 1 begins. No language/runtime implementation is authorized until that decision is made.
 
 **Recommended Working Default**:
 - **Primary recommendation**: TypeScript + Bun as a candidate (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver). This does not pre-approve those libraries or any other dependency.
@@ -596,7 +598,7 @@ Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selec
 - TypeScript: Industry standard for type-safe JavaScript; proven in countless CLI and backend projects.
 
 **Owner Review Status**:
-Awaiting docket review and explicit owner direction for Gate0. This entry documents the provisional TypeScript + Bun candidate, not approval of it or of any library. After spike evidence is available, Sudhanshu may approve, change, or reject T-011. No language/runtime implementation is authorized until that decision and the other Phase 1 readiness conditions are complete.
+Owner-approved as a reversible evaluation framework. Gate0 proof spikes (STK-001 through STK-006) are authorized and will produce evidence for the TypeScript + Bun candidate. Those spikes are not approvals but evidence-gathering gates. After evidence is available, Sudhanshu approves, changes, or rejects the TypeScript + Bun candidate before Phase 1 begins. No language/runtime implementation is authorized until that post-Gate0 decision is made and the other Phase 1 readiness conditions are satisfied.
 
 ---
 
