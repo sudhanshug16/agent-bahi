@@ -2,7 +2,7 @@
 
 **Status banner:** PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
-Sudhanshu's explicit owner approvals of PT-001, PT-002, and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
+Sudhanshu's explicit owner approvals of PT-001, PT-002, PT-003, and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
 
 ## 1. Verdict and scope
 
@@ -492,7 +492,7 @@ The DPDP Act and Rules are legal research sources. CERT-In Directions under sect
 
 Implementation is blocked until all of the following are reviewed and approved:
 
-1. Architect review of PT-001, PT-002, and PT-009; owner and architect approval of PT-003 through PT-008 and PT-010 through PT-016.
+1. Architect review of PT-001, PT-002, PT-003, and PT-009; owner and architect approval of PT-004 through PT-008 and PT-010 through PT-016.
 2. Canonical contract migration from one legal entity/one balanced book to the reviewed individual/PAN tenant plus independently balanced BookSets model.
 3. Immutable official rule snapshots and official schema or validator releases for each supported period and form.
 4. Year-specific correction-route research and owner-approved mechanism selection.
@@ -572,4 +572,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a discovery baseline. PT-001, PT-002, and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. PT-001, PT-002, PT-003, and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.

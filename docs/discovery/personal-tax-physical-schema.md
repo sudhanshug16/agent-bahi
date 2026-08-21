@@ -258,6 +258,6 @@ No proof is claimed here. These obligations must be directed, run, and evidenced
 
 ## 6. Review and authority boundary
 
-This RFC remains tentative and is not architect-reviewed. PT-001, PT-002, and PT-009 remain owner-approved but not architect-reviewed; PT-003 through PT-008 and PT-010 through PT-016 remain tentative and not owner-approved. The RFC does not approve Gate0, implementation, schema deployment, a dialect, a migration, a utility, a portal route, or a dependency. Only explicit owner direction followed by the existing Gate0 and review gates can change that boundary.
+This RFC remains tentative and is not architect-reviewed. PT-001, PT-002, PT-003, and PT-009 remain owner-approved but not architect-reviewed; PT-004 through PT-008 and PT-010 through PT-016 remain tentative and not owner-approved. The RFC does not approve Gate0, implementation, schema deployment, a dialect, a migration, a utility, a portal route, or a dependency. Only explicit owner direction followed by the existing Gate0 and review gates can change that boundary.
 
 **End of RFC.**
