@@ -598,6 +598,33 @@ Awaiting docket review and explicit owner direction for Gate0. This entry docume
 
 ---
 
+## Personal Tax Decisions (PT-001 through PT-016)
+
+All Personal Tax decisions are documented in the canonical discovery packet: [Personal Tax Discovery Packet](personal-tax-scope.md). Cross-link index:
+
+| PT-ID | Title | Link |
+|-------|-------|------|
+| PT-001 | Individual/PAN Tenant Model with Multiple BookSets | [personal-tax-scope.md § PT-001](personal-tax-scope.md#pt-001) |
+| PT-002 | BookSet-Owned Records with Tenant_ID + Book_Set_ID | [personal-tax-scope.md § PT-002](personal-tax-scope.md#pt-002) |
+| PT-003 | Atomic Same-Tenant Inter-BookSet Transfer with Balanced Linked Legs | [personal-tax-scope.md § PT-003](personal-tax-scope.md#pt-003) |
+| PT-004 | Personal Bank, Investment/Tax-Lot, Property/Rent/Loan Subledgers | [personal-tax-scope.md § PT-004](personal-tax-scope.md#pt-004) |
+| PT-005 | ONE TaxCase/Return per Taxpayer/Year Covers ALL Applicable BookSets | [personal-tax-scope.md § PT-005](personal-tax-scope.md#pt-005) |
+| PT-006 | Form Selection is Year-Specific and Fact-Driven | [personal-tax-scope.md § PT-006](personal-tax-scope.md#pt-006) |
+| PT-007 | Bind Governing Act, Period, Trigger, Schema, and Rule Snapshot | [personal-tax-scope.md § PT-007](personal-tax-scope.md#pt-007) |
+| PT-008 | Preserve Primary Artifacts; AIS Including TIS; 26AS; Reconcile Without Overwrite | [personal-tax-scope.md § PT-008](personal-tax-scope.md#pt-008) |
+| PT-009 | Hashed File-First V1; No Credential Scraping/OTP/Browser Automation; AA Future | [personal-tax-scope.md § PT-009](personal-tax-scope.md#pt-009) |
+| PT-010 | Progressive Source Readiness Model | [personal-tax-scope.md § PT-010](personal-tax-scope.md#pt-010) |
+| PT-011 | GST Output Belongs to Business BookSet/GSTIN; Personal Label Alone Does Not Decide | [personal-tax-scope.md § PT-011](personal-tax-scope.md#pt-011) |
+| PT-012 | TDS/TCS/Remittance Branches Effective-Dated by Role and Facts | [personal-tax-scope.md § PT-012](personal-tax-scope.md#pt-012) |
+| PT-013 | ITR-Specific Portal States/Evidence; No Universal ARN | [personal-tax-scope.md § PT-013](personal-tax-scope.md#pt-013) |
+| PT-014 | Status Tenant-Wide Read-Only; BookSet/TaxCase Separate; Mutations Fail Closed | [personal-tax-scope.md § PT-014](personal-tax-scope.md#pt-014) |
+| PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; Redacted Logs; No False Compliance Claims | [personal-tax-scope.md § PT-015](personal-tax-scope.md#pt-015) |
+| PT-016 | Immutable Original + Linked Correction/Revised/Rectification Cases | [personal-tax-scope.md § PT-016](personal-tax-scope.md#pt-016) |
+
+**Status**: All PT entries are **TENTATIVE - NOT OWNER-APPROVED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's § 4 for detailed rationale, alternatives, risks, and reversal paths per decision.
+
+---
+
 ## Relationship to Settled Decisions
 
 Entries T-001 through T-011 extend and clarify settled decisions from [decisions.md](decisions.md#confirmed) and [architecture-decisions.md](architecture-decisions.md):
