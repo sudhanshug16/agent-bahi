@@ -246,6 +246,8 @@ Awaiting owner review and dedicated source audit. No specific rate provider is l
 ---
 
 <a id="t-005"></a>
+<a id="entry-t-005-v1-scope-focus-regular-small-business-gst-accounting-profiles"></a>
+<a id="entry-t-005-v1-scope-focus—regular-small-business-gst-accounting-profiles"></a>
 ### Entry T-005: V1 Scope Focus—Regular Small-Business GST/Accounting Profiles
 
 **Status**: TENTATIVE_AGENT_DEFAULT
@@ -479,7 +481,7 @@ Form 140 export is a statutory artifact. The official utility, schema, and porta
 After Form 140/141 field structure, RPU/FVU/portal utility, and current official guidance are researched and snapshotted, owner may approve export adapter. Export schema and portal flow must be documented per research findings, not assumed from V1 precedents.
 
 **Dependencies**:
-- [TDS Workflow Contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
+- [TDS Workflow Contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
 - Form 140/141 current official guidance (ITD Form 140 FAQ, Rule 219) research (OPEN).
 - Portal flow (RPU/FVU/acceptance) verification (OPEN).
 
@@ -600,6 +602,8 @@ Awaiting docket review and explicit owner direction for Gate0. This entry docume
 
 ## Personal Tax Decisions (PT-001 through PT-016)
 
+**Personal Tax status:** Every PT entry and this index table inherit the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**.
+
 All Personal Tax decisions are documented in the canonical discovery packet: [Personal Tax Discovery Packet](personal-tax-scope.md). Cross-link index:
 
 | PT-ID | Title | Link |
@@ -621,7 +625,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 | PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; Redacted Logs; No False Compliance Claims | [personal-tax-scope.md § PT-015](personal-tax-scope.md#pt-015) |
 | PT-016 | Immutable Original + Linked Correction/Revised/Rectification Cases | [personal-tax-scope.md § PT-016](personal-tax-scope.md#pt-016) |
 
-**Status**: All PT entries are **TENTATIVE - NOT OWNER-APPROVED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's § 4 for detailed rationale, alternatives, risks, and reversal paths per decision.
+**Status**: The entire PT table inherits the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
 
 ---
 
@@ -637,7 +641,7 @@ Entries T-001 through T-011 extend and clarify settled decisions from [decisions
 - **T-006** (new): Proposes exit code 9 as numeric signal for partial-success batches. Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those.
 - **T-007** (migrated from statutory-workflow-contracts.md examples): Advance-tax estimated-amount input. Tentative default: capture operator input with provenance; no auto-projection; no tax liability computation or gate bypass from input alone. Annual-tax contract gates remain canonical. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
 - **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction via period reopen and correction journal. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
-- **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 statutory export—research-gated, fail-closed. Tentative default: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
+- **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 statutory export—research-gated, fail-closed. Tentative default: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Post-filing return case/evidence/correction. Tentative default: preserve case details and correction lineage; no return-amendment or defective-return submission adapter until s263(5)-(7) branches and official procedures researched and verified. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
 - **T-011** (new): Initial language and runtime choice—TypeScript + Bun recommended, contingent on Gate0 proof spikes (STK-001 through STK-006) passing on all target platforms (macOS arm64, Linux x64/arm64). Alternatives: Node.js + TypeScript or Rust. Reversible before Phase 1 begins; hard dependency on proof-spike validation.
 

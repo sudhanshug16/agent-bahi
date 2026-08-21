@@ -19,7 +19,7 @@ Sudhanshu requested multi-position debates to be conducted as part of architectu
 
 These are confirmed by Sudhanshu or existing discovery docs and form the foundation for all RECOMMENDED entries below.
 
-- **Product identity** ([decisions.md § Confirmed](decisions.md#confirmed)): Package/product/repository name is `agent-bahi`. Technology stack is TypeScript + Bun as the current working direction and default. Final stack choices (ORM, CLI parser, decimal math, database drivers, migrations, build/package) are RECOMMENDED (see STK-001 through STK-006) and remain gated by Phase 1 proof spikes; see [Roadmap Phase 1 Gate](roadmap.md#phase-1-gate-review-and-approval).
+- **Product identity** ([decisions.md § Confirmed](decisions.md#confirmed)): Package/product/repository name is `agent-bahi`. Technology stack is TypeScript + Bun as the current working direction and default. Final stack choices (ORM, CLI parser, decimal math, database drivers, migrations, build/package) are RECOMMENDED (see STK-001 through STK-006) and remain gated by Phase 1 proof spikes; see [Roadmap Phase 1 Gate](roadmap.md#gate0-reversible-proof-spikes-owner-directed-hard-evidence-gate-before-phase-1).
 
 - **Engine and skills separation** ([decisions.md § Confirmed](decisions.md#confirmed)): Deterministic accounting/compliance engine owns rules, calculations, permissions/gates, and invariants. Versioned skills orchestrate, gather evidence, propose actions, and verify work; they never embed accounting law.
 
@@ -93,6 +93,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Silent replay/duplication, unclear audit source, impossible to retry safely.
 - **Reversal trigger**: If external systems/APIs become primary sources (not just CLI), may need request ID validation against external systems; the envelope structure supports this.
 
+<a id="arc-006-optimistic-concurrency-with-explicit-locks-for-high-consequence-mutations"></a>
 **ARC-006: Optimistic concurrency with explicit locks for high-consequence mutations**
 
 - **Recommendation**: Use optimistic concurrency (version checks) generally. Serialize (exclusive locks) on posting-number allocation, document finalization, period locks/unlocks, payroll finalization, reconciliation decisions, and filing snapshots. Period locks reject all ledger/settlement mutations: create/edit/delete/issue/post/void/reverse, payment creation/posting, allocation/deallocation/reallocation, bank reconciliation/unreconciliation, notes, refunds, write-offs, reclassification, depreciation, FX adjustments, disposal, tax/payroll journals, opening balances, and journal imports/posting; evidence-only attachments/imports are the sole exception. Conflicts fail visibly; never last-write-wins.
@@ -191,6 +192,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Parsing machine output that changes with cosmetic tweaks, unclear which rule version was used, lost request ID on retry.
 - **Reversal trigger**: If a web API becomes primary, use the same versioned JSON envelope as the API response body.
 
+<a id="cli-004-explicit-exit-code-taxonomy"></a>
 **CLI-004: Explicit exit-code taxonomy**
 
 - **Recommendation**: Publish a stable exit-code taxonomy: 0 (success), 1 (validation error), 2 (ambiguity/selection required), 3 (conflict/lock), 4 (compliance gate), 5 (external retryable), 6 (external terminal), 7 (permission denied), 8 (internal error). Never exit zero for partial or failed work.
@@ -207,6 +209,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Silent partial period close, payroll run unnoticed to affect 100 employees, skill bypassing approval gate.
 - **Reversal trigger**: If approval workflows become complex (multi-level, timed), model approvals as explicit document state transitions, not cli flags.
 
+<a id="cli-006-batch-atomicity-declared-per-operation"></a>
 **CLI-006: Batch atomicity declared per operation**
 
 - **Recommendation**: Batch commands declare atomicity. Source ingestion is atomic per file/snapshot. Accounting proposals return per-item outcomes and commit only explicitly selected items. Never hide partial success or silently apply a majority rule.
@@ -335,6 +338,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Filing submitted with wrong data because reconciliation was skipped, missing GSTR-1 filing detected too late, GSP transmission failure with no rollback.
 - **Reversal trigger**: Once GSP integration/artifact format is researched and tested, the decision point is whether to add direct submission as an optional feature (not a requirement).
 
+<a id="cmp-006-e-invoice-default-irp-via-configured-adapter"></a>
 **CMP-006: E-invoice default (IRP via configured adapter)—RESEARCH-GATED and DEFERRED**
 
 **Status**: TENTATIVE_AGENT_DEFAULT (with significant OPEN_RESEARCH component) — **NOT OWNER-APPROVED**
@@ -350,6 +354,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Invoice issued with unauthorized e-invoice when not applicable, duplicate IRN on retry, credentials exposed, or unapproved adapter invoked despite research gaps.
 - **Reversal trigger**: After research closure and owner approval, if IRP credentials/onboarding proves complex, make credential provisioning an explicit setup step separate from invoice finalization.
 
+<a id="cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research"></a>
 **CMP-007: E-way bill default (configured API with state-specific rules)—RESEARCH-GATED and DEFERRED**
 
 **Status**: TENTATIVE_AGENT_DEFAULT (with significant OPEN_RESEARCH component) — **NOT OWNER-APPROVED**
@@ -471,6 +476,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Command removed without warning, skill failing because a schema field vanished, no way to know if a version is compatible.
 - **Reversal trigger**: Once a version is released, compatibility windows are binding; they are not negotiable.
 
+<a id="open-research--deferred-list"></a>
 ## Open Research / Deferred List
 
 The following are external facts that cannot be decided by preference and must be researched with official/primary sources before being settled:
