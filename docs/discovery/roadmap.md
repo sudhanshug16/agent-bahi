@@ -95,13 +95,13 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Exit conditions**: Postings immutable and balanced; document lifecycle complete. **No approval gates, reconciliation proposals, external operations, or payroll logic** (deferred to P4/P6/P7).
 
-## Phase 4: Evidence, Bank Reconciliation, High-Consequence Gates, External Operations
+## Phase 4: Evidence Storage and Linking, Bank Reconciliation Proposals
 
-**Goal**: Bank statement import, ephemeral proposals, high-consequence approval gates (prepare/preview → validate → commit), external operation outbox. See [Implementation Plan: Phase 4](implementation-plan.md#phase-4-evidence-bank-reconciliation-high-consequence-gates-external-operations).
+**Goal**: Evidence storage and linking, bank statement import, ephemeral reconciliation proposals, and exception routing. See [Implementation Plan: Phase 4](implementation-plan.md#phase-4-evidence-storage-and-linking-bank-reconciliation-proposals).
 
-**Key contract**: Reconciliation proposals ephemeral and non-persistent until explicit human confirmation (plan-hash binding required). External operations durable and idempotent. Skills cannot approve high-consequence actions.
+**Key contract**: Evidence is immutable and content-addressed; bank imports and reconciliation proposals are auditable and non-posting until explicit human action. Exceptions cover invalid imports, ambiguity, and missing evidence. Cross-cutting confirmation invariants may be referenced.
 
-**Exit conditions**: Proposals ephemeral until confirmed; gates enforce human confirmation; external operations safe.
+**Exit conditions**: Evidence storage/linking, bank import, reconciliation proposals, and exception routing work; proposals remain ephemeral until confirmed.
 
 ## Phase 5: Reporting, FX, Assets, Employee Expenses
 
@@ -115,7 +115,7 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Goal**: Employee profiles, salary structures, pay runs, frozen bank-CSV export. See [Implementation Plan: Phase 6](implementation-plan.md#phase-6-payroll-accounting-only-frozen-bank-csv-export).
 
-**Key contract**: Statutory computation gate: before any PF/ESI/PT/LWF/TDS computation, posting, payment, certificate, or export require `source_verified=true` + non-stale rule snapshot; REVIEW/BLOCK only affected action. Salary TDS under s392 (Form 130/Form 138) remains in payroll lane. Bank debit/reconciliation distinct states; only observed debit clears payable.
+**Key contract**: Before any payroll legal action—applicability/form selection, rate/contribution computation, deadline, statement/certificate, posting, payment/remittance, export, or filing—require `source_verified=true`, a non-stale rule snapshot, and complete facts; otherwise REVIEW/BLOCK only the affected action. Salary s392 Forms 130/138 are owned by P6. Bank debit/reconciliation remain distinct states; only observed debit clears payable.
 
 **Exit conditions**: Payroll posting complete; bank-file state machine working; statutory gate enforced.
 
@@ -123,11 +123,11 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Goal**: GST, non-payroll TDS/TCS (s393/s394), income-tax, MCA compliance with per-action research gates. See [Implementation Plan: Phase 7](implementation-plan.md#phase-7-independently-gated-compliance-slices-provisional-rules-block-only-affected-actions).
 
-**Key contract**: Each compliance action gated on `source_verified=true` + non-stale rule snapshot. Missing/stale rules REVIEW/BLOCK only affected action; unrelated work proceeds. s393 branch (Forms140/141/144) and s394 branch (Form143) separately gated. T-009 blocks Form140/141 transport pending research.
+**Key contract**: Every action in every branch independently requires `source_verified=true`, a non-stale rule snapshot, and complete facts; missing/stale rules REVIEW/BLOCK only that action and unrelated work proceeds. s393 non-payroll TDS covers Forms 140/141/144 and certificates 131/132. s394 TCS covers Form143 and certificate133. T-009 blocks only Form140/141 transport/export pending research; it never blocks Form143/TCS. Any approved statutory external transport/outbox is conditional on T-001 plus filing-specific research and owner approval.
 
 **Research gates preserved**: GSTR-3B stability, e-invoice/e-way bill transport, composition scheme, TDS/TCS rate verification, MCA form snapshot verification remain open until explicitly settled per T-001..T-010.
 
-**Exit conditions**: GST, income-tax, MCA compliance logic complete; s393/s394 separately gated; T-009 blocks Form140/141; every action requires rule snapshot.
+**Exit conditions**: GST, income-tax, MCA, and independently gated s393/s394 compliance logic complete; every action requires complete facts plus a verified, non-stale rule snapshot. T-009 blocks only Form140/141 transport/export; approved statutory transport/outbox is conditional on T-001 and filing-specific research/approval.
 
 ## Phase 8A: Full Multi-Dialect Semantic Conformance (After Phase 7)
 

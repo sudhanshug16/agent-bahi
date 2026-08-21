@@ -133,7 +133,7 @@ following the tax year under Rule 215. New-law employee investment/evidence
 claims use [Form 124 under Rule 205](https://www.incometaxindia.gov.in/documents/d/guest/fn-124);
 no old-form mapping is assumed here.
 
-Form 138, earlier Form 24Q for salary periods, is the quarterly statement for
+Form 138 is the quarterly statement for
 s392 salary or s393(1) Table 8(iii) specified-senior-citizen TDS in the new
 framework. Its Q1/Q2/Q3/Q4 due dates are 31 July, 31 October, 31 January, and
 31 May respectively, as stated in the official Form 138 FAQ and Rule 219. It

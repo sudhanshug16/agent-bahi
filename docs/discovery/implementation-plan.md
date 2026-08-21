@@ -16,9 +16,9 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - **T-004**: FX provider and fallback selection (provisional; gates Phase 5 spike).
 - **T-005**: Regular-GST V1 profile baseline (AATO applicability, effective-dated rules, GSTR-1 output; composition scheme deferred).
 - **T-006**: Batch partial-success numeric proposal (exit code for partially-committed multi-item operations; tests must not assume specific numeric value).
-- **T-007**: Advance-tax estimate input and liability gating (s392 advance-tax computation inputs; application and exceptions).
+- **T-007**: Advance-tax estimate operator input under s404/s408 (installment computation, operator-entered estimates; not s392 salary withholding).
 - **T-008**: Retroactive depreciation correction policy (immutability and reversal pattern).
-- **T-009**: Form140/141 statutory export research and transport boundary (TDS/TCS forms; T-009 blocks export/filing transport pending research).
+- **T-009**: Form140/141 statutory export research only (non-payroll TDS s393 routing forms; not s392 salary withholding and not Form143/TCS). Form140/141 export/transport remains blocked pending research.
 - **T-010**: Post-filing correction and revised-return boundary (amended returns, form corrections after filing).
 
 ---
@@ -104,27 +104,26 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 
 ---
 
-## Phase 4: Evidence, Bank Reconciliation, High-Consequence Gates, External Operations
+## Phase 4: Evidence Storage and Linking, Bank Reconciliation Proposals
 
-**Duration**: 4–6 weeks. Deliverables: bank statement import, ephemeral proposals (non-persistent until confirmed), evidence linking, high-consequence approval gates (prepare/preview → validate → commit with plan hashing), external operation outbox.
+**Duration**: 4–6 weeks. Deliverables: evidence storage and content-addressing, bank statement import, ephemeral match proposals, evidence-linked reconciliation.
 
 **Prerequisites**: Phase 1–3 complete.
 
 **Scope**:
+- Evidence storage: content-addressed immutable blob storage (checksum verification, storage reference, metadata).
+- Evidence linking: attachment to documents and postings with hash verification.
 - Bank statement import (date, amount, reference, description).
-- Ephemeral match proposals (non-posting, zero side effects; never persisted without explicit human confirmation plan-hash binding).
-- High-consequence approval gates (prepare/preview → validate → commit with plan hashing) for reconciliation.
-- Explicit human confirmation binding (plan hash, source line, target, amount, FX snapshot, versions, tenant, actor, timestamp); no skill/agent auto-approval.
-- Reconciliation persistence: only after confirmed; provenance linked to confirmed match.
-- Evidence content-addressed (checksum verification, immutable storage, immutability).
-- External operation outbox: durable state tracking (prepared → submitted → known_success/known_failure/unknown → evidence_recorded → business_finalized); immutable observation audit log.
+- Ephemeral match proposals (non-posting, zero side effects; candidates only; never persisted without explicit human action).
+- Reconciliation proposals: ephemeral candidates with evidence references; persistence requires explicit human confirmation (recorded separately; not an application-layer gate).
 - Bank reconciliation report (matched, unmatched items, period status).
+- Exception routing for import validation, ambiguity, missing evidence.
 
-**Tests**: Proposals non-posting; human confirmation required; gate blocks skill auto-approval; reconciled postings linked to statement lines; evidence hashes correct; external-operation replay safety; idempotency.
+**Tests**: Evidence hashes correct; content-addressing prevents duplicates; proposals non-posting; reconciliation matches persist with evidence links; idempotency.
 
-**Exit Gate**: Bank import and reconciliation working; evidence linking complete; high-consequence gates enforced; external operations safe. Proposals remain ephemeral until confirmed.
+**Exit Gate**: Bank import and reconciliation proposal logic working; evidence storage and linking complete. Proposals remain ephemeral until confirmed.
 
-**Non-Goals**: Bank statement format/automation standards, FX calculation (deferred to Phase 5).
+**Non-Goals**: Bank statement format/automation standards and FX calculation (deferred to Phase 5).
 
 ---
 
@@ -164,8 +163,8 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 - Employee statutory profiles, salary structures, effective-dated formula evaluation.
 - Pay-run draft, approval, posting (balanced entry: Dr payroll expense / Cr payroll payables and deductions).
 - Payables (salary, PF, ESI, PT, LWF, TDS, advances/loans).
-- **Statutory computation gate**: Before any PF/ESI/PT/LWF/TDS computation, posting, payment, certificate, or export require `source_verified=true` + non-stale effective rule snapshot and complete applicability facts. Missing/stale/OPEN rules return REVIEW/BLOCK for affected statutory action only; salary postings proceed.
-- Salary TDS under s392 (Form 130/Form 138 generation deferred to P7).
+- **Payroll legal-action gate**: Before any PF/ESI/PT/LWF/TDS applicability or form selection, rate/contribution computation, deadline, statement/certificate, posting, payment/remittance, export, or filing require `source_verified=true` + a non-stale effective rule snapshot + complete facts. Missing/stale/OPEN rules return REVIEW/BLOCK for the affected action only; unaffected salary posting proceeds.
+- Salary TDS under s392 owns Forms 130/138 in P6; their applicability, selection, computation, statements/certificates, posting, payment/remittance, export, and filing actions remain independently source-gated here.
 - Approved summarized inputs only (payable days, LOP, overtime amounts); no attendance, leave, HRMS.
 - Frozen bank CSV export (versioned preset, deterministic formatting).
 - Bank-file state machine: Generated → Uploaded → Accepted/Rejected → Debited → Reconciled (distinct states, separate evidence).
@@ -176,7 +175,7 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 
 **Exit Gate**: Payroll posting complete; bank-file state machine working; exports frozen and verified. Payroll TDS under s392 (Form 130/Form 138) remains in payroll lane; non-payroll TDS/TCS (s393/s394) deferred to Phase 7.
 
-**Non-Goals**: Attendance tracking, employee portal, payroll-specific statutory exports (deferred to Phase 7), composition scheme, SEZ.
+**Non-Goals**: Attendance tracking, employee portal, non-payroll statutory compliance (deferred to Phase 7), composition scheme, SEZ.
 
 ---
 
@@ -193,19 +192,19 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
   - Missing/stale rules BLOCK only that action (not all Phase 7)
   - OPEN rules visible; explicitly REVIEW/BLOCK.
 - **GST**: Regular taxpayer baseline (AATO, GSTR-1 output JSON, amendments, ITC eligibility, effective-dated classification).
-- **s393 TDS branch** (independent gate): Selection/structure/deadline/payment/export/certificate for Forms 140/141/144 + certificates 131/132 all REVIEW/BLOCK unless branch source snapshot verified. T-009 blocks Form140/141 transport/export pending research; selection and export tools deferred.
-- **s394 TCS branch** (independent gate): Selection/structure/deadline/payment/export/certificate for Form143 + certificate133 all REVIEW/BLOCK unless branch source snapshot verified.
+- **s393 non-payroll TDS branch** (independent gate): Form selection, structure, deadline, deduction, posting, payment/remittance, export, filing, and certificates for Forms 140/141/144 + certificates 131/132 each require `source_verified=true`, a non-stale branch snapshot, and complete facts. T-009 blocks only Form140/141 transport/export pending research; it does not block other s393 actions.
+- **s394 TCS branch** (independent gate): Form selection, structure, deadline, collection, posting, payment/remittance, export, filing, and certificate for Form143 + certificate133 each require `source_verified=true`, a non-stale branch snapshot, and complete facts. T-009 does not block Form143 or any TCS action.
 - **Income-tax**: Annual return form structure (per official Notification), separate tax computation (not audit report Form 26).
 - **MCA**: Mandatory audit applicability, form structure (per official sources; never infer exemptions).
 - Obligation engine: Tenant/GSTIN facts → applicable obligations; filing deadlines from rule snapshots; predecessor gates explicit (no GSTR-3B before GSTR-1).
 - Compliance calendar and deadline tracking.
-- All exports (GSTR-1, GSTR-3B, income-tax, MCA) prepare/validate/export + manual filing (no auto-submit without filing-specific owner approval per T-001; T-009 blocks TDS/TCS export until research complete).
+- All exports (GSTR-1, GSTR-3B, income-tax, MCA, and any approved statutory TDS/TCS transport) prepare/validate/export + manual filing (no auto-submit without T-001 plus filing-specific research and owner approval). T-009 blocks only Form140/141 transport/export; any approved statutory external transport/outbox is conditional in P7 on those gates.
 
 **Tests**: Tax calculation matches golden fixtures; OPEN rules block affected action only; form exports generate correctly (where not blocked); filing deadlines calculated; predecessor gates enforced; branch separation verified.
 
 **Exit Gate**: GST, income-tax, MCA compliance logic complete. Every action gated on rule snapshot; OPEN rules visible and blocking only affected actions. s393 and s394 branches separately gated; T-009 blocks Form140/141 transport.
 
-**Non-Goals**: Auto-filing, GSP/portal APIs, composition scheme, e-invoice/e-way bill transport (deferred to filing-specific decisions), Form140/141/143 export/transport (blocked by T-009), Form24/25 (payroll statutory deposit/remittance forms; separate research gate).
+**Non-Goals**: Auto-filing, GSP/portal APIs, composition scheme, e-invoice/e-way bill transport (deferred to filing-specific decisions), Form140/141 transport/export pending T-009 research. Form143/TCS and other branches remain independently source-gated; approved statutory external transport/outbox is conditional on T-001 plus filing-specific research and owner approval.
 
 ---
 
