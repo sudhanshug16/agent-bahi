@@ -288,19 +288,16 @@ User or CA acknowledgement can provide review evidence, but it cannot relabel a 
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** GST output belongs to an applicable business BookSet and GSTIN. A personal source location or personal label alone never decides treatment.
+**Decision:** GST output belongs to an applicable business BookSet and GSTIN. A personal source location or personal label alone never decides treatment. Payment-source account/label (e.g., personal SBI bank) never decides economic owner or GST treatment. GST ownership, output, input-credit analysis is bound only to the explicit business BookSet + GSTIN + period + evidence/rule snapshot. Personal BookSet retains funding/settlement facts but never owns GST solely because its bank paid.
 
-If a finalized personal posting is actually business-use, reverse it, post the linked business replacement, and separately record the atomic funding or settlement transfer. Do not say a Personal BookSet categorically lacks GST treatment.
+For a personal bank directly paying a business expense (e.g., proprietor's SBI account paying a ₹23,600 software bill), the correct mechanics follow PT-003 Example 2:
 
-For a personal-paid business expense, the balanced symbolic sequence is:
+- **Personal BookSet leg:** `Dr amount-due-from-business ₹23,600 / Cr personal-SBI-bank ₹23,600`.
+- **Business BookSet leg:** `Dr software-expense (base amount) / Dr eligible-input-GST` (only where eligibility is separately established under the existing rules; otherwise use the appropriate non-creditable tax/expense treatment), `Cr amount-due-to-proprietor ₹23,600` (gross amount matching the personal leg).
+- **Event structure:** One atomic transaction with the same shared gross amount across both linked legs. There is no fictional receipt into the business bank and no second ₹23,600 cash settlement in this event.
+- **Later reimbursement:** If the business later reimburses the proprietor, that is a separate linked event (business `Dr amount-due-to-proprietor / Cr business-bank`; personal `Dr personal-bank / Cr amount-due-from-business`), not part of the original direct-payment event.
 
-1. Original personal posting: `Dr expense E / Cr bank E`.
-2. Reverse that posting: `Dr bank E / Cr expense E`.
-3. Business replacement where credit is eligible: `Dr expense B / Dr eligible input tax T / Cr vendor E`, where `E = B + T`.
-4. If credit is not eligible, use `Dr gross expense E / Cr vendor E` instead.
-5. Funding settlement: business `Dr vendor E / Cr due-to-owner E`; personal `Dr due-from-business E / Cr bank E`.
-
-Each leg is linked, each BookSet balances, and the expense is not counted once in the personal BookSet and again as an unrelated business expense.
+Each leg is linked, each BookSet balances, and there is no double cash/expense/GST counting. An ambiguous economic owner, business GSTIN, or GST eligibility fails closed.
 
 <a id="pt-012"></a>
 ### PT-012: Effective-dated TDS, TCS, and remittance gate
