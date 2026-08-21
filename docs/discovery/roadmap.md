@@ -63,15 +63,17 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 
 **The authoritative implementation sequence is defined in [Implementation Plan](implementation-plan.md)**. This roadmap aligns with that sequence and preserves discovery milestones and research gates. Phases are numbered Gate0, P1–P9 in the implementation plan for clarity.
 
+**Tentative decisions (T-001 through T-011) await owner review and approval before any implementation authorization.** See [Owner Review Docket](owner-review-docket.md) for compact index.
+
 ---
 
 ## Gate0: Proof Spikes (Hard Blocker Before Phase 1)
 
 Validates all provisional technology stack choices before implementation begins. See [Implementation Plan: Gate0](implementation-plan.md#gate0-proof-spikes-hard-blocker-before-phase-1).
 
-**Six proof spikes** (STK-001 through STK-006): Bun runtime, ORM cross-dialect, SQLite configuration, migrations/upgrades, schema generation/CLI parsing, build/distribution.
+**Six proof spikes** (STK-001 through STK-006): Bun runtime, ORM cross-dialect, SQLite configuration, migrations/upgrades, schema generation/CLI parsing, build/distribution. Technology choice (T-011) is contingent on spike results.
 
-**Gate criterion**: All spikes pass; owner confirms architecture and all [Tentative Decisions](tentative-decisions.md) T-001..T-010.
+**Gate criterion**: All spikes pass; owner approves [Owner Review Docket](owner-review-docket.md) and all [Tentative Decisions](tentative-decisions.md) T-001..T-011 before Phase 1 begins.
 
 ## Phase 1: Foundation, Tenant Model, and Migrations
 
@@ -125,7 +127,7 @@ Validates all provisional technology stack choices before implementation begins.
 
 **Key contract**: Every action in every branch independently requires `source_verified=true`, a non-stale rule snapshot, and complete facts; missing/stale rules REVIEW/BLOCK only that action and unrelated work proceeds. The general s393 branch explicitly excludes s393(1) Table 8(iii) and covers Forms 140/141/144 plus certificates 131/132. s394 TCS remains Form143 plus certificate133. T-009 blocks only Form140/141 transport/export pending research; it never blocks Form143/TCS. Any approved statutory external transport/outbox is conditional on T-001 plus filing-specific research and owner approval.
 
-**Research gates preserved**: GSTR-3B stability, e-invoice/e-way bill transport, composition scheme, TDS/TCS rate verification, MCA form snapshot verification remain open until explicitly settled per T-001..T-010.
+**Research gates preserved**: GSTR-3B stability, e-invoice/e-way bill transport, composition scheme, TDS/TCS rate verification, MCA form snapshot verification remain open until explicitly settled per T-001..T-011.
 
 **Exit conditions**: GST, income-tax, MCA, and independently gated general s393/s394 compliance logic complete; every action requires complete facts plus a verified, non-stale rule snapshot. The P6-owned s393(1) Table 8(iii) route is excluded from this general s393 branch. T-009 blocks only Form140/141 transport/export; approved statutory transport/outbox is conditional on T-001 and filing-specific research/approval.
 

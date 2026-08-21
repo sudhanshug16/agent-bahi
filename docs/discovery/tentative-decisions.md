@@ -525,9 +525,68 @@ Awaiting owner review and dedicated s263(5)-(7) branch/procedure research. This 
 
 ---
 
+### Entry T-011: Initial Language and Runtime—TypeScript + Bun (Recommended; Gate0 Proof Spikes Required)
+
+**Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
+
+**Question**: What programming language and runtime should agent-bahi use for the initial implementation?
+
+**Recommended Working Default**:
+- **Primary recommendation**: TypeScript + Bun (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver).
+- **Proof spikes (Gate0) validate all major dependencies before Phase 1 authorization**:
+  - STK-001: Bun runtime, workspaces, lockfile (macOS arm64, Linux x64/arm64).
+  - STK-002: ORM (Drizzle/Kysely) on bun-sqlite, PostgreSQL, MySQL; schema equivalence verified.
+  - STK-003: SQLite pragmas, WAL, foreign_keys=ON, SQLITE_BUSY handling, network-filesystem rejection.
+  - STK-004: Schema migrations and upgrade paths on all three dialects.
+  - STK-005: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
+  - STK-006: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
+- **No language/runtime implementation authorization until Gate0 spikes pass and owner confirms technology choices.**
+
+**Alternatives**:
+- Node.js + TypeScript (mature ecosystem; slower cold startup, larger binaries; established JavaScript CI/CD tooling).
+- Rust (performance, static typing; steeper learning curve; different module/CLI ecosystem; slower compile times during development).
+- Other JVM languages (Java, Kotlin, Scala): Heavy runtime; not recommended for CLI tool distribution.
+
+**Rationale**:
+Bun is a modern JavaScript runtime designed for tooling (CLI, scripts, backend services) with native TypeScript support, integrated package management, and optimized SQLite integration. TypeScript provides type safety and reduces runtime errors in domain logic and compliance calculations. Gate0 proof spikes validate that Bun ecosystem components (ORM, validation, CLI parsing, migrations, build/distribution) work reliably on all target platforms and with all supported databases (SQLite, PostgreSQL, MySQL). This is a working default to unblock architecture and Phase 1 planning; it is not a binding technology lock until owner review confirms after proof spikes pass.
+
+**Product Impact**:
+- **Development velocity**: Bun's built-in features (TypeScript, package management, testing) reduce toolchain complexity.
+- **Deployment simplicity**: ESM build produces portable binaries; single platform-specific executable per OS/arch.
+- **Type safety**: TypeScript catches many errors at build time; domain logic is verifiable.
+- **Multi-database support**: Proof spikes validate ORM cross-dialect equivalence (SQLite default, PostgreSQL/MySQL optional).
+
+**Reversal Path**:
+Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selection keeps TypeScript and changes only the runtime (mature ecosystem, larger cold-start footprint). Rust selection requires different language, module system, and CLI design. This choice must be made before Phase 1 implementation begins; mid-implementation language switches are prohibitively expensive.
+
+**Proof Spike Gates**:
+- STK-001 through STK-006 must all pass on target platforms (macOS arm64, Linux x64/arm64).
+- All ORM, validation, CLI, migration, and build tooling must work identically across Bun, SQLite/PostgreSQL/MySQL, and all platforms.
+- If any spike reveals a blocker (e.g., Bun ORM incompatibility with PostgreSQL, missing decimal precision library), result is documented and owner makes override decision.
+
+**Affected Gate/Phase**:
+- **Gate0**: All proof spikes (STK-001 through STK-006) are hard blockers. Gate0 must pass before Phase 1 begins.
+- **Phase 1 and beyond**: Contingent on Gate0 completion and owner technology confirmation.
+
+**Dependencies**:
+- Proof spike results (STK-001 through STK-006) are prerequisites, not recommendations.
+- Multi-database support requirement (settled in [decisions.md](decisions.md#confirmed)) drives ORM choice.
+- CLI determinism (settled in [decisions.md](decisions.md#confirmed)) drives parser/exit-code precision needs.
+
+**Evidence**:
+- Bun documentation and ecosystem: https://bun.sh/ (type definitions, SQLite integration, ESM, Clipanion parser support).
+- Drizzle ORM: Supports Bun + SQLite/PostgreSQL/MySQL; multi-dialect spike (STK-002) validates before commitment.
+- Kysely: Fallback ORM; also supports all three databases.
+- TypeScript: Industry standard for type-safe JavaScript; proven in countless CLI and backend projects.
+
+**Owner Review Status**:
+Awaiting owner review after Gate0 proof spikes pass. This entry documents the tentative default (TypeScript + Bun) and the hard proof-spike prerequisite. Owner may confirm this choice, select Node.js, or select Rust after spike results are available. No language/runtime implementation is authorized until owner confirms.
+
+---
+
 ## Relationship to Settled Decisions
 
-Entries T-001 through T-010 extend and clarify settled decisions from [decisions.md](decisions.md#confirmed) and [architecture-decisions.md](architecture-decisions.md):
+Entries T-001 through T-011 extend and clarify settled decisions from [decisions.md](decisions.md#confirmed) and [architecture-decisions.md](architecture-decisions.md):
 
 - **T-001** (now clarified): Establishes a fallback default for filing submission only where no filing-specific boundary exists. Does not override GSTR-1 or any filing-specific settled decision. Extends [GSTR-1-specific output boundary](decisions.md#confirmed) and [Government filing boundary](decisions.md#confirmed) as a generic template for undefined filings only.
 - **T-002** clarifies the open-source/license context not yet formalized in settled decisions.
@@ -539,6 +598,7 @@ Entries T-001 through T-010 extend and clarify settled decisions from [decisions
 - **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction via period reopen and correction journal. Supports [T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedules%E2%80%94book-vs-tax-with-tentative-slm-default) and fixed-asset module scope.
 - **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 statutory export—research-gated, fail-closed. Tentative default: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Post-filing return case/evidence/correction. Tentative default: preserve case details and correction lineage; no return-amendment or defective-return submission adapter until s263(5)-(7) branches and official procedures researched and verified. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
+- **T-011** (new): Initial language and runtime choice—TypeScript + Bun recommended, contingent on Gate0 proof spikes (STK-001 through STK-006) passing on all target platforms (macOS arm64, Linux x64/arm64). Alternatives: Node.js + TypeScript or Rust. Reversible before Phase 1 begins; hard dependency on proof-spike validation.
 
 **None of these entries override settled decisions.** They provide implementation detail and working defaults for decisions that remain open or recommend future owner approval. Filing-specific settled decisions always override T-001.
 

@@ -312,4 +312,4 @@ See [Tentative Decisions](tentative-decisions.md) for full details. All entries 
 
 **Phase Sequence**: Gate0 (proof spikes) → P1 (foundation) → P2 (skill contracts) → P3 (ledger) → P4 (evidence/bank) → P5 (reports/FX/assets/expenses) → P6 (payroll) → P7 (compliance) → P8A (dialects) → P8B (skills runtime) → P9 (Zoho).
 
-**Sign-Off Gate**: Proof spikes pass. Owner confirms architecture and all T-001..T-010. Only then does Phase 1 implementation begin.
+**Sign-Off Gate**: Proof spikes pass. Owner confirms architecture and all T-001..T-011 via [Owner Review Docket](owner-review-docket.md). Only then does Phase 1 implementation begin.

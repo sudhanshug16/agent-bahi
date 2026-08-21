@@ -1813,38 +1813,57 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 
 ## 22. Definition of Ready for Implementation
 
-All of the following must be true before Phase 1 implementation begins:
+**⚠️ CRITICAL: Implementation is NOT authorized merely because documentation exists.** All of the following must be true before Phase 1 implementation begins:
 
-1. [ ] **Sudhanshu review of architecture decisions**: SETTLED vs. RECOMMENDED docket reviewed; user confirms, adjusts, or overrides each RECOMMENDED entry.
+1. [ ] **Sudhanshu review of owner-review docket and tentative decisions**: [Owner Review Docket](discovery/owner-review-docket.md) (T-001 through T-011) reviewed; owner confirms, adjusts, or rejects each tentative decision. **This review is a hard prerequisite for Gate0 and Phase 1.** See [Tentative Decisions and Overnight Protocol](discovery/tentative-decisions.md) for full details and reversal paths.
 
 2. [x] **Architecture document contradiction review**: This document (`docs/architecture.md`) passes clean contradiction review (post-fix)—no statements conflict with discovery docs or each other.
 
-3. [ ] **Proof spikes complete**: All STK-001 through STK-006 spikes pass on target platforms (macOS arm64, Linux x64/arm64); results documented and decisions confirmed.
+3. [ ] **Proof spikes complete**: All STK-001 through STK-006 spikes pass on target platforms (macOS arm64, Linux x64/arm64); results documented and decisions confirmed. Technology choice (T-011: TypeScript + Bun) is contingent on spike results; alternatives (Node.js+TypeScript or Rust) require owner override after spike results.
 
-4. [ ] **Official research closed**: Items in OPEN RESEARCH list researched with primary sources; decisions finalized or explicitly deferred with documented uncertainty.
+4. [ ] **Per-action research gates enforced, not global blockers**: Legal/compliance research that affects Phase 7 (GST, TDS/TCS, income-tax, MCA) is gated per-action, not as a global Phase 1 blocker. Missing or stale rule snapshots REVIEW/BLOCK only the affected compliance action (e.g., "Form 140 export blocked pending research") while unrelated core bookkeeping, draft entry, and already-researched statutory slices proceed. See [Discovery Roadmap: Cross-cutting discovery milestone](discovery/roadmap.md#cross-cutting-discovery-milestone-verified-statutory-compliance-baseline-2026-08-21) for details.
 
 5. [ ] **Architect-tier debates resolved**: All RECOMMENDED entries in architecture-decisions.md have architect debate outcomes, or Sudhanshu explicitly waives debate and accepts provisional recommendations.
 
-6. [ ] **Implementation plan written**: Detailed Phase 1 acceptance tests, slice definitions, and team-assignment plan documented.
+6. [ ] **Implementation plan written**: Detailed Phase 1 acceptance tests, slice definitions, and team-assignment plan documented. See [Implementation Plan](discovery/implementation-plan.md).
 
-7. [ ] **No silent defaults in code**: Every architectural choice is explicit in code comments or decision IDs cited; no default implementation of unresolved decisions.
+7. [ ] **Physical schema RFC reviewed before Phase 1**: Data-model RFC (covering tables, keys, constraints, indexes) must be reviewed separately before Phase 1 implementation authorization. Schema existence in documentation does NOT imply approval. Physical implementation is NOT authorized until RFC review confirms.
 
-**No implementation is authorized by this document alone.** Sudhanshu's final sign-off on all reviews and gates is required before Phase 1 begins.
+8. [ ] **No silent defaults in code**: Every architectural choice is explicit in code comments or decision IDs cited; no default implementation of unresolved decisions.
+
+**PREREQUISITE CHECKLIST** (before Phase 1 authorization):
+- [ ] Owner approves [Owner Review Docket](discovery/owner-review-docket.md) (T-001 through T-011).
+- [ ] Gate0 proof spikes (STK-001–STK-006) pass on all target platforms; technology choice confirmed or overridden.
+- [ ] Architect-tier debates resolved (RECOMMENDED entries in architecture-decisions.md).
+- [ ] Physical data-model RFC reviewed and approved.
+- [ ] Phase 1 slice/acceptance-test plan documented and signed off.
+
+**No implementation is authorized by this document alone.** Sudhanshu's explicit confirmation of all items above is a hard requirement before Phase 1 begins. [Implementation Plan](discovery/implementation-plan.md) defines exact prerequisites for each subsequent phase.
 
 ---
 
 ## Appendix: Quick Links to Discovery Documents
 
+**OWNER REVIEW & APPROVAL** (prerequisite):
+- [Owner Review Docket](discovery/owner-review-docket.md): Compact index of tentative decisions T-001–T-011 awaiting owner approval.
+- [Tentative Decisions and Overnight Protocol](discovery/tentative-decisions.md): Full details for each T-ID with rationale, reversal paths, and owner-review status.
+- [Implementation Plan](discovery/implementation-plan.md): Gate0 proof spikes, Phase 1–9 sequencing, prerequisites.
+
+**DOMAIN & ARCHITECTURE**:
 - [Decisions](discovery/decisions.md): Confirmed decisions and working defaults.
 - [Provisional Architecture Decisions](discovery/architecture-decisions.md): SETTLED, RECOMMENDED, OPEN RESEARCH, DEFERRED.
 - [Data Model Requirements](discovery/data-model-requirements.md): Entities, invariants, canonical records.
 - [Accounting Contracts](discovery/accounting-contracts.md): Canonical pre-implementation domain contracts and account-role posting templates.
 - [CLI Contract](discovery/cli-contract.md): Reports, reconciliation, period controls.
 - [Skill Architecture](discovery/skill-architecture.md): Engine/CLI/skill/agent responsibilities.
+
+**COMPLIANCE RESEARCH BASELINES**:
 - [GST Compliance Matrix](discovery/gst-compliance-matrix.md): Verified research baseline; GSTR-1, GSTR-3B, e-invoice, e-way bill.
 - [Payroll Compliance Matrix](discovery/payroll-compliance-matrix.md): TDS, EPF, ESI, PT, LWF, wage records.
 - [Expense Evidence Policy](discovery/expense-evidence-policy.md): Legal and product rules for evidence.
-- [Roadmap](discovery/roadmap.md): Phases 1–9, cross-cutting milestones, gates.
+
+**PLANNING & ROADMAP**:
+- [Roadmap](discovery/roadmap.md): Phases 1–9, cross-cutting milestones, gates, per-action research gates.
 
 ---
 
