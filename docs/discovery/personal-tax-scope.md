@@ -1,8 +1,8 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** PT-001 is **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001 and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
-Sudhanshu's owner approval of PT-001 is recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from PT-001 alone.
+Sudhanshu's explicit owner approvals of PT-001 and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from either owner approval alone.
 
 ## 1. Verdict and scope
 
@@ -59,7 +59,7 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-PT-001 has the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
+PT-001 and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-002 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
@@ -222,11 +222,11 @@ The books remain the canonical accounting records. A difference produces a linke
 <a id="pt-009"></a>
 ### PT-009: Hashed file-first acquisition; future AA only
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** V1 accepts user-supplied files, hashes the immutable raw artifact, parses a versioned copy, and records provenance. It does not store credentials, scrape portals, automate OTP, or automate browsers.
+**Approved V1 boundary:** V1 is file-first. Users download supported bank, broker, mutual-fund, AIS/26AS, and other artifacts; Agent Bahi imports them, verifies provenance and hash, reconciles them, and reports gaps. It does not store credentials, scrape portals, automate OTP, or automate browsers.
 
-Future AA access may exist only through a registered RBI AA ecosystem and consent flow. The Agent Bahi role, permissions, data path, and partner are **OPEN** until research and owner approval. Do not invent a direct AA token flow or claim a regulated intermediary role.
+Live Account Aggregator or partner connections are future and not a V1 dependency. Future AA access may exist only through a registered RBI AA ecosystem and consent flow. The Agent Bahi role, permissions, data path, and partner are **OPEN** until regulatory and partner research. Do not invent a direct AA token flow or claim a regulated intermediary role.
 
 **Failure mode:** A parser or portal helper silently becomes a credentialed collection channel.
 
@@ -456,7 +456,7 @@ The DPDP Act and Rules are legal research sources. CERT-In Directions under sect
 
 Implementation is blocked until all of the following are reviewed and approved:
 
-1. Architect review of PT-001; owner and architect approval of PT-002 through PT-016.
+1. Architect review of PT-001 and PT-009; owner and architect approval of PT-002 through PT-008 and PT-010 through PT-016.
 2. Canonical contract migration from one legal entity/one balanced book to the reviewed individual/PAN tenant plus independently balanced BookSets model.
 3. Immutable official rule snapshots and official schema or validator releases for each supported period and form.
 4. Year-specific correction-route research and owner-approved mechanism selection.
@@ -536,4 +536,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a discovery baseline. PT-001 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. PT-001 and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
