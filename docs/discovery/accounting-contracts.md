@@ -166,9 +166,10 @@ Each section includes an `outcome`, known `health`, counts, material amounts (in
 applicable currency), urgency/severity classification, earliest due date where
 applicable, and `evidence_refs`. The per-section `outcome` enum is exactly
 `COMPLETE | PARTIAL | FAILED | DATA_UNAVAILABLE | APPLICABILITY_UNKNOWN`.
-All sections include an argv-array drill-down command (never a shell string or
-secret) that is valid against the command registry. Items and summary cards use
-the same evidence-reference contract.
+All sections include a `drilldown` object with a complete `argv: string[]` command
+(never a shell string or secret) that is valid against the command registry. The
+argv contains the executable as the first element and every argument as separate
+tokens. Items and summary cards use the same evidence-reference contract.
 
 1. **Command/Operation Failures**: Failed or blocked CLI operations with error codes,
    remediation context, and drill-down command.
@@ -282,9 +283,8 @@ Deterministic ordering:
               "immutable_ref": "sha256:<sha256-hex>"
             }
           ],
-          "drill_down": {
-            "command": "agent-bahi",
-            "args": ["period", "lock", "show"]
+          "drilldown": {
+            "argv": ["agent-bahi", "period", "lock", "show"]
           }
         }
       ],
@@ -298,7 +298,10 @@ Deterministic ordering:
               "evidence_id": "ev:operations:001",
               "immutable_ref": "sha256:<sha256-hex>"
             }
-          ]
+          ],
+          "drilldown": {
+            "argv": ["agent-bahi", "operations", "show", "--scope", "failures"]
+          }
         }
       ]
     },
@@ -317,9 +320,8 @@ Deterministic ordering:
       "total_amount": 50000,
       "currency": "INR",
       "earliest_date": "2026-08-10",
-      "drill_down": {
-        "command": "agent-bahi",
-        "args": ["reconciliation", "show", "--status", "unmatched"]
+      "drilldown": {
+        "argv": ["agent-bahi", "reconciliation", "show", "--status", "unmatched"]
       }
     },
     {
@@ -347,9 +349,8 @@ Deterministic ordering:
               "immutable_ref": "sha256:<sha256-hex>"
             }
           ],
-          "drill_down": {
-            "command": "agent-bahi",
-            "args": ["gst", "filing", "show", "--gstin", "18AABCT1234H1Z0"]
+          "drilldown": {
+            "argv": ["agent-bahi", "gst", "filing", "show", "--gstin", "18AABCT1234H1Z0"]
           }
         }
       ]
@@ -362,7 +363,9 @@ Deterministic ordering:
 
 A bounded text summary showing the same facts as JSON: `health`,
 `completeness`, count of exceptions per section, material amounts, earliest due
-dates, evidence IDs/hashes, and brief drill-down commands. Overview may rank or
+dates, evidence IDs/hashes, and drill-down commands. Drill-down commands render
+as safely quoted, complete argv arrays (the exact same tokens as JSON) and may
+wrap visually but must not omit or truncate arguments. Overview may rank or
 collapse sections but must not silently suppress unresolved items. Include
 totals and evidence references for collapsed cards.
 
@@ -396,7 +399,8 @@ its computation.
    or `FAILED`, structured outcomes for each section, and evidence references;
    it does not return `exit 0` or a conclusive `HEALTHY` result with hidden gaps.
 8. `--json` output is valid JSON; parseable without shell escaping or embedded
-   secrets; drill-down commands use array format `["command", "arg1", "arg2"]`.
+   secrets; `drilldown.argv` is an array containing the complete executable plus
+   every argument as separate tokens: `["agent-bahi", "command", "arg1", "arg2"]`.
 9. Human and `--json` renderings of the same snapshot have identical facts,
    amounts, and urgency classifications; formatting differs only in presentation.
 10. Overdue statute-due GSTR-3B filing blocked; `health` is `BLOCKED`,

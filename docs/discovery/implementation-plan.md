@@ -357,7 +357,7 @@ are mandatory acceptance tests for implementation:
 
 **Output Modes and Determinism**:
 
-26. **Human output**: Readable summary with `health`, `completeness`, section headings, counts, material amounts, earliest dates, evidence IDs/hashes, and brief drill-down hints (not full command arrays).
+26. **Human output**: Readable summary with `health`, `completeness`, section headings, counts, material amounts, earliest dates, evidence IDs/hashes, and complete drill-down commands. Drill-down commands are safely quoted arrays showing the same complete executable plus arguments as JSON (may wrap visually but retain all tokens).
 27. **`--json` output**: Valid JSON; parseable without shell escaping; all fields present (snapshot metadata and sources, tenant_id, health, completeness, sections with outcomes and items/evidence references).
 28. **Stdout contains snapshot only**: Stderr contains progress/warnings.
 29. **Exit code 0 for complete success**: Even if `health: "BLOCKED"` (snapshot computed successfully; company health is separate from command success).
@@ -365,9 +365,9 @@ are mandatory acceptance tests for implementation:
 
 **Queries and Drill-Down Navigation**:
 
-31. **Drill-down command from GSTR-3B obligation**: `agent-bahi gst filing show --gstin <gstin>` is valid and returns filing details.
-32. **Drill-down command from unreconciled bank**: `agent-bahi reconciliation show --status unmatched` returns unmatched statement lines.
-33. **Drill-down command from overdue AP aging**: `agent-bahi bill show --status posted --aging overdue` returns bill records.
+31. **Drill-down command from GSTR-3B obligation**: `drilldown.argv` is `["agent-bahi", "gst", "filing", "show", "--gstin", "<gstin>"]` and returns filing details.
+32. **Drill-down command from unreconciled bank**: `drilldown.argv` is `["agent-bahi", "reconciliation", "show", "--status", "unmatched"]` and returns unmatched statement lines.
+33. **Drill-down command from overdue AP aging**: `drilldown.argv` is `["agent-bahi", "bill", "show", "--status", "posted", "--aging", "overdue"]` and returns bill records.
 34. **All drill-down commands use valid command registry**: No invented commands, no shell syntax, no environment variable substitution.
 
 **Failure Modes and Edge Cases**:
