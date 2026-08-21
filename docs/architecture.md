@@ -1168,7 +1168,7 @@ Domain and application layers import no ORM. Persistence contracts (ports) are d
 - **Decimal math**: Bun-native exact arithmetic first. decimal.js and other decimal candidates remain unapproved and require individual proof; all paths use the domain wrapper and never floats.
 - **Migrations**: Separate SQLite, PostgreSQL, and MySQL histories with shared logical IDs and checksums. Migration libraries remain unapproved candidates and must prove fresh install, every supported upgrade, replay/checksum behavior, and pinned-Bun execution.
 - **Testing**: bun:test (Bun native).
-- **Build/distribution**: Bun build and one Bun-embedded platform-specific single-file executable for macOS arm64, Linux x64, and Linux arm64. Released operation must not require or invoke Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback. PostgreSQL and MySQL drivers, migrations, conformance, and target-platform proofs are mandatory release evidence even though remote database configuration is optional for a user.
+- **Build/distribution**: Bun build and one Bun-embedded platform-specific single-file executable for macOS arm64, Linux x64, and Linux arm64. The released executable must not require or invoke a separately installed Node runtime, Node subprocess, Node lifecycle hook, separately installed Bun runtime, Bun subprocess, or Bun lifecycle hook; externally bundled npm-compatible packages may be included only after individual Bun proof. This does not prohibit proof-gated third-party packages bundled into the single executable, nor the packaged `agent-bahi` binary being invoked by skills. No source distribution or package/bin fallback is permitted. PostgreSQL and MySQL drivers, migrations, conformance, and target-platform proofs are mandatory release evidence even though remote database configuration is optional for a user.
 
 ### SQLite Default Configuration
 
@@ -1512,7 +1512,7 @@ Workflow:
    - [TX] Create and post a current-period journal dated April 2026+ that links to the original March fact and records the correction.
    - Original March remains locked; April entry is visible as linked adjustment with source reference and reason.
    - No reversal or re-posting of March; correction is a separate April entry explicitly linked to original.
-   - **[T-008 Invalidation]**: In the same transaction, atomically enumerate every generated report and filing case/snapshot that referenced the original March journal or the corrected source document. Mark each as `STALE/DRIFTED` with the correction operation ID and timestamp. Block their reuse/export/submission as current until deliberate regeneration, review, and applicable re-close. Prior exported or submitted artifacts remain immutable and visible with their original state/evidence. If atomic enumeration and marking fails, the entire correction transaction fails and rolls back; no partial/silent state.
+   - **[T-008 Invalidation]**: In the same transaction, atomically enumerate every generated report, filing case/snapshot, and audit pack that referenced the original March journal or the corrected source document. Mark each as `STALE/DRIFTED` with the correction operation ID and timestamp. Block their reuse/export/submission as current until deliberate regeneration, review, and applicable re-close. Prior exported or submitted artifacts remain immutable and visible with their original state/evidence. If atomic enumeration and marking fails, the entire correction transaction fails and rolls back; no partial/silent state.
 
 ### 6. GSTR-1 Preparation → JSON → Manual Portal → ARN
 
@@ -1686,7 +1686,7 @@ STK-001 through STK-006 must be resolved by passing proof spikes. **This gate mu
 - Bun build on all target platforms.
 - Release exactly one Bun-embedded single-file executable for each of macOS arm64, Linux x64, and Linux arm64.
 - Required PostgreSQL and MySQL drivers and migration assets work on all platforms; dialect conformance and target-platform proofs are mandatory release evidence.
-- Prove skills invoke only the packaged `agent-bahi` executable and that no released path invokes Node, a Node subprocess, a Node lifecycle hook, a separate Bun runtime, source distribution, or package/bin fallback.
+- The released executable must not require or invoke a separately installed Node runtime, Node subprocess, Node lifecycle hook, separately installed Bun runtime, Bun subprocess, or Bun lifecycle hook; externally bundled npm-compatible packages may be included only after individual Bun proof. This does not prohibit proof-gated third-party packages bundled into the single executable, nor the packaged `agent-bahi` binary being invoked by skills. No source distribution or package/bin fallback is permitted.
 
 Each spike produces a decision update, not production code.
 
