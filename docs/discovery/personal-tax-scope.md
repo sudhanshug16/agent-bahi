@@ -1,8 +1,8 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** PT-001, PT-002, PT-003, PT-004, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005, PT-007, PT-010, PT-014, and PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
-Sudhanshu's explicit owner approvals of PT-001, PT-002, PT-003, PT-004, and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
+Sudhanshu's explicit owner approvals of PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
 
 ## 1. Verdict and scope
 
@@ -61,7 +61,7 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-PT-001, PT-002, PT-003, PT-004, and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
+PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005, PT-007, PT-010, PT-014, and PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
@@ -207,9 +207,9 @@ The TaxCase membership snapshot is one sealed normalized set created at case cre
 <a id="pt-006"></a>
 ### PT-006: Year-specific, fact-driven form selection
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** The form is selected from official year-specific eligibility predicates and frozen taxpayer facts.
+**Decision:** The form is selected from official year-specific eligibility predicates and frozen taxpayer facts. Income-tax return form selection is deterministic from complete taxpayer facts plus the official year/period-specific eligibility rule snapshot. Prior-year form is not authority; user/agent preference cannot override statutory eligibility. Missing/conflicting facts or rule bindings produce REVIEW/BLOCK.
 
 **AY 2026-27 baseline:** Where business or profession income exists, ITR-1 and ITR-2 are excluded. ITR-4 is selected only if the official presumptive-return predicates are satisfied; otherwise ITR-3 is selected.
 
@@ -218,6 +218,8 @@ There is no generic form priority order, threshold shortcut, business-assets sho
 **Failure mode:** A prior form or a structural schema match is treated as proof of legal eligibility.
 
 **Control:** Selection records the evaluated facts, official predicate identifiers, source snapshot, and unresolved branches. Unresolved eligibility returns REVIEW/BLOCK.
+
+**Note:** PT-007 AuthorityPack sourcing/binding remains unresolved and does not prevent owner approval of this semantic rule.
 
 <a id="pt-007"></a>
 ### PT-007: Bind period, trigger, and four independent official bindings
@@ -241,9 +243,9 @@ The FY 2025-26 case binds the Income-tax Act 1961 and AY 2026-27 context. The Ta
 <a id="pt-008"></a>
 ### PT-008: Preserve AIS, TIS, and 26AS artifacts
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Preserve raw AIS, including its TIS values, and raw 26AS as immutable, hashed evidence. Reconcile without overwrite.
+**Decision:** Preserve raw AIS, including its TIS values, and raw 26AS as immutable, hashed evidence. Reconcile without overwrite. Preserve raw AIS/TIS/26AS and related government artifacts immutably with hashes/provenance. Reconcile them against books/bank/broker evidence without overwriting either side or auto-declaring a winner. Record explicit reconciliation outcomes; unresolved conflict remains visible.
 
 AIS is non-exhaustive and may contain securities or SFT data. TIS is a category-wise AIS summary, not tax computation. 26AS is non-exhaustive TDS/TCS-focused evidence and may include salary withholding.
 
@@ -252,6 +254,8 @@ The books remain the canonical accounting records. A difference produces a linke
 **Failure mode:** Imported AIS or 26AS values are mistaken for the complete return and self-assessed income is omitted.
 
 **Control:** Keep artifact hash, parser version, source period, identity, raw bytes, derived records, reconciliation outcome, and reviewer evidence.
+
+**Note:** Do not decide PT-010 READY tolerance here.
 
 <a id="pt-009"></a>
 ### PT-009: Hashed file-first acquisition; future AA only
@@ -286,9 +290,11 @@ User or CA acknowledgement can provide review evidence, but it cannot relabel a 
 <a id="pt-011"></a>
 ### PT-011: GST output follows business BookSet and GSTIN
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** GST output belongs to an applicable business BookSet and GSTIN. A personal source location or personal label alone never decides treatment. Payment-source account/label (e.g., personal SBI bank) never decides economic owner or GST treatment. GST ownership, output, input-credit analysis is bound only to the explicit business BookSet + GSTIN + period + evidence/rule snapshot. Personal BookSet retains funding/settlement facts but never owns GST solely because its bank paid.
+**Decision:** GST output belongs to an applicable business BookSet and GSTIN. Preserve the repaired PT-003-aligned mechanics at current HEAD: payment source never decides economic owner/GST. Personal-bank-paid business bill uses linked due-from/due-to or separately human-confirmed capital purpose; business BookSet owns expense and any eligible GST only under correct GSTIN/period/evidence/rules; no fictional business-bank receipt, reversal, duplicate settlement, cash, expense, or GST. Later reimbursement is separate linked event.
+
+A personal source location or personal label alone never decides treatment. Payment-source account/label (e.g., personal SBI bank) never decides economic owner or GST treatment. GST ownership, output, input-credit analysis is bound only to the explicit business BookSet + GSTIN + period + evidence/rule snapshot. Personal BookSet retains funding/settlement facts but never owns GST solely because its bank paid.
 
 For a personal bank directly paying a business expense (e.g., proprietor's SBI account paying a ₹23,600 software bill), the correct mechanics follow PT-003 Example 2:
 
@@ -302,20 +308,24 @@ Each leg is linked, each BookSet balances, and there is no double cash/expense/G
 <a id="pt-012"></a>
 ### PT-012: Effective-dated TDS, TCS, and remittance gate
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** TDS, TCS, and remittance handling is selected by effective-dated role and transaction facts. FY 2025-26 uses the Income-tax Act 1961 rule pack. Tax Year 2026-27 uses the Income-tax Act 2025 rule pack.
+**Decision:** TDS/TCS/remittance selection uses effective-dated transaction date, payer/collector role, payee facts, transaction nature, and official rule snapshot. Vendor labels/current generic rates/manual guesses are not authority. Missing/stale/conflicting statutory facts/rules/evidence fail closed. Exact rates/thresholds/forms/dates remain sourced official facts, not owner-configurable policy.
+
+TDS, TCS, and remittance handling is selected by effective-dated role and transaction facts. FY 2025-26 uses the Income-tax Act 1961 rule pack. Tax Year 2026-27 uses the Income-tax Act 2025 rule pack.
 
 No branch example, form example, section, rate, threshold, or due date is embedded here. The applicable branch must be loaded from the frozen source pack in [tds-tcs-compliance-matrix.md](tds-tcs-compliance-matrix.md).
 
 Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor label, or BookSet label cannot substitute for the role and transaction facts.
 
-<a id="pt-013"></a>
+<a id=”pt-013”></a>
 ### PT-013: Filing-specific states and evidence (Issue #1)
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision (Issue #1):** Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status uses exactly these five normalized labels: `submitted`, `verified`, `processed`, `defective`, `case_transferred_to_assessing_officer`. They correspond to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq), which must be retained with filing-specific bound evidence.
+**Decision (Issue #1):** Local lifecycle (prepared/validated/exported) is separate from portal/government status. Export never implies upload/submission/verification/processing. A government status such as submitted is recorded only by an explicit action and bound filing-specific receipt/acknowledgement/evidence; preserve exact raw label/evidence and do not infer later states from elapsed time. Every export creates an immutable activity/audit event. Configurable automation may create a reminder/activity asking whether it was submitted. User may dismiss/remind later; dismissal never means submitted and does not delete audit history.
+
+Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status uses exactly these five normalized labels: `submitted`, `verified`, `processed`, `defective`, `case_transferred_to_assessing_officer`. They correspond to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq), which must be retained with filing-specific bound evidence.
 
 The normalized-to-raw mapping is fixed by that source: `submitted` → “Submitted and pending for e-Verification / Verification”; `verified` → “Successfully e-Verified / Verified”; `processed` → “Processed”; `defective` → “Defective”; `case_transferred_to_assessing_officer` → “Case transferred to Assessing Officer”.
 
@@ -324,6 +334,8 @@ Record filing-specific acknowledgement, verification or ITR-V evidence, the exac
 The product records evidence supplied by the taxpayer or CA; it does not infer a later portal state from elapsed time or from a local export. Internal states (prepared, exported) are never mistaken for external government status.
 
 **Failure mode:** A prepared export is reported as filed, an acknowledgement is reported as processed without filing-specific status evidence, an invalid legal consequence is stored as a portal status, or Form 16A is classified as portal status instead of TDS evidence.
+
+**Note:** Exact FilingSnapshot/ExportRun object split remains part of unresolved PT-005 refinement; do not pre-approve it here.
 
 <a id="pt-014"></a>
 ### PT-014: Tenant-wide read-only status and explicit mutation scope
@@ -345,9 +357,11 @@ Ambiguity returns `AMBIGUOUS_BOOKSET` or `AMBIGUOUS_TAXCASE`; the command does n
 <a id="pt-015"></a>
 ### PT-015: Privacy and security boundary
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Product analytics telemetry is off by default for personal-tax data. Required protected audit and security logs remain. Evidence and secrets are protected, remote database connections use TLS, logs are redacted, and actor/resource scope plus deployment and purpose classification are recorded.
+**Decision (baseline, optional future privacy mode deferred):** Default local/file-first; explicitly configured remote DB remains allowed but is intentional. Raw PAN, credentials, secrets, personal documents, or sensitive financial payloads must not appear in product analytics telemetry or ordinary logs. Preserve necessary security/audit logs using IDs/hashes/redacted metadata. Authorized local CLI may show full data; an optional UI/output masking "privacy mode" is future roadmap, not V1 implementation and not a reason to weaken baseline logging/telemetry controls. Network/cloud/external-agent sharing requires explicit configuration/opt-in and auditability. Do not claim DPDP/CERT-In or other legal compliance absent deployment-specific research.
+
+Product analytics telemetry is off by default for personal-tax data. Required protected audit and security logs remain. Evidence and secrets are protected, remote database connections use TLS, logs are redacted, and actor/resource scope plus deployment and purpose classification are recorded.
 
 The boundary is evidence protection, not a blanket privacy or compliance claim. The [DPDP Act](https://www.meity.gov.in/static/uploads/2024/02/Digital-Personal-Data-Protection-Act-2023.pdf) and official [DPDP Rules page](https://www.meity.gov.in/documents/act-and-policies/digital-personal-data-protection-rules-2025-gDOxUjMtQWa) are sources for personal-data research. CERT-In Directions under section 70B are cited only for duties that apply to a covered entity, security incident, log, or reporting condition; they do not establish a universal product compliance claim.
 
