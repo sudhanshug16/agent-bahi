@@ -507,7 +507,9 @@ Reconciliation is an action/checkpoint and append-only observation, not a `curre
 **For high-consequence actions** (period close, payroll finalization, filing snapshot, bank reconciliation):
 
 1. **Prepare**: Compute plan without side effects; return preview and plan hash/ID.
-2. **Validate**: User or agent reviews preview; hashes match; approves.
+2. **Validate**: A human reviews the preview and explicitly confirms it;
+   hashes must match. An agent or skill may prepare and validate only; neither
+   may approve a high-consequence action.
 3. **Commit**: Recompute to verify plan matches preview; acquire locks; post atomically. If plan diverged, abort and re-prepare.
 
 Dry-run is always side-effect-free.
@@ -525,6 +527,11 @@ Dry-run is always side-effect-free.
 - **Rule versions**: Effective-dated rule pack versions used in the plan.
 - **Action class**: Posting, period-lock, payroll-finalize, etc.
 - **Approval decision**: Actor and policy class (auto-commit, requires-review, human-approval, etc.).
+- **Reconciliation/allocation confirmation**: For a bank match or payment
+  allocation, this must be a recorded explicit human confirmation bound to the
+  exact plan hash, source, target, amount, currency/rate, and expected entity
+  versions. Auto-commit, policy, workflow, agent, or skill approval cannot
+  substitute for it.
 - **Expiry**: Plan tokens expire after a configurable TTL (e.g., 24 hours).
 - **Immutability**: Signed/hashed; any modification invalidates the token.
 
@@ -682,7 +689,7 @@ candidate with a new monotonic number linked to the failed lineage.
 ### Bank Statement Line State Machine
 
 ```
-Imported → Proposed (skill-matched candidates) → Reviewed/Approved (user selects) → Persisted → Reconciled
+Imported → Proposed (skill-matched candidates) → Human-Confirmed (exact plan) → Persisted → Reconciled
 ```
 
 **Distinction**: Proposal ≠ Match. Proposal is non-deterministic candidate; match is explicit validated persistence.
@@ -1242,11 +1249,19 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
       - Dr. Accounts Receivable (total invoice amount) | Cr. Revenue (taxable/net amount) + Cr. Output Tax (tax components, if applicable).
    2. [EXT] Issue invoice to customer (email, portal, external system).
    3. Bank statement arrives; includes customer payment.
-   4. Bank reconciliation skill proposes match: statement line ↔ payment record.
-   5. [REVIEW] Skill validation checks (tenant, amount, currency, status).
-   6. [TX] Persist match + evidence.
+   4. Bank reconciliation skill prepares a non-posting match plan binding the
+      statement line, payment record, target invoice, amount, currency/rate,
+      evidence, and plan hash.
+   5. [REVIEW] Validate tenant, amount, currency, status, and require a
+      recorded explicit human confirmation bound to that exact plan. An agent
+      or skill may propose and validate only; neither may approve.
+   6. [TX] Revalidate the confirmation binding and expected versions, then
+      persist the allocation and evidence atomically.
    7. [TX] Post payment journal: Dr. Bank | Cr. Accounts Receivable.
-   8. AR aged report shows invoice fully settled.
+   8. Derive invoice state from the remaining unallocated amount: a positive
+      remainder leaves the invoice `Posted` with a `Partially Allocated`
+      derived status; zero remainder makes it `Settled`. An explicit audited
+      close-out may also make it `Settled`.
 
 ### 2. Vendor Bill → Posting/Payment → ITC Pending/Matched/Claimed Reconciliation
 
@@ -1296,10 +1311,15 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
 3. Skill invokes bank-reconciliation flow.
 4. Skill gathers open AR/AP records; proposes matches (non-deterministic, may fail to match).
 5. [REVIEW] Skill surfaces candidates: amount, date, vendor/customer.
-6. Agent/user selects/approves matches.
-7. Skill invokes CLI `reconciliation match` command per selected match.
-8. [TX] CLI validates tenant, account, currency, amount, state transitions, idempotency.
-9. [TX] Persist match + provenance (skill version, evidence hash, actor, outcome).
+6. [REVIEW] A human explicitly confirms the exact match plan (source line,
+   target, amount, currency/rate, evidence, and plan hash). An agent or skill
+   cannot approve the match.
+7. Skill invokes CLI `reconciliation match` only with that recorded human
+   confirmation bound to the selected plan.
+8. [TX] CLI validates tenant, account, currency, amount, confirmation binding,
+   state transitions, and idempotency.
+9. [TX] Persist match + provenance (skill version, evidence hash, human
+   confirmation, actor, and outcome); no workflow can self-authorize.
 10. Remaining unmatched items shown for next cycle.
 
 ### 4. Payroll Inputs → Compute → Review/Finalize → Journal → Payslip → Bank CSV → Debit/Reconcile → Statutory Evidence
