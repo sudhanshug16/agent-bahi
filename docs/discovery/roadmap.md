@@ -58,51 +58,65 @@ Before Phase 1 implementation begins:
 - CLI operations are explicit, deterministic, and reject invalid changes before state mutation
 - Schema passes integration tests across all document workflows
 
-## Phase 2: Agent Skills Layer
+## Phase 2: Skill Contracts and Manifests
 
-**Goal**: Add versioned agent job skills that orchestrate and verify engine workflows.
+**Goal**: Define and version the skill contract and initial job-skill catalog without implementing skills or embedding accounting rules.
 
 **Scope**:
-- Define and version the skill contract in `skill-architecture.md`
-- Establish the initial job-skill catalog without embedding accounting rules in skills
-- Require skills to use explicit CLI commands and return evidence, validation results, and audit metadata
-- Automate routine, high-confidence work; route ambiguity to an explicit exception
-- Use Zoho Books automation parity as the minimum initial automation baseline
+- Define versioned skill contract in `skill-architecture.md`: purpose, compatible engine/rule versions, required commands, inputs, evidence, deterministic gates, permitted external calls, approval policy, exception routes, verification, and outputs
+- Establish the initial job-skill catalog as contract declarations only (no skill implementation code)
+- Specify skill prerequisites, command boundaries, validation rules, and exception routes
+- Document how skills observe, validate, and report outcomes through evidence and audit metadata
+- Design skill versioning, compatibility ranges, and deprecation policies
+- Define the relationship between skills and the deterministic rules engine (skills orchestrate, engine enforces rules)
 
 **Exit Conditions**:
-- The initial skill catalog is represented by versioned contracts with prerequisites, command boundaries, validation, and exception routes
-- Skills can prove what they observed and what they changed through evidence and audit metadata
-- Zoho Books automation parity is met as the minimum initial automation baseline
+- The initial skill catalog is fully specified by versioned contracts with prerequisites, command boundaries, validation, and exception routes
+- Skill-contract schema is defined and validated against the initial catalog
+- Engine CLI commands referenced by skills are stable and can support orchestration
+- Skill versioning and compatibility policy is documented
+- Documentation provides clear guidance for future skill implementation and review
 
-## Phase 3: Document/Posting Lifecycle and Agent Safety Gates
+## Phase 3: Deterministic Lifecycle and Posting Engine
 
-**Goal**: Implement document creation, posting, reversal, and agent-driven edits with safety boundaries.
+**Goal**: Implement the document state machine, deterministic posting pipeline, and agent safety boundaries for all document types.
 
 **Scope**:
-- Document state machine (Draft → Posted → Closed)
-- Posting pipeline with audit trail
-- Reversal and correction patterns
-- Agent safety gates: what edits agents can make and when
+- Implement document state machine: Draft → Validated → Posted → Settled (with explicit state transitions and validation gates at each boundary)
+- Posting pipeline with audit trail, deterministic numbering, and immutable postings
+- Reversal and correction patterns with full lineage (original, reversal, replacement, reason)
+- Agent safety gates: permission checks, edit boundaries, and automation policy enforcement at each state
+- Implement high-consequence commit gates (prepare/preview → validate → commit with plan hashing)
+- Reconciliation of posted entries to external evidence and source documents
 
 **Exit Conditions**:
-- Documents post deterministically with locked history
-- Reversals and corrections produce clean audit trails
-- Agent operations validated against permission gates
+- Documents transition deterministically through all states with locked history
+- Reversals and corrections produce clean immutable audit trails
+- All agent operations validated against permission gates and automation policy
+- Posted entries are never mutable except through reversal/replacement lineage
+- Reconciliation links postings to evidence and source documents
+- Bank reconciliation, period close, and payroll finalization use explicit prepare/commit gates
 
-## Phase 4: Daily Bookkeeping Workflows
+## Phase 4: Daily Workflows, Executable Skills, and Zoho Parity
 
-**Goal**: Support routine daily accounting operations natively.
+**Goal**: Build executable skills and CLI workflows for routine daily accounting operations, achieving Zoho Books automation parity as the minimum baseline.
 
 **Scope**:
-- Invoice and bill creation, aging tracking
-- Payment matching and clearing
+- Implement initial job-skills from Phase 2 contracts (invoice creation, bill recording, payment matching, expense categorization, journal entries)
+- Invoice and bill creation with validation, aging tracking, and automated tax treatment
+- Payment matching and clearing with multi-currency support and exchange-gain/loss calculation
 - Expense recording and categorization, including native evidence, employee claims, advances, reimbursements, and corporate-card workflows
-- Manual journal entries
+- Manual journal entry creation with validation and audit trail
+- Skills orchestrate engine commands, validate results, and return evidence/audit metadata
+- Automated tests verify Zoho Books parity: same day's transactions produce equivalent ledger state
 
 **Exit Conditions**:
-- All daily workflows automated and tested
-- User can book a typical day's transactions end-to-end
-- No Zoho Books reference needed for daily work
+- Initial skill catalog is fully implemented and tested against Phase 2 contracts
+- User can book a typical day's transactions end-to-end via CLI or skills
+- All daily workflows produce deterministic ledger entries and audit trails
+- Zoho Books automation parity is achieved as the minimum initial automation baseline
+- Skill failures are routed to explicit exceptions, not silently applied
+- No Zoho Books reference needed for daily bookkeeping; agent-bahi is self-contained and deterministic
 
 ## Phase 5: Payroll and Employee Compliance
 

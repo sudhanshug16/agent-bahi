@@ -2,6 +2,8 @@
 
 **Note**: This document records Sudhanshu's confirmed decisions. For RECOMMENDED architecture choices awaiting review, see [Provisional Architecture Decisions](architecture-decisions.md). RECOMMENDED entries in that docket are working defaults, not yet SETTLED user decisions.
 
+**Tentative Entries**: See [Tentative Decisions and Overnight Protocol](tentative-decisions.md) for planning defaults selected while the owner is unavailable (not owner-approved) and for open research items. Tentative entries include explicit reversal paths and owner-review status. Once owner approves a tentative entry, it becomes a SETTLED_OWNER_DECISION and is documented here.
+
 ## Confirmed
 
 - **Product/repository/package/CLI name**: agent-bahi, selected 2026-08-20
