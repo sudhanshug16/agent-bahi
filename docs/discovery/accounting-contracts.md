@@ -1119,20 +1119,24 @@ FX_AP = K - B                      signed payable FX result
 
 `Q_doc` and `K` come from the document/open-item allocation; `Q_paid` and `B`
 come from the actual bank settlement. `Q_doc * R_paid` is not a bank-value
-shortcut. `F` is separate and never changes realized FX. For an incoming
-receipt, post gross cash `B` first and then, if charged from that event, post
-`Dr Bank-fee expense F / Cr Bank/Cash F`; the net bank increase is `B-F`. For
-an outgoing payment, post gross cash `B` and the same separate fee journal;
-the net bank decrease is `B+F`. Rounding occurs once at the declared
-base-currency posting stage and any residual rounding unit is an explicit
-fee/FX rounding role, never silently dropped.
+shortcut. The canonical posting is exactly two cash-settlement legs: first
+post actual gross bank cash once to the appropriate unapplied control, then
+clear that control against AR/AP in the allocation/reclassification leg. The
+table below is the two-leg posting, not an additional aggregate journal; the
+allocation leg includes realized FX and never reposts Bank/Cash. `F` is
+separate and never changes realized FX. For an incoming receipt, the separate
+fee journal `Dr Bank-fee expense F / Cr Bank/Cash F` may reduce the net bank
+balance after the one gross cash leg; for an outgoing payment it increases the
+net bank decrease by `F`. Rounding occurs once at the declared base-currency
+posting stage and any residual rounding unit is an explicit fee/FX rounding
+role, never silently dropped.
 
-| Open item | Condition | Base-currency settlement journal |
-| --- | --- | --- |
-| Receivable | `FX_AR >= 0` | `Dr Bank/Cash B`; `Cr Accounts Receivable K`; `Cr Realized FX Gain FX_AR`. |
-| Receivable | `FX_AR < 0` | `Dr Bank/Cash B`; `Dr Realized FX Loss -FX_AR`; `Cr Accounts Receivable K`. |
-| Payable | `FX_AP >= 0` | `Dr Accounts Payable K`; `Cr Bank/Cash B`; `Cr Realized FX Gain FX_AP`. |
-| Payable | `FX_AP < 0` | `Dr Accounts Payable K`; `Dr Realized FX Loss -FX_AP`; `Cr Bank/Cash B`. |
+| Open item | Condition | Cash-first leg (posted once) | Allocation/reclassification leg (no Bank/Cash repost) |
+| --- | --- | --- | --- |
+| Receivable | `FX_AR >= 0` | `Dr Bank/Cash B`; `Cr Unapplied Customer Receipts B`. | `Dr Unapplied Customer Receipts B`; `Cr Accounts Receivable K`; `Cr Realized FX Gain FX_AR`. |
+| Receivable | `FX_AR < 0` | `Dr Bank/Cash B`; `Cr Unapplied Customer Receipts B`. | `Dr Unapplied Customer Receipts B`; `Dr Realized FX Loss -FX_AR`; `Cr Accounts Receivable K`. |
+| Payable | `FX_AP >= 0` | `Dr Unapplied Supplier Payments B`; `Cr Bank/Cash B`. | `Dr Accounts Payable K`; `Cr Unapplied Supplier Payments B`; `Cr Realized FX Gain FX_AP`. |
+| Payable | `FX_AP < 0` | `Dr Unapplied Supplier Payments B`; `Cr Bank/Cash B`. | `Dr Accounts Payable K`; `Dr Realized FX Loss -FX_AP`; `Cr Unapplied Supplier Payments B`. |
 
 The document-to-base rate and any original rate are retained to explain the
 document, but settlement uses current `K` so a prior revaluation is not
@@ -1144,13 +1148,19 @@ table above; do not post another copy of `U`.
 
 **Sign examples and partial settlements.** A €100 receivable slice with
 `K=₹10,000`, actual receipt `Q_paid=€98`, `R_paid=₹90/€`, gives `B=₹8,820`
-and `FX_AR=-₹1,180`: `Dr Bank ₹8,820; Dr Realized FX Loss ₹1,180; Cr AR
-₹10,000`. A €100 payable slice with `K=₹10,000`, actual payment `€102` at
-`₹90/€`, gives `B=₹9,180` and `FX_AP=₹820`: `Dr AP ₹10,000; Cr Bank ₹9,180;
+and `FX_AR=-₹1,180`: cash-first leg `Dr Bank ₹8,820; Cr Unapplied Customer
+Receipts ₹8,820`; allocation leg `Dr Unapplied Customer Receipts ₹8,820; Dr
+Realized FX Loss ₹1,180; Cr AR ₹10,000`. A €100 payable slice with
+`K=₹10,000`, actual payment `€102` at `₹90/€`, gives `B=₹9,180` and
+`FX_AP=₹820`: cash-first leg `Dr Unapplied Supplier Payments ₹9,180; Cr Bank
+₹9,180`; allocation leg `Dr AP ₹10,000; Cr Unapplied Supplier Payments ₹9,180;
 Cr Realized FX Gain ₹820`. A partial payment stores only its allocated
-`Q_doc`, `K`, `Q_paid`, and `B`; the remaining document balance stays open.
-One payment allocated to multiple documents requires explicit per-slice paid
-amounts/rates and leaves any unallocated cash in the unapplied control.
+`Q_doc`, `K`, `Q_paid`, and `B`; the remaining document balance stays open and
+the cash-first leg is still posted only once. One payment allocated to multiple
+documents requires explicit per-slice paid amounts/rates and leaves any
+unallocated cash in the unapplied control. One idempotency key covers both
+legs, the allocation/reclassification, FX snapshot, and any partial slice;
+retry returns the original result and never creates a second Bank/Cash leg.
 
 **Deterministic revaluation formulas and direction table.** For open foreign
 quantity `Q_open`, prior carrying rate `R_prev`, and close rate `R_close`,
@@ -1230,10 +1240,11 @@ coincide.
 
 **Validation.** Validate cost arithmetic, source/document, asset class,
 capitalization policy, in-service date, account mappings, rule versions,
-period, and duplicate asset identity. A source document and source line may
-capitalize at most once: the engine enforces a unique
-`(tenant_id, source_document_id, source_line_id, capitalization_kind)` and
-returns `DUPLICATE_CAPITALIZATION` on a second attempt. Tax schedule
+period, and duplicate asset identity. An immutable source document and source
+line may capitalize at most once, regardless of whether the requested posting
+is a bill-line, direct-cash, or other capitalization kind: the engine enforces
+a unique `(tenant_id, source_document_id, source_line_id)` and returns
+`DUPLICATE_CAPITALIZATION` on any second attempt or second kind. Tax schedule
 calculations fail closed without an applicable effective rule. Book schedule
 defaults are configuration, not hard-coded law. Do not infer ITC from
 capitalization or receipt presence.
@@ -1255,8 +1266,10 @@ Dr Fixed-asset cost role (and eligible recoverable-tax role only when valid)
   Cr Bank/Cash
 ```
 
-The asset register links to the source journal and source line; source
-document/line idempotency prevents bill-plus-manual double posting.
+The asset register links to the source journal and source line. The same
+`(tenant_id, source_document_id, source_line_id)` idempotency identity applies
+to direct/manual and bill-line acquisition, so a bill-plus-manual attempt (or
+any second capitalization kind) is rejected rather than double-posted.
 
 Book depreciation run:
 

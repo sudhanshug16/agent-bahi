@@ -94,6 +94,10 @@ allocation, persist `Q_doc` (document amount), `K` (carrying base removed),
 `B = round(Q_paid * R_paid)` (bank base value). Realized FX is `B-K` for a
 receivable and `K-B` for a payable. Bank cash never uses document quantity;
 partial slices and unapplied residuals remain separately identifiable.
+The posting model records the actual Bank/Cash leg once against the relevant
+unapplied-cash control, then clears that control against AR/AP in the
+allocation/reclassification leg; realized FX belongs to the latter leg and
+must not repost Bank/Cash. Aggregate report views are not additional journals.
 
 Period-end revaluation of open foreign-currency items is represented by an
 auditable adjustment linked to the affected open items, rate, date, actor, and
@@ -123,8 +127,8 @@ an AP bill line carrying asset-capitalization metadata: its source journal posts
 `Dr Fixed asset / Cr Accounts Payable` and creates the asset-register record
 from that journal. A direct cash/manual acquisition has its own one-time
 `Dr Fixed asset / Cr Bank/Cash` journal. The unique key
-`(tenant_id, source_document_id, source_line_id, capitalization_kind)` is
-idempotent; a second owner or second attempt returns
+`(tenant_id, source_document_id, source_line_id)` is idempotent across all
+capitalization kinds; a second owner, second kind, or second attempt returns
 `DUPLICATE_CAPITALIZATION` and cannot post another asset cost.
 
 Settlement invariants are also data-model constraints: payment cash is posted

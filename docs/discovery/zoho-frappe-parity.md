@@ -66,6 +66,14 @@ A blank or "NOT CONFIRMED" cell indicates the feature could not be verified from
 
 ---
 
+Settlement posting is cash-first across the parity summaries: actual Bank/Cash
+is posted once to the relevant unapplied-cash control, then allocation clears
+that control against AR/AP. Realized FX is included in the allocation or
+reclassification balancing leg and never reposts Bank/Cash. Any table or report
+that shows Bank/Cash with AR/AP and FX together is aggregate presentation only,
+not another journal. Partial slices and idempotent retries follow the
+[canonical accounting contract](accounting-contracts.md#13-fx-realization-and-period-end-revaluation).
+
 ## Banking and Reconciliation
 
 | Feature | Zoho Books India | Source | Frappe Books | Source | Agent-Bahi Choice | Scope | Reason |

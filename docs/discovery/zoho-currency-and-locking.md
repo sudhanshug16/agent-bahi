@@ -42,7 +42,10 @@ from the actual paid amount times that paid-currency base rate, never from
 document quantity. The engine posts realized exchange gain/loss separately
 from bank fees. These are separate accounting components even when they arrive
 in one bank event; partial settlements persist each slice and leave the
-remainder open.
+remainder open. Posting remains cash-first: actual Bank/Cash is posted exactly
+once to the relevant unapplied-cash control, then the allocation/reclassification
+leg clears that control against AR/AP and carries realized FX without reposting
+Bank/Cash. Any aggregate display is reporting-only.
 
 ### Period-end revaluation
 

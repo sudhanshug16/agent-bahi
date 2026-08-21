@@ -314,6 +314,14 @@ receivable FX is `B - carrying_base_removed`, payable FX is
 `carrying_base_removed - B`. Bank cash never uses document quantity. Unapplied
 residuals remain open and partial slices retain their own values.
 
+Settlement posting is cash-first: the actual bank amount `B` is posted exactly
+once to `Bank/Cash` against the relevant unapplied-cash control, then the
+allocation/reclassification leg clears that control against AR/AP. Realized FX
+is part of that second balancing leg and never causes a second Bank/Cash
+posting. Any aggregate settlement presentation that displays Bank/Cash,
+AR/AP, and realized FX together is reporting-only and authorizes no additional
+journal.
+
 **CurrencyRateSnapshot**
 Immutable exchange rate: date, document currency, base currency, rate, source, timestamp. Attached to document at creation and never changed.
 
@@ -675,9 +683,9 @@ implementation authorization.
 metadata, that bill posting is the sole owner: `Dr Fixed Asset | Cr AP` and the
 asset-register record is created from that source journal. Direct cash/manual
 acquisition has its own one-time `Dr Fixed Asset | Cr Bank/Cash` journal.
-The engine enforces unique `(tenant_id, source_document_id, source_line_id,
-capitalization_kind)` and rejects a second capitalization; it never posts a
-bill-plus-manual duplicate.
+The engine enforces unique `(tenant_id, source_document_id, source_line_id)`
+and rejects any second capitalization, including a different capitalization
+kind or journal; it never posts a bill-plus-manual duplicate.
 
 ---
 
