@@ -37,7 +37,7 @@ These are confirmed by Sudhanshu or existing discovery docs and form the foundat
 
 - **Reporting allocations explicit** ([decisions.md § Confirmed](decisions.md#confirmed)): Tenants may define optional reporting dimensions (tags). When one amount is allocated across tags, it must use explicit split source lines (e.g., ₹60,000 Project A + ₹40,000 Project B), with one unambiguous tag per split and totals reconciling to the source.
 
-- **Bank matches as evidence** ([decisions.md § Confirmed](decisions.md#confirmed)): Agent-proposed bank matches become facts only through explicit deterministic persistence; the engine contains no hidden AI matching decision.
+- **Bank matches as evidence** ([decisions.md § Confirmed](decisions.md#confirmed)): Agent/skill-proposed bank matches remain non-posting suggestions. They become facts only after a recorded human confirmation is cryptographically or deterministically bound to the exact plan ID/digest, bank source line, target document/payment, amount, currency and FX snapshot, expected versions, tenant, actor, and timestamp; missing, stale, or mismatched confirmation returns `RECONCILIATION_CONFIRMATION_REQUIRED`, `STALE_RECONCILIATION_PLAN`, or `RECONCILIATION_PLAN_MISMATCH` and fails closed. The engine contains no hidden AI matching decision.
 
 - **Payroll boundary** ([decisions.md § Confirmed](decisions.md#confirmed)): Attendance/leave/HRMS and employee portal are out. Payroll consumes approved pay inputs, generates payslips, bank CSV, and statutory outputs.
 
@@ -95,7 +95,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 **ARC-006: Optimistic concurrency with explicit locks for high-consequence mutations**
 
-- **Recommendation**: Use optimistic concurrency (version checks) generally. Serialize (exclusive locks) on posting-number allocation, document finalization, period locks/unlocks, payroll finalization, reconciliation decisions, and filing snapshots. Conflicts fail visibly; never last-write-wins.
+- **Recommendation**: Use optimistic concurrency (version checks) generally. Serialize (exclusive locks) on posting-number allocation, document finalization, period locks/unlocks, payroll finalization, reconciliation decisions, and filing snapshots. Period locks reject all ledger/settlement mutations: create/edit/delete/issue/post/void/reverse, payment creation/posting, allocation/deallocation/reallocation, bank reconciliation/unreconciliation, notes, refunds, write-offs, reclassification, depreciation, FX adjustments, disposal, tax/payroll journals, opening balances, and journal imports/posting; evidence-only attachments/imports are the sole exception. Conflicts fail visibly; never last-write-wins.
 - **Alternative**: Pessimistic locking everywhere; or no locking (last-write-wins).
 - **Rationale**: Optimistic concurrency scales for routine edits. Exclusive locks for high-consequence operations (posting, period close) prevent silent conflicts and make serialization explicit in the code.
 - **Silent failure prevented**: Two agents finalizing the same document with different line items, two users closing a month and only one taking effect.

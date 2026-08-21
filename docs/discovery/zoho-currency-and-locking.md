@@ -28,17 +28,21 @@ used to convert that document currency to base currency. Reports aggregate in
 base currency, while drill-down exposes the original currency and amounts.
 Changing a later rate cannot rewrite the document or its original posting.
 
-The exact rate source is configurable and remains undecided. The record must
-still identify the rate used and its relevant timestamp or effective date so
-that a posting can be audited without assuming a particular provider.
+The exact rate source is configurable and remains **T-004 TENTATIVE -
+NOT OWNER-APPROVED / OPEN RESEARCH**. The record must still identify the rate
+used and its relevant timestamp or effective date so that a posting can be
+audited without assuming a particular provider.
 
 ### Settlements, realized FX, and fees
 
-A settlement preserves the bank or paid currency and amount, the amount
-applied in the document currency, and the rate used for that application. The
-engine posts the resulting realized exchange gain or loss separately from bank
-fees. These are separate accounting components even when they arrive in one
-bank event.
+A settlement preserves the document currency/amount and carrying base value
+removed, actual paid currency/amount, paid-currency-to-base rate snapshot, bank
+base value, allocation amount, and realized FX. Bank cash is always derived
+from the actual paid amount times that paid-currency base rate, never from
+document quantity. The engine posts realized exchange gain/loss separately
+from bank fees. These are separate accounting components even when they arrive
+in one bank event; partial settlements persist each slice and leave the
+remainder open.
 
 ### Period-end revaluation
 
@@ -51,29 +55,59 @@ original transaction and from settlement-time realized FX.
 ### Fixed assets
 
 The asset register, automatic depreciation, and disposal tracking are in scope.
-The exact depreciation methods and book-versus-tax schedules remain undecided;
-neither is implied by the Zoho currency or locking pages.
+The exact depreciation methods and book-versus-tax schedules remain **T-003
+TENTATIVE - NOT OWNER-APPROVED**; neither is implied by the Zoho currency or
+locking pages.
 
 ### Reconciliation boundary
 
 A scheduler or user invokes a bank-reconciliation skill. The skill gathers
-evidence and proposes matches, and proposal generation may be non-deterministic.
-The CLI is the explicit write boundary: it validates tenant, account,
-currency, amount, status, and idempotency, then persists the match and its
-provenance. The engine applies only the explicit validated match and contains
-no hidden AI decision.
+evidence and proposes non-posting matches; deterministic suggestions may be
+generated, but they cannot persist. Before any match or allocation mutates
+state, the CLI requires a recorded human confirmation cryptographically or
+deterministically bound to the exact plan ID/digest, bank source line, target
+document/payment, amount, currency and FX snapshot, expected versions, tenant,
+actor, and timestamp. Missing/stale/mismatched confirmation returns
+`RECONCILIATION_CONFIRMATION_REQUIRED`, `STALE_RECONCILIATION_PLAN`, or
+`RECONCILIATION_PLAN_MISMATCH`. Agents, skills, schedulers, workflows, and
+policies cannot approve. The CLI is the sole write boundary.
 
 ### Period locking and late documents
 
 agent-bahi uses a global or module-specific inclusive `locked-through` date.
-Create, edit, delete, and void within that range are rejected. Unlock or
-bounded partial unlock requires a reason, actor, audit record, and impact
-preview. A late document is routed through a skill-guided choice between
+Create, edit, delete, issue, post, void, reverse, payment creation/posting,
+allocation/deallocation/reallocation, bank reconciliation/unreconciliation,
+credit/debit note, refund, write-off, reclassification, depreciation, FX
+revaluation/realization adjustment, asset disposal, tax/payroll journal,
+opening-balance change, and journal import/posting within that range are
+rejected. Evidence-only attachments/imports that do not alter books are the
+sole exception. Full unlock uses `period unlock preview|commit`; partial unlock
+uses `period partial-unlock preview|commit`. Preview binds tenant, scope/range,
+current lock version, impact, actor, reason, and plan hash; commit requires
+recorded explicit human confirmation. Missing or stale preview, invalid range,
+changed lock, or missing confirmation returns `UNLOCK_PREVIEW_REQUIRED`,
+`PARTIAL_UNLOCK_INVALID`, `UNLOCK_CONFLICT`, or `LOCK_CONFIRMATION_REQUIRED`.
+A late document is routed through
+a skill-guided choice between
 controlled reopen/original-date posting and a current-period adjustment. The
 system never makes that choice automatically.
 
-Intercompany paired posting remains undecided and is not inferred from Zoho's
-module-locking or currency behavior.
+Cross-tenant/intercompany paired posting is **DEFERRED and PROHIBITED in V1**
+and is not inferred from Zoho's module-locking or currency behavior. Each
+tenant transaction is independent; a mistaken inter-entity payment is recorded
+separately in each tenant with explicit due-to/due-from or correction journals
+only when the user records them. No cross-tenant atomic write is allowed.
+
+Settlement direction and reporting follow the canonical contract: a customer
+receipt reduces a positive customer AR balance and a supplier payment reduces a
+positive supplier AP balance; signed credit balances require a compatible future
+offset or refund. `Settled` requires zero signed open balance after allocation
+and any explicitly approved balanced credit, write-off, or refund journal.
+Accrual reports use posted journal dates and ledger/as-of balances. Cash-basis
+P&L recognizes settled components on payment/allocation dates; unapplied cash,
+overpayments, trial balance, balance sheet, aging, tax lanes, FX, fees,
+revaluation, and depreciation follow the explicit semantics in the
+[canonical accounting contract](accounting-contracts.md#16-reports-and-derived-views).
 
 ## Design boundary summary
 

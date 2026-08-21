@@ -1,6 +1,6 @@
 # Discovery Roadmap
 
-The current focus is the native core and its first automation baseline: building agent-bahi as a self-contained accounting system without external dependencies or importers in the active phase. Every tenant remains independent; no cross-tenant relationship feature is planned.
+The current focus is the native core and its first automation baseline: building agent-bahi as a self-contained accounting system without external dependencies or importers in the active phase. Every tenant remains independent; cross-tenant/intercompany paired posting is **DEFERRED and PROHIBITED in V1**. Mistaken inter-entity payments are represented separately in each tenant with explicit due-to/due-from or correction journals only when the user records them.
 
 ## Cross-cutting discovery milestone: verified GST baseline (2026-08-20)
 
@@ -102,12 +102,12 @@ Before Phase 1 implementation begins:
 **Goal**: Implement the document state machine, deterministic posting pipeline, and agent safety boundaries for all document types.
 
 **Scope**:
-- Implement document state machine: Draft → Validated → Posted → Settled (with explicit state transitions and validation gates at each boundary)
+- Implement document state machine: Draft → Validated → Posted → Settled, where partial/open is derived while Posted and Settled requires zero signed open balance after allocation plus an approved balanced credit/write-off/refund journal
 - Posting pipeline with audit trail, deterministic numbering, and immutable postings
 - Reversal and correction patterns with full lineage (original, reversal, replacement, reason)
 - Agent safety gates: permission checks, edit boundaries, and automation policy enforcement at each state
 - Implement high-consequence commit gates (prepare/preview → validate → commit with plan hashing)
-- Reconciliation of posted entries to external evidence and source documents
+- Reconciliation of posted entries to external evidence and source documents; proposals are non-posting and persistence requires recorded human confirmation bound to the exact plan digest, source line, target, amounts, FX snapshot, versions, tenant, actor, and timestamp
 
 **Exit Conditions**:
 - Documents transition deterministically through all states with locked history
@@ -115,7 +115,7 @@ Before Phase 1 implementation begins:
 - All agent operations validated against permission gates and automation policy
 - Posted entries are never mutable except through reversal/replacement lineage
 - Reconciliation links postings to evidence and source documents
-- Bank reconciliation, period close, and payroll finalization use explicit prepare/commit gates
+- Bank reconciliation, period close, and payroll finalization use explicit prepare/commit gates. Reconciliation proposals remain non-posting; persistence requires recorded human confirmation bound to the exact plan digest, source line, target, amounts, FX snapshot, versions, tenant, actor, and timestamp. Agents/skills/workflows cannot approve reconciliation.
 
 ## Phase 4: Daily Workflows, Executable Skills, and Zoho Parity
 
@@ -125,7 +125,7 @@ Before Phase 1 implementation begins:
 - Implement initial job-skills from Phase 2 contracts (invoice creation, bill recording, payment matching, expense categorization, journal entries)
 - Use the [Accounting Contracts](accounting-contracts.md) for the shared `Draft -> Validated -> Posted -> Settled` lifecycle, immutable correction lineage, account-role templates, and explicit allocation/reconciliation boundaries.
 - Invoice and bill creation with validation, aging tracking, and automated tax treatment
-- Payment matching and clearing with multi-currency support and exchange-gain/loss calculation
+- Payment matching and clearing with cash-first atomic payment posting, exact paid-currency FX formulas, and exchange-gain/loss calculation
 - Expense recording and categorization, including native evidence, employee claims, advances, reimbursements, and corporate-card workflows
 - Manual journal entry creation with validation and audit trail
 - Skills orchestrate engine commands, validate results, and return evidence/audit metadata

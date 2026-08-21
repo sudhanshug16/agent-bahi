@@ -13,7 +13,8 @@ Every tenant must have a default report basis whose value is either `cash` or `a
 
 ## Tenant Isolation and Immutable Corrections
 
-Every tenant is fully independent. There is no tenant relationship or
+Every tenant is fully independent. Cross-tenant/intercompany paired posting is
+**DEFERRED and PROHIBITED in V1**. There is no tenant relationship or
 intercompany table, no common-ownership model, and no cross-tenant transaction
 invariant. Every accounting command accepts exactly one tenant context and all
 records, accounts, evidence, locks, and postings belong to that tenant. An
@@ -87,13 +88,18 @@ cash account, the amount applied to each document in that document's currency,
 and the exchange rate used for the application. A settlement may therefore
 have different bank/paid-currency and document-currency values without losing
 either one. Bank fees and realized exchange gain or loss are separate posting
-components, not one undifferentiated settlement adjustment.
+components, not one undifferentiated settlement adjustment. For each
+allocation, persist `Q_doc` (document amount), `K` (carrying base removed),
+`Q_paid` (actual paid amount), `R_paid` (paid-currency-to-base rate), and
+`B = round(Q_paid * R_paid)` (bank base value). Realized FX is `B-K` for a
+receivable and `K-B` for a payable. Bank cash never uses document quantity;
+partial slices and unapplied residuals remain separately identifiable.
 
 Period-end revaluation of open foreign-currency items is represented by an
 auditable adjustment linked to the affected open items, rate, date, actor, and
 reason. It must not mutate the original document amounts or its immutable rate
-snapshot. The exact external rate source is configurable but remains
-undecided.
+snapshot. The exact external rate source is configurable but remains **T-004
+TENTATIVE - NOT OWNER-APPROVED / OPEN RESEARCH**.
 
 ## Fixed Assets
 
@@ -108,6 +114,28 @@ The relationship and exact methods remain configuration/policy boundaries, and
 the owner may reverse the tentative default without changing the asset-register
 or schedule identity seams. No method or rate may be hidden in the register.
 
+Capitalization has one posting owner per source line. The recommended owner is
+an AP bill line carrying asset-capitalization metadata: its source journal posts
+`Dr Fixed asset / Cr Accounts Payable` and creates the asset-register record
+from that journal. A direct cash/manual acquisition has its own one-time
+`Dr Fixed asset / Cr Bank/Cash` journal. The unique key
+`(tenant_id, source_document_id, source_line_id, capitalization_kind)` is
+idempotent; a second owner or second attempt returns
+`DUPLICATE_CAPITALIZATION` and cannot post another asset cost.
+
+Settlement invariants are also data-model constraints: payment cash is posted
+to bank/unapplied control before allocation, or both are committed atomically in
+that order; no allocation may reference an unposted payment. A customer receipt
+reduces only a positive customer AR debit/open item, and a supplier payment
+reduces only a positive supplier AP credit/open item. Signed credit balances are
+reserved for compatible future offsets or refund workflows. `Settled` is derived
+only at zero signed open balance after allocations plus an explicitly approved
+balanced credit, write-off, or refund journal; administrative close-out cannot
+clear it. Write-offs retain approval, reason, evidence, amount/tolerance,
+source/open-item linkage, and lock validation. Aging is derived from these
+ledger/open-item balances and cannot hide an uncleared amount. See the
+[canonical accounting contract](accounting-contracts.md).
+
 ## Bank Reconciliation
 
 Bank reconciliation is a bounded workflow across skills, CLI, and engine:
@@ -117,14 +145,22 @@ Bank reconciliation is a bounded workflow across skills, CLI, and engine:
    matches. Proposal generation may be non-deterministic.
 3. The CLI validates the tenant, bank account, currencies, amounts, eligible
    status and state transition, and idempotency key before persistence.
-4. The validated match and its provenance are persisted together. The engine
-   applies only the explicit, validated match; it does not make a hidden AI
-   decision.
+4. A proposal is non-posting and non-persistent. Before any match or
+   allocation mutates state, a recorded human confirmation must be
+   cryptographically or deterministically bound to the exact plan ID/digest,
+   bank source line, target document/payment, amount, currency and FX snapshot,
+   expected versions, tenant, actor, and timestamp. Missing/stale/mismatched
+   confirmation returns `RECONCILIATION_CONFIRMATION_REQUIRED`,
+   `STALE_RECONCILIATION_PLAN`, or `RECONCILIATION_PLAN_MISMATCH`.
+5. The validated match and its provenance are persisted together only after
+   that confirmation. Agents, skills, schedulers, workflows, and policies
+   cannot self-authorize persistence.
 
-Provenance must identify the evidence, proposal, skill version, explicit human
-confirmation, actor or scheduler, validation outcome, and idempotency key well
-enough to reproduce why the match was validated. A scheduler, skill, workflow,
-or agent cannot self-authorize persistence.
+Provenance must identify the evidence, proposal, exact plan digest, skill
+version, explicit human confirmation, actor and timestamp, tenant, expected
+versions, validation outcome, and idempotency key well enough to reproduce why
+the match was validated. A scheduler, skill, workflow, or agent cannot
+self-authorize persistence.
 
 An imported statement batch is uniquely keyed by tenant + bank account + raw
 file content hash. A line fingerprint uses canonical source fields and source
@@ -136,9 +172,14 @@ silently dropped.
 ## Period Locking
 
 Lock state supports either a global scope or a module-specific scope. Each lock
-has an inclusive `locked-through` date: create, edit, delete, and void
-operations for records in that date range are rejected by the authoritative
-engine boundary.
+has an inclusive `locked-through` date: create, edit, delete, issue, post,
+void, reverse, payment creation/posting, allocation/deallocation/reallocation,
+bank reconciliation/unreconciliation, credit/debit note, refund, write-off,
+reclassification, depreciation, FX revaluation/realization adjustment, asset
+disposal, tax/payroll journal, opening-balance change, and journal
+import/posting for records in that date range are rejected by the authoritative
+engine boundary. Evidence-only attachments/imports that do not alter books are
+the sole explicit exception.
 
 Unlocking or bounded partial unlocking requires a reason, acting principal,
 audit record, and impact preview before the change is applied. Full unlock uses

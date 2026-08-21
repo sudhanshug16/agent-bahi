@@ -39,8 +39,11 @@ exception rather than silently guessing.
 - Provide the explicit command surface used by people and skills.
 - Parse and validate command inputs before asking the engine to mutate state.
 - Make previews, requested changes, validation, and outcomes inspectable.
-- Validate and persist explicit bank-reconciliation matches, including tenant,
-  account, currency, amount, status, idempotency, and provenance checks.
+- Validate bank-reconciliation match plans, including tenant, account,
+  currency, amount, status, idempotency, and provenance checks. Persistence
+  requires a recorded human confirmation bound to the exact plan ID/digest,
+  bank source line, target document/payment, amount, currency and FX snapshot,
+  expected versions, tenant, actor, and timestamp.
 - Expose lock, unlock, and bounded partial-unlock previews and require the
   reason and actor metadata needed by the engine.
 - Return stable success, failure, and exception information for callers.
@@ -56,8 +59,10 @@ The CLI is a boundary and an interface, not an owner of accounting policy.
 - Stop and route an exception when the automation gate is not satisfied.
 - Return outputs and audit metadata tied to the skill version.
 - For bank reconciliation, gather evidence and propose candidate matches; a
-  proposal may be non-deterministic, but acceptance is an explicit validated
-  CLI operation rather than a hidden engine decision.
+  proposal may be deterministic or non-deterministic, but it is non-posting and
+  non-persistent. Acceptance is an explicit CLI operation only after recorded
+  human confirmation bound to the exact plan. Agents, skills, schedulers,
+  workflows, and policies cannot approve or persist a match/allocation.
 - For late documents in a locked period, guide the user through controlled
   reopen/original-date posting or a current-period adjustment; never choose
   automatically.
@@ -85,9 +90,11 @@ Every skill run must make the following visible:
 - **Versioning**: the skill definition and the run identify the skill version.
 - **Audit metadata**: the run records relevant actor, entity, timestamps,
   evidence references, commands, validation, and outcome metadata.
-- **Deterministic posting**: once a match or accounting choice is explicit and
-  validated, posting behavior is deterministic. A skill's candidate ranking
-  cannot alter ledger rules.
+- **Deterministic posting**: once a match or accounting choice is explicit,
+  validated, and (for a bank match or allocation) bound to a recorded human
+  confirmation for the exact plan, posting behavior is deterministic. A
+  skill's candidate ranking cannot alter ledger rules or substitute for that
+  confirmation.
 
 These requirements make a skill a bounded, reviewable workflow rather than an
 instruction for an agent to improvise accounting behavior.
@@ -140,20 +147,30 @@ of invented procedures:
 
 The bank-reconciliation skill is invoked by a scheduler or user. Its ordered
 workflow is to gather bank statement evidence and open-item evidence, produce
-one or more candidate matches, show the evidence and uncertainty, and invoke
-the explicit CLI persistence operation only after a recorded explicit human
-confirmation is bound to the exact selected candidate/proposal. No workflow,
-skill, scheduler, or agent authorization substitutes for that confirmation.
-The CLI validates tenant, bank account, currency, amount, status, and
-idempotency, then persists the match and provenance. Replaying the same
-idempotent request must not create a second match. The engine never silently
-chooses a match or runs an AI decision inside posting.
+one or more non-posting candidate matches, show the evidence and uncertainty,
+and invoke the explicit CLI persistence operation only after a recorded human
+confirmation is cryptographically or deterministically bound to the exact plan
+ID/digest, bank source line, target document/payment, amount, currency and FX
+snapshot, expected versions, tenant, actor, and timestamp. No workflow, skill,
+scheduler, agent, or policy authorization substitutes for that confirmation.
+Missing/stale/mismatched confirmation returns `RECONCILIATION_CONFIRMATION_REQUIRED`,
+`STALE_RECONCILIATION_PLAN`, or `RECONCILIATION_PLAN_MISMATCH`. The CLI
+validates tenant, bank account, currency, amount, status, and idempotency, then
+persists the match and provenance. Replaying the same idempotent request must
+not create a second match. The engine never silently chooses a match or runs an
+AI decision inside posting.
 
 ### Period-close and locking boundary
 
 The skill may prepare a lock or a late-document decision, but the engine owns
 the inclusive `locked-through` rule. Create, edit, delete, and void operations
-inside the locked range fail. Full unlock uses
+inside the locked range fail. This includes create/edit/delete/issue/post/void/
+reverse, payment creation/posting, allocation/deallocation/reallocation, bank
+reconciliation/unreconciliation, credit/debit note, refund, write-off,
+reclassification, depreciation, FX revaluation/realization adjustment, asset
+disposal, tax/payroll journals, opening-balance changes, and journal
+import/posting. Evidence-only attachments/imports that do not alter books are
+the sole exception. Full unlock uses
 `period unlock preview|commit`; bounded partial unlock uses
 `period partial-unlock preview|commit`. Both require tenant/scope, current
 lock version, explicit range, non-empty reason, impact preview, and recorded

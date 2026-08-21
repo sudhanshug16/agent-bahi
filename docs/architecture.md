@@ -18,7 +18,7 @@
 
 - **Default storage**: SQLite, deployable locally without external databases or services.
 - **Adapters**: PostgreSQL and MySQL supported through pluggable persistence ports and proven migration consistency across all dialects before release.
-- **Tenancy model**: One legal entity = one independent tenant. Sudhanshu's three legal entities (two private limited companies and one sole proprietorship) are three separate tenants with no cross-tenant relationships, paired entries, or intercompany modeling.
+- **Tenancy model**: One legal entity = one independent tenant. Sudhanshu's three legal entities (two private limited companies and one sole proprietorship) are three separate tenants. Cross-tenant/intercompany paired posting is **DEFERRED and PROHIBITED in V1**; mistaken inter-entity payments are represented separately in each tenant with explicit due-to/due-from or correction journals only when the user records them, never through a cross-tenant atomic write.
 - **GST registrations**: One tenant may have multiple GSTIN registrations; GST work, amounts, obligations, and evidence are scoped by tenant and GSTIN.
 - **Technology direction**: TypeScript + Bun is the current working direction. Final stack selections for ORM, CLI parser, decimal math, database drivers, and migrations are RECOMMENDED choices gated by Phase 1 proof spikes (§18).
 
@@ -56,7 +56,8 @@ These are failures that look complete while producing the wrong compliance/accou
 1. **Wrong tenant or GSTIN silently used**: Command executes against unintended tenant or GSTIN without visible confirmation.
 2. **Debit-credit imbalance**: Posting is not rejected despite unequal entries.
 3. **Duplicate retry**: Same command payload replayed creates second posting instead of idempotent return.
-4. **Number reuse**: Voided document number reused in same series/year/GSTIN.
+4. **Number reuse**: A voided, cancelled, failed, or reserved document number
+   is reused in the same series/year/GSTIN.
 5. **Stale rules applied silently**: Tax/compliance calculation uses old rule version without versioning.
 6. **Upload mistaken for filing**: JSON uploaded to portal treated as filed return with no portal-observed ARN.
 7. **Portal/books divergence unmissed**: GSTR-3B portal auto-population applied/used without review against books.
@@ -266,6 +267,16 @@ GST registration within a tenant; one tenant may have multiple; every GST operat
 **FiscalPeriod and Lock**
 Fiscal year and month/period boundaries; optional period locks prevent mutation within `locked-through` date range.
 
+**Period-lock mutation coverage**: A locked date rejects create, edit, delete,
+issue, post, void, reverse, payment creation/posting,
+allocation/deallocation/reallocation, bank reconciliation/unreconciliation,
+credit/debit note, refund, write-off, reclassification, depreciation, FX
+revaluation/realization adjustment, asset disposal, tax/payroll journals,
+opening-balance changes, and journal import/posting. Evidence-only
+attachments/imports that do not alter books are the sole exception. Unlock is
+an authorized, reasoned, audited operation with impact preview and explicit
+confirmation.
+
 **Account**
 Chart of accounts; account type (asset, liability, equity, revenue, expense); balance sheet vs. profit & loss classification; parent-child hierarchy; tenant-scoped.
 
@@ -295,10 +306,23 @@ Balanced accounting entries; atomic posting of multiple postings; may include mu
 Immutable ledger record: account, amount (minor units, currency), debit/credit, tenant, GSTIN (if applicable), date, source document, actor, timestamp.
 
 **Settlement / Allocation**
-Document payment or partial payment, with bank/cash currency, document currency, applied amounts, exchange rate used, and bank fees/FX gain-loss separation.
+Document payment or partial payment, with document-currency amount/carrying base
+value removed, actual paid currency/amount, paid-currency-to-base rate snapshot,
+bank base value, allocation amount, and bank-fee/realized-FX separation. For
+each slice, `B = round(actual_paid_amount * paid_currency_to_base_rate)`;
+receivable FX is `B - carrying_base_removed`, payable FX is
+`carrying_base_removed - B`. Bank cash never uses document quantity. Unapplied
+residuals remain open and partial slices retain their own values.
 
 **CurrencyRateSnapshot**
 Immutable exchange rate: date, document currency, base currency, rate, source, timestamp. Attached to document at creation and never changed.
+
+**Credit/refund clearing**: Customer credit notes initially credit signed AR;
+customer refunds debit that AR credit balance and credit bank. Vendor credits
+initially debit signed AP; supplier refunds debit bank and credit that AP debit
+balance. If a named refund control is used, AR/AP reclassification and cash
+legs commit atomically and the source balance plus control must both clear.
+Each refund has one idempotency identity over all legs.
 
 **ReportingSplit**
 Explicit allocation line when one source amount maps to multiple reporting tags: amount, tag assignment, source document reference.
@@ -493,8 +517,8 @@ Reconciliation is an action/checkpoint and append-only observation, not a `curre
 7. **Load aggregate (read-only preview)** → fetch current state for plan generation; do NOT lock yet.
 8. **Choose effective rules** → select versioned rule pack by date, GSTIN (if applicable), jurisdiction.
 9. **Pure domain plan** → compute deterministic outcome (e.g., journal entries, tax amounts, validation errors).
-10. **Show/validate gates** → return preview and plan hash/ID; ask user for approval if needed (prepare/commit pattern).
-11. **Load approval artifact** → for high-consequence actions, verify an unexpired plan/approval token matches the request payload (required by policy).
+10. **Show/validate gates** → return preview and plan hash/ID; require recorded explicit human confirmation where the operation's contract requires it (prepare/commit pattern).
+11. **Load approval artifact** → for high-consequence actions, verify an unexpired plan/approval token matches the request payload (required by policy). For reconciliation or allocation, this artifact is not an authorization: only the separately recorded exact human confirmation described below can permit persistence.
 12. **Atomic transaction** (final write):
     - **Load aggregate with expected version** → optimistic concurrency check (version=expected for conditional update; exactly one affected record; otherwise rollback/conflict). OR acquire exclusive lock for posting-number allocation, document finalization, period locks, payroll finalization, reconciliation, filing snapshots.
     - **Revalidate the plan/approval token, plan hash, and expected entity versions** (if required) inside the transaction.
@@ -526,12 +550,15 @@ Dry-run is always side-effect-free.
 - **Entity versions**: Expected versions of all mutated aggregates at plan time.
 - **Rule versions**: Effective-dated rule pack versions used in the plan.
 - **Action class**: Posting, period-lock, payroll-finalize, etc.
-- **Approval decision**: Actor and policy class (auto-commit, requires-review, human-approval, etc.).
+- **Policy classification**: Actor and policy class are retained as non-authorizing metadata (auto-commit, requires-review, human-confirmation-required, etc.); policy, workflow, agent, and skill status never authorizes a reconciliation or allocation mutation.
 - **Reconciliation/allocation confirmation**: For a bank match or payment
   allocation, this must be a recorded explicit human confirmation bound to the
-  exact plan hash, source, target, amount, currency/rate, and expected entity
-  versions. Auto-commit, policy, workflow, agent, or skill approval cannot
-  substitute for it.
+  exact plan ID/digest, bank source line, target document/payment, amount,
+  currency and FX snapshot, expected entity versions, tenant, actor, and
+  timestamp. The binding must be cryptographic or deterministic. Auto-commit,
+  policy, workflow, agent, or skill approval cannot substitute for it; missing,
+  stale, or mismatched bindings return `RECONCILIATION_CONFIRMATION_REQUIRED`,
+  `STALE_RECONCILIATION_PLAN`, or `RECONCILIATION_PLAN_MISMATCH`.
 - **Expiry**: Plan tokens expire after a configurable TTL (e.g., 24 hours).
 - **Immutability**: Signed/hashed; any modification invalidates the token.
 
@@ -644,6 +671,14 @@ NOT OWNER-APPROVED**. See [Tentative Decision T-003](discovery/tentative-decisio
 The choice is reversible; no SLM, WDV, rate, or tax schedule behavior is an
 implementation authorization.
 
+**Capitalization ownership**: When an AP bill line carries asset-capitalization
+metadata, that bill posting is the sole owner: `Dr Fixed Asset | Cr AP` and the
+asset-register record is created from that source journal. Direct cash/manual
+acquisition has its own one-time `Dr Fixed Asset | Cr Bank/Cash` journal.
+The engine enforces unique `(tenant_id, source_document_id, source_line_id,
+capitalization_kind)` and rejects a second capitalization; it never posts a
+bill-plus-manual duplicate.
+
 ---
 
 ## 10. State Machines
@@ -653,7 +688,7 @@ implementation authorization.
 **Documents without external issuance gating** (most transactions):
 
 ```
-Draft → Validated → Posted → Settled (full allocation or explicit audited close-out)
+Draft → Validated → Posted → Settled (zero signed open balance after allocation plus approved balanced credit/write-off/refund)
                       ↓
                   Void (pre-post reversal entry)
                   Correction (posted reversal + replacement)
@@ -665,15 +700,17 @@ Draft → Validated → Posted → Settled (full allocation or explicit audited 
 Draft → Validated → Issuance-Pending/Frozen (immutable candidate, number reserved with gap reason)
   → [IRP external call, unknown outcome reconciliation]
   → Issue-and-Post-Atomically (IRN/QR evidence recorded, number allocated, journal posted)
-  → Settled (full allocation or explicit audited close-out)
+  → Settled (zero signed open balance after allocation plus approved balanced credit/write-off/refund)
     ↓
   Void (pre-post) or Correction (post reversal + replacement)
 ```
 
 **Partial and Settled states**: Partial/open allocation is a derived view while
 the document remains `Posted`; it is not `Settled`. A document reaches
-`Settled` only when all amounts are allocated or an explicit audited close-out
-is recorded.
+`Settled` only when the signed open balance is zero after allocation plus an
+approved balanced credit, write-off, or refund journal. Administrative or
+audited close-out alone never settles AR/AP; aging derives from ledger/open-item
+balances and cannot hide an uncleared amount.
 
 **Issuance reservation failure**: An `Issuance-Pending/Frozen` candidate keeps
 its frozen payload, artifact hash, operation observations, and reserved number
@@ -938,7 +975,7 @@ Each skill defines immutable metadata:
 Defined per-action with review/auto-commit policy:
 
 1. **Read-only**: Evidence gathering, preview generation (no ledger mutation).
-2. **Draft/preparation**: Create draft document, prepare snapshot (user approval before finalization).
+2. **Draft/preparation**: Create draft document, prepare snapshot (recorded explicit human confirmation before finalization where required).
 3. **Accounting posting**: Post to ledger (requires explicit approval gate).
 4. **Lock/override**: Period lock changes, draft edits past deadline (explicit reason, audit record).
 5. **Statutory artifact**: Filing snapshot, export (immutable evidence; no auto-retry).
@@ -1197,9 +1234,20 @@ All reports derive from canonical stored state (invoices, bills, payments, posti
 
 **Fixed-basis reports**: Compliance reports use prescribed basis; inapplicable basis flag rejected with error.
 
-**Cash basis**: Reports over payments received/paid dates.
+**Cash basis**: P&L recognizes income/expense pro rata from settled document
+components on payment/allocation dates. A ₹100 invoice with a ₹40 payment
+recognizes ₹40 cash-basis revenue and leaves ₹60 deferred; the next ₹60
+payment recognizes the remainder. Unapplied cash and overpayments remain
+balance-sheet controls until applied. Refunds reverse on refund/linked
+allocation dates; credit/debit notes follow settlement/application dates.
+Taxes follow the jurisdiction-specific cash/accrual rule and fail closed when
+unknown. Realized FX and fees use settlement dates; revaluation and
+depreciation remain accrual-only unless an explicit supported cash policy says
+otherwise.
 
-**Accrual basis**: Reports over invoice/bill dates.
+**Accrual basis**: P&L recognizes from posted invoice/bill journal dates.
+Trial balance, balance sheet, and AR/AP aging remain ledger/as-of reports and
+never silently switch to payment-date accounting.
 
 ### Report Output Requirements
 
@@ -1250,18 +1298,22 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
    2. [EXT] Issue invoice to customer (email, portal, external system).
    3. Bank statement arrives; includes customer payment.
    4. Bank reconciliation skill prepares a non-posting match plan binding the
-      statement line, payment record, target invoice, amount, currency/rate,
-      evidence, and plan hash.
-   5. [REVIEW] Validate tenant, amount, currency, status, and require a
-      recorded explicit human confirmation bound to that exact plan. An agent
-      or skill may propose and validate only; neither may approve.
-   6. [TX] Revalidate the confirmation binding and expected versions, then
-      persist the allocation and evidence atomically.
-   7. [TX] Post payment journal: Dr. Bank | Cr. Accounts Receivable.
-   8. Derive invoice state from the remaining unallocated amount: a positive
+      statement line, target invoice, payment inputs, amount, currency/FX
+      snapshot, expected versions, tenant, actor, timestamp, and plan digest.
+   5. [REVIEW] A human explicitly confirms that exact plan. An agent or skill
+      may propose and validate only; neither may approve.
+   6. [TX] Revalidate the confirmation, versions, and idempotency key. First
+      create/post the payment to `Dr. Bank | Cr. Unapplied Customer Receipts`;
+      then apply the confirmed allocation with `Dr. Unapplied Customer
+      Receipts | Cr. Accounts Receivable`, in the same atomic transaction.
+      No allocation can reference an unposted/nonexistent payment, and retry
+      cannot duplicate cash.
+   7. Derive invoice state from the remaining unallocated amount: a positive
       remainder leaves the invoice `Posted` with a `Partially Allocated`
-      derived status; zero remainder makes it `Settled`. An explicit audited
-      close-out may also make it `Settled`.
+      derived status; zero remainder makes it `Settled` only after the signed
+      AR balance is zero. An approved balanced credit, refund, or write-off
+      journal may be the final zeroing event; administrative close-out alone
+      never settles it.
 
 ### 2. Vendor Bill → Posting/Payment → ITC Pending/Matched/Claimed Reconciliation
 
@@ -1298,9 +1350,14 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
    - Never credit nil; always reconcile to the gross amount allocated at posting.
 10. Payment due date arrives. This changes aging/reminder status only; due date
     alone never clears AP and never makes the bill settled.
-11. [TX] After an actual, validated supplier payment is observed, persist an
-    explicit payment allocation and post `Dr. AP | Cr. Bank/Cash` (AP decreases;
-    bank decreases). A vendor credit allocation is the other explicit clearing
+11. [TX] After an actual, validated supplier payment is observed, a human
+    confirms the exact allocation plan, and that confirmation is bound to the
+    plan ID/digest, source line, target document/payment, amount, currency and
+    FX snapshot, expected versions, tenant, actor, and timestamp, first post
+    `Dr. Unapplied Supplier Payments | Cr. Bank/Cash`, then apply it with
+    `Dr. AP | Cr. Unapplied Supplier Payments`, in one atomic transaction.
+    No allocation references an unposted payment; idempotency prevents
+    duplicate cash. A vendor credit allocation is the other explicit clearing
     path; neither a due date nor a bank-file export clears AP.
 12. GST return prep reflects ITC claim sourced from eligible booked bill + matching evidence (never portal-only, never GSTR-2B-alone). Claim/utilization state is separate from eligibility/reclassification; Portal 2B alone never proves eligibility.
 
@@ -1311,9 +1368,11 @@ Concrete numbered steps; `[TX]` = database transaction, `[EXT]` = external actio
 3. Skill invokes bank-reconciliation flow.
 4. Skill gathers open AR/AP records; proposes matches (non-deterministic, may fail to match).
 5. [REVIEW] Skill surfaces candidates: amount, date, vendor/customer.
-6. [REVIEW] A human explicitly confirms the exact match plan (source line,
-   target, amount, currency/rate, evidence, and plan hash). An agent or skill
-   cannot approve the match.
+6. [REVIEW] A human explicitly confirms the exact match plan. The persisted
+   confirmation is cryptographically or deterministically bound to the plan
+   ID/digest, source line, target document/payment, amount, currency and FX
+   snapshot, expected versions, tenant, actor, and timestamp. An agent, skill,
+   scheduler, workflow, or policy cannot approve the match.
 7. Skill invokes CLI `reconciliation match` only with that recorded human
    confirmation bound to the selected plan.
 8. [TX] CLI validates tenant, account, currency, amount, confirmation binding,
@@ -1415,7 +1474,7 @@ Workflow:
 5. [REVIEW] Skill presents two options:
    a. Reopen March period → post invoice at original date → relock.
    b. Post current-period adjustment (dummy invoice at April 1) → reconcile difference.
-6. Agent/user selects option (e.g., reopen March).
+6. Human selects and explicitly confirms the option (e.g., reopen March).
 7. [TX] Unlock with reason, actor, audit record; impact preview confirmed.
 8. [TX] Finalize invoice at original date, post journal.
 9. [TX] Relock period with new audit entry.
@@ -1638,6 +1697,12 @@ Every slice acceptance requires:
 - **Deterministic JSON output** (all dialects): Same query returns same JSON (order, precision, field presence); versions match schema.
 - **CLI JSON/help**: Commands stable, JSON schema versioned, human help accurate.
 - **Audit/evidence**: Every mutation auditable with actor/timestamp; evidence linked correctly.
+- **Reconciliation confirmation**: A deterministic suggestion never persists; missing, stale, or mismatched exact-plan human confirmation returns the stated confirmation/stale-plan error without mutation.
+- **Payment atomicity**: A payment posts bank/unapplied cash before allocation, retries do not duplicate cash, and an unposted payment cannot be allocated.
+- **Refund/credit clearing**: Customer and supplier refund journals clear their signed AR/AP credit balance and refund control without an orphan balance.
+- **FX settlement**: Bank cash equals actual paid currency multiplied by its immutable base-rate snapshot; carrying value, fees, rounding, and realized FX reconcile independently for full and partial settlement.
+- **Capitalization ownership**: An AP bill asset line or direct cash acquisition posts exactly once; a repeated source-document/source-line attempt returns `DUPLICATE_CAPITALIZATION`.
+- **Settlement and direction**: Partial/open remains Posted; Settled requires zero signed open balance after allocations and approved balanced credit/write-off/refund; opposite-direction note allocation fails closed.
 - **Migration/restore**: Fresh-install and all upgrade paths pass on all three dialects; restore-in-isolation verification (tenant isolation, debit=credit).
 - **Failure-path tests**: Invalid inputs rejected; lock conflicts surfaced; external timeouts handled; GSTIN ambiguity fails explicitly.
 
