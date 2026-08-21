@@ -5,7 +5,7 @@
 
 This document compares core bookkeeping features between **Zoho Books (India)** and **Frappe Books** to inform agent-bahi design decisions. The goal is to use Zoho as a behavioral parity target—ensuring agent-bahi covers similar accounting and compliance use cases—while preserving agent-bahi's stricter requirements for tenant isolation, reversal lineage, evidence, and deterministic CLI behavior.
 
-**Frappe Books License & Reference Policy**: Frappe Books is distributed under AGPL-3.0 (verified from https://github.com/frappe/books/blob/master/LICENSE). Per [T-002: Frappe Books as Behavior/Concept Reference Only](tentative-decisions.md#entry-t-002-frappe-books-as-behaviorconcept-reference-only), Frappe Books is treated as **concept and behavior reference only**. No code, schema, UI patterns, or prose are copied. Concepts may inform design but are documented in agent-bahi's own words. Agent-bahi's recommended license (Apache-2.0) is **tentative only**; owner review and explicit approval are required before finalizing any license choice.
+**Frappe Books License & Reference Policy**: Frappe Books is distributed under AGPL-3.0 (verified from https://github.com/frappe/books/blob/master/LICENSE). Per [T-002: Frappe Books as Behavior/Concept Reference Only](tentative-decisions.md#entry-t-002-frappe-books-as-behaviorconcept-reference-only), Frappe Books is treated as **study and behavior/concept reference only**. No Frappe source code, schema, UI patterns, or prose are copied or adapted. Agent-bahi is MIT-licensed per owner-approved T-002. Concepts may inform independent design but are documented in agent-bahi's own words.
 
 ---
 
@@ -221,7 +221,7 @@ families and errors stated in the Period Locking row and canonical contract.
 
 This matrix informs and validates [T-002: Frappe Books as Behavior/Concept Reference Only](tentative-decisions.md#entry-t-002-frappe-books-as-behaviorconcept-reference-only):
 
-- **T-002** ("Frappe Books as Behavior/Concept Reference Only") is reflected in this matrix's treatment of Frappe Books: behavior reference (no code/schema copy), AGPL-3.0 license confirmation, and concept inspiration only.
+- **T-002** ("Frappe Books as Behavior/Concept Reference Only") is reflected in this matrix's treatment of Frappe Books: study and behavior reference only (no Frappe source code, schema, UI patterns, or prose copied/adapted), AGPL-3.0 license confirmation of Frappe Books, and independent concept inspiration documented in agent-bahi's own words. Agent-bahi is MIT-licensed per owner-approved T-002.
 - Zoho Books is the validated behavioral parity target, ensuring agent-bahi covers similar accounting and India-compliance workflows.
 - Agent-bahi's stricter requirements (immutable lineage, evidence linkage, deterministic CLI, tenant isolation) are architectural choices, not mandatory by Zoho/Frappe.
 

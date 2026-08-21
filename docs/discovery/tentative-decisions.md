@@ -620,13 +620,16 @@ Owner-approved for the policy: preserve original filing, ARN/status/rejection/no
 
 **Exact Meaning and Binding Status**: T-011 establishes TypeScript + Bun as the
 selected language/runtime for agent-bahi. Bun-native APIs are used first. The
-release contains no separate Node runtime, Node subprocess, or Node hook. This
-is not approval of implementation or any specific library/tool choice; every
-third-party package remains individually gated. Gate0 proof spikes (STK-001
-through STK-006) are a hard prerequisite for validation and must pass before
-implementation is authorized. Gate0 remains mandatory but is not authorized by
-this docs review. If Gate0 reveals a blocker, work stops; any stack override
-after that blocker is a new explicit owner decision.
+released executable must not require or invoke a separately installed Node runtime,
+Node subprocess, Node lifecycle hook, separately installed Bun runtime, Bun
+subprocess, or Bun lifecycle hook. This does not prohibit proof-gated third-party
+packages bundled into the single executable, nor the packaged `agent-bahi` binary
+being invoked by skills. This is not approval of implementation or any specific
+library/tool choice; every third-party package remains individually gated. Gate0
+proof spikes (STK-001 through STK-006) are a hard prerequisite for validation and
+must pass before implementation is authorized. Gate0 remains mandatory but is not
+authorized by this docs review. If Gate0 reveals a blocker, work stops; any stack
+override after that blocker is a new explicit owner decision.
 
 **Selected Stack and Gate0 Prerequisite**:
 - **Selected**: TypeScript + Bun, with Bun-native runtime, package, test, and
@@ -715,15 +718,18 @@ runtime or language is authorized by this entry.
 
 **Owner Review Status**:
 Owner-approved. TypeScript + Bun is selected as the language and runtime, with
-Bun-native APIs first and no separate Node runtime, Node subprocess, or Node
-hook in the release. Gate0 remains mandatory but is not authorized by this docs
-review; it must pass with the exact Bun version, `bun --revision`, official Bun
-artifact checksum(s), exact individually approved dependency versions,
+Bun-native APIs first. The released executable must not require or invoke a
+separately installed Node runtime, Node subprocess, Node lifecycle hook, separately
+installed Bun runtime, Bun subprocess, or Bun lifecycle hook. This does not prohibit
+proof-gated third-party packages bundled into the single executable, nor the packaged
+`agent-bahi` binary being invoked by skills. Gate0 remains mandatory but is not
+authorized by this docs review; it must pass with the exact Bun version, `bun --revision`,
+official Bun artifact checksum(s), exact individually approved dependency versions,
 dependency artifact/package integrity and checksum evidence, lockfile, and
-CI/release pins recorded. Gate0 does not
-authorize implementation. If Gate0 reveals a blocker, work stops and any stack
-override is a new explicit owner decision. No implementation is authorized
-until Gate0 and the separate implementation approval are complete.
+CI/release pins recorded. Gate0 does not authorize implementation. If Gate0 reveals
+a blocker, work stops and any stack override is a new explicit owner decision. No
+implementation is authorized until Gate0 and the separate implementation approval
+are complete.
 
 ---
 
@@ -770,7 +776,7 @@ Entries T-001 through T-011 extend and clarify settled decisions from [decisions
 - **T-008** (new): Allow controlled user corrections/deletions after FY/report/audit/filing via preview/reason/confirmation/unlock. Use reversal/replacement, version or tombstone lineage. Prior artifacts remain immutable. Affected derived reports/filing/audit cases marked STALE/DRIFTED. No destructive overwrite or automatic government action. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
 - **T-009** (migrated from statutory-workflow-contracts.md examples): Always allow text and CSV operator exports of prepared/validated data; do not invent arbitrary JSON as statutory artifact; government upload only after official current format/utility/schema/portal verification. Form 140/141 export is research-gated and deferred. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Preserve original filing, ARN/status/rejection/notices/evidence and explicit correction lineage; no unverified automatic revised/amended/defective-return submission. Return-amendment adapters are research-gated and deferred. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-011** (new): TypeScript + Bun selected with Bun-native APIs first and no separate Node runtime, subprocess, or hooks in release. Gate0 is mandatory but not authorized; at execution time it must resolve the authoritative latest stable Bun release and record the exact version, `bun --revision`, official Bun artifact checksum(s), exact individually approved dependency versions, dependency artifact/package integrity and checksum evidence, lockfile, and version/checksum pins in CI and release metadata. Any post-blocker stack override is a new owner decision, and no implementation is authorized until separate approval.
+- **T-011** (new): TypeScript + Bun selected with Bun-native APIs first. Released executable must not require or invoke separately installed Node runtime, Node subprocess, Node lifecycle hook, separately installed Bun runtime, Bun subprocess, or Bun lifecycle hook. Does not prohibit proof-gated third-party packages bundled into single executable or packaged `agent-bahi` binary invoked by skills. Gate0 is mandatory but not authorized; at execution time it must resolve the authoritative latest stable Bun release and record the exact version, `bun --revision`, official Bun artifact checksum(s), exact individually approved dependency versions, dependency artifact/package integrity and checksum evidence, lockfile, and version/checksum pins in CI and release metadata. Any post-blocker stack override is a new owner decision, and no implementation is authorized until separate approval.
 
 **None of these entries override settled decisions.** They provide implementation detail and working defaults for decisions that remain open or recommend future owner approval. Filing-specific settled decisions always override T-001.
 

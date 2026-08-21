@@ -45,7 +45,7 @@ The following are explicitly out of scope for v1 and remain deferred:
 3. **Immutability and audit**: Posted documents are immutable except through explicit reversal + replacement. Every decision is auditable with actor, source, timestamp, and evidence links.
 4. **Compliance freshness**: Effective-dated rules ensure compliance decisions reflect the rules in effect at decision time. Stale/missing rules fail closed for statutory operations.
 5. **Deterministic agent interface**: Skills invoke deterministic CLI commands with stable schemas. No hidden accounting decisions in prompt or agent heuristics.
-6. **Local simplicity**: SQLite default. The released executable requires no separately installed Node or Bun runtime, Node subprocess/lifecycle hook, or external service for core local operation; individually approved npm-compatible packages may be bundled only after Bun proof. This does not imply zero third-party code.
+6. **Local simplicity**: SQLite default. The released executable must not require or invoke a separately installed Node runtime, Node subprocess, Node lifecycle hook, separately installed Bun runtime, Bun subprocess, or Bun lifecycle hook; externally bundled npm-compatible packages may be included only after individual Bun proof. This does not prohibit proof-gated third-party packages bundled into the single executable, nor the packaged `agent-bahi` binary being invoked by skills. No external service required for core local operation.
 7. **Dialect portability**: Multi-dialect support through adapters means zero coupling to one database.
 8. **Recoverability**: Immutable evidence, content-addressed blobs, and restore-in-isolation verification gates.
 
@@ -1287,11 +1287,11 @@ Reports never write to ledger or mutate documents. Read-model rebuilding is opti
 
 When a correction or late-document operation commits (via Workflow 5 Branch A, Branch B, or any explicit reversal+replacement), the same atomic transaction must:
 
-1. **Enumerate affected reports**: Query all generated reports (P&L, balance sheet, aging, reconciliation, compliance exports, custom tags/splits) that contain or reference the corrected posting(s), source document, filing period, or related aggregate.
-2. **Mark STALE/DRIFTED**: For each affected report snapshot, audit pack, or filing case, set a durable `stale_marker` with the correction operation ID, timestamp, reason, and link to the new corrected journal/document.
-3. **Block reuse/export/submission**: While marked `STALE/DRIFTED`, that report artifact cannot be re-exported, re-submitted to portal, or used as current evidence without explicit deliberate regeneration (recompute → validate → review → re-close if applicable). A regenerated report receives a new snapshot ID.
-4. **Preserve prior artifacts immutable**: Original exported reports remain visible with their original state, evidence binding, timestamp, and `STALE/DRIFTED` marker. Users/auditors can see the prior artifact, its marker, and link to the correction that invalidated it.
-5. **Atomic failure rolls back correction**: If enumeration, marking, or validation fails, the entire correction transaction rolls back. No partial/silent state; all-or-nothing invalidation or no correction.
+1. **Enumerate affected reports, filing cases, and audit packs**: Query all generated reports (P&L, balance sheet, aging, reconciliation, compliance exports, custom tags/splits), filing cases/snapshots (GSTR-1, GSTR-3B, income-tax, payroll, TDS/TCS, and other compliance filings), and audit packs that contain or reference the corrected posting(s), source document, filing period, or related aggregate.
+2. **Atomically mark STALE/DRIFTED**: For each affected report snapshot, filing case/snapshot, or audit pack, set a durable `stale_marker` with the correction operation ID, timestamp, reason, and link to the new corrected journal/document. All enumerated items must be marked in the same transaction; partial marking is not permitted.
+3. **Block reuse/export/submission**: While marked `STALE/DRIFTED`, that artifact cannot be re-exported, re-submitted to portal, or used as current evidence without explicit deliberate regeneration (recompute → validate → review → re-close if applicable). A regenerated report receives a new snapshot ID.
+4. **Preserve prior artifacts immutable**: Original exported reports, filing cases, and audit packs remain visible with their original state, evidence binding, timestamp, and `STALE/DRIFTED` marker. Users/auditors can see the prior artifact, its marker, and link to the correction that invalidated it.
+5. **Atomic failure rolls back correction**: If enumeration, marking, or validation fails, the entire correction transaction rolls back. No partial/silent state; all-or-nothing invalidation or no correction. This preserves rollback/no-reuse semantics matching the global rule and Branch A.
 
 ---
 
