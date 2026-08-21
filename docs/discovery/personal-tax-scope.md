@@ -579,4 +579,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a discovery baseline. PT-001, PT-002, PT-003, and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. PT-001, PT-002, PT-003, PT-004, and PT-009 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
