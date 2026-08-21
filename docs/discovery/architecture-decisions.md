@@ -226,6 +226,14 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Agent skipping rows or double-processing on pagination, offset-based list returning gaps as new data is added.
 - **Reversal trigger**: If result sets become extremely large (millions of rows), consider streaming/subscription endpoints alongside pagination; the underlying order remains deterministic.
 
+**CLI-008: Deterministic tenant company-health status snapshot**
+
+- **Recommendation**: `agent-bahi status` is a top-level, tenant-scoped, read-only command producing one immutable snapshot of company health. It is owner-approved. One active tenant works without `--tenant`; multiple tenants require explicit selection. Snapshot includes ID, as-of timestamp, schema version, rule-pack versions, and content hash. Human and `--json` render from the same snapshot with identical facts, amounts, dates, and drill-down commands (never shell strings or secrets). Required sections: command/operation failures, blocks and partial completions, unreconciled bank lines, overdue customer invoices, unpaid vendor bills, missing evidence and pending approvals, compliance obligations with due dates and earliest deadlines, other material exceptions. Each section shows counts, material amounts in currency, urgency/severity, earliest due date, and argv-array drill-down command. Urgency is deterministic: statutory due dates and block state first, then tenant-configured materiality rules. Missing or unknown applicability/deadline/catalog shows `INCOMPLETE/UNKNOWN` and treats snapshot as partial; never infers healthy/none. Health states: `HEALTHY`, `ACTION_REQUIRED`, `BLOCKED`, `PARTIAL`. Snapshot acquisition succeeds with overall health even when company requires action; section failure returns distinct nonzero result with per-section outcome; this separates command failure from unhealthy books. No mutations, reconciliation triggers, approval, filing, or posting.
+- **Alternative**: Embedded health check in application startup or periodic background task; no explicit read-only command.
+- **Rationale**: Owner-approved contract enables agent-friendly deterministic health queries without hidden side effects. Immutable snapshots prevent query-time divergence; identical drill-downs enable navigation. Partial snapshots reveal incomplete data rather than silently inferring healthy.
+- **Silent failure prevented**: Query-time mutation triggered by health check, health state inferred from missing data, drill-down command containing secrets or shell code, divergence between human and JSON representations.
+- **Reversal trigger**: Health query becomes frequently called and performance-critical; consider materialized view or separate health-update job, with snapshot freshness as a configurable parameter.
+
 ### Skills
 
 **SKL-001: Versioned skill manifests with settled rules**

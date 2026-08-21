@@ -89,11 +89,211 @@ receipt never blocks gross expense or asset posting. The bookkeeping-support,
 business-purpose, income-tax deductibility, and GST ITC lanes remain separate;
 ITC is never inferred from an attachment or portal population alone.
 
-### 1.3 Common CLI and error contract
+### 1.3 Common CLI contract
 
 Command families use the names below as the stable discovery vocabulary. Exact
 parser spelling and schema versions are an **INTERNAL_ARCHITECTURE_DECISION**;
 the semantic operation and error code are binding.
+
+<a id="cli-008"></a>
+### 1.3.1 Company Health Status (CLI-008)
+
+`agent-bahi status` is a top-level, tenant-scoped, read-only command that
+produces a deterministic immutable snapshot of company health. It is **owner-approved**
+and generates no mutations, reconciliation triggers, posting, approval, filing,
+or other state changes.
+
+**Tenant Selection**:
+
+- Exactly one active tenant: no `--tenant` flag required; auto-select.
+- More than one active tenant: require explicit `--tenant <name>` or named session context.
+- Echo effective tenant in output.
+
+**Snapshot Immutability**:
+
+- Each invocation returns one immutable snapshot identified by snapshot ID,
+  as-of timestamp (effective date), schema version, and rule-pack version string.
+- Identical queries return identical snapshots from the same point in time; a later
+  query with a different as-of date returns a new distinct snapshot.
+- Snapshot metadata includes ID, as-of date, schema version, rule-pack versions
+  (comma-separated), content hash, and computation timestamp.
+
+**Output Determinism**:
+
+- Human output and `--json` (machine) mode render from **exactly the same snapshot**
+  and produce identical facts, amounts, dates, and drill-down commands.
+- Category ordering (sections), row ordering within sections, and drill-down
+  command ordering are deterministic and stable across runs.
+- Stdout contains the snapshot; stderr contains only progress, warnings, or
+  operational messages.
+
+**Required Sections**:
+
+Each section includes counts, material amounts (in applicable currency), urgency
+/severity classification, and earliest due date where applicable. All sections
+include an argv-array drill-down command (never a shell string or secret) that
+is valid against the command registry.
+
+1. **Command/Operation Failures**: Failed or blocked CLI operations with error codes,
+   remediation context, and drill-down command.
+2. **Blocks and Partial Completions**: Incomplete long-running operations (batch
+   imports, reconciliation attempts, closing procedures) with status and next steps.
+3. **Unreconciled Bank Lines**: Bank statement lines not yet matched to invoices,
+   bills, or payments; count and total amount by currency.
+4. **Overdue/Outstanding Customer Invoices**: AR aging with overdue totals, earliest
+   due date, and drill-down.
+5. **Unpaid/Overdue Vendor Bills**: AP aging with overdue totals, earliest due date,
+   and drill-down.
+6. **Missing/Insufficient Evidence and Pending Approvals/Reviews**: Visible
+   exceptions (receipts, tax classification, allocation approval, reconciliation
+   confirmation) with counts and drill-down.
+7. **Compliance Obligations**: Statutory due dates (GST filing, TDS, payroll,
+   income-tax, MCA) with status (not due, due, overdue, blocked), severity, and
+   drill-down.
+8. **Other Material Ledger/Readiness Exceptions**: Period locks, incomplete close,
+   ambiguous tax treatment, stale rules, missing rule packs, or other blocking
+   conditions.
+
+**Urgency and Severity**:
+
+Deterministic ordering:
+
+1. **Statutory/rule-pack due dates**: Overdue ≥ due today > due within N days (N
+   configurable per tenant; default 7 days).
+2. **Block state**: Blocked > Action Required > Healthy.
+3. **Tenant-configured materiality/risk rules**: Apply when applicability/deadline
+   /catalog is known and verified.
+4. If applicability, deadline, or statutory catalog is missing, unknown, or
+   OPEN_RESEARCH: mark `INCOMPLETE/UNKNOWN` and treat snapshot as partial; never
+   infer healthy or assume none.
+
+**Overall Health State** (machine data):
+
+- `HEALTHY`: No overdue obligations, no blocks, no material exceptions.
+- `ACTION_REQUIRED`: Upcoming obligations, non-blocking exceptions, or material
+  items requiring attention.
+- `BLOCKED`: Statutory due date passed, filing gate failed, reconciliation
+  confirmation required, or other blocking condition.
+- If any section fails to compute (rule pack unavailable, data corruption,
+  external service timeout): return distinct nonzero result with section-level
+  outcome recorded; the overall state is `PARTIAL` or `PARTIAL_FAILURE`.
+
+**Snapshot Failure Handling**:
+
+- Snapshot acquisition succeeds even when company health requires action; machine
+  data records overall health (`HEALTHY`, `ACTION_REQUIRED`, `BLOCKED`).
+- A section fails to compute when its data cannot be gathered (missing rule pack,
+  database corruption, timeout) or its deadline/applicability is unknown/missing:
+  record outcome (e.g., `RULE_PACK_MISSING`, `DATA_UNAVAILABLE`, `APPLICABILITY_UNKNOWN`)
+  and mark that section's visibility as partial.
+- Snapshot persists with per-section outcome; the entire snapshot is not rejected.
+  This separates command failure (unable to generate any snapshot) from unhealthy
+  books (snapshot complete but requires action).
+
+**JSON Schema**:
+
+```json
+{
+  "snapshot": {
+    "id": "<snapshot-id>",
+    "as_of_date": "2026-08-21",
+    "schema_version": "1.0",
+    "rule_pack_versions": "<comma-separated versions>",
+    "content_hash": "<sha256-hex>",
+    "computed_at": "2026-08-21T12:34:56Z"
+  },
+  "tenant_id": "<tenant>",
+  "overall_health": "HEALTHY|ACTION_REQUIRED|BLOCKED|PARTIAL",
+  "sections": [
+    {
+      "name": "command-failures",
+      "status": "HEALTHY|ACTION_REQUIRED|BLOCKED|PARTIAL|RULE_PACK_MISSING",
+      "count": 0,
+      "items": [
+        {
+          "code": "PERIOD_LOCKED",
+          "message": "Period locked through 2026-08-15",
+          "severity": "BLOCKED",
+          "drill_down": {
+            "command": "agent-bahi",
+            "args": ["period", "lock", "show"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "unreconciled-bank-lines",
+      "status": "HEALTHY|ACTION_REQUIRED",
+      "count": 5,
+      "total_amount": 50000,
+      "currency": "INR",
+      "earliest_date": "2026-08-10",
+      "drill_down": {
+        "command": "agent-bahi",
+        "args": ["reconciliation", "show", "--status", "unmatched"]
+      }
+    },
+    {
+      "name": "compliance-obligations",
+      "status": "HEALTHY|ACTION_REQUIRED|BLOCKED|INCOMPLETE",
+      "items": [
+        {
+          "obligation": "GSTR-1 FY 2026-07",
+          "status": "due|overdue",
+          "due_date": "2026-08-25",
+          "severity": "ACTION_REQUIRED|BLOCKED",
+          "drill_down": {
+            "command": "agent-bahi",
+            "args": ["gst", "filing", "show", "--gstin", "18AABCT1234H1Z0"]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Human Output Format**:
+
+A bounded text summary showing the same facts as JSON: overall health state,
+count of exceptions per section, material amounts, earliest due dates, and
+brief drill-down commands. Overview may rank or collapse sections but must not
+silently suppress unresolved items. Include totals for collapsed items.
+
+**Read-Only Guarantee**:
+
+`agent-bahi status` is a read-only query. It does not trigger reconciliation,
+posting, approval, filing, or any mutation. Snapshot data is not modified by
+its computation.
+
+**Acceptance Scenarios**:
+
+1. Single active tenant, no `--tenant` flag: snapshot returns auto-selected tenant
+   with `tenant_id` echoed.
+2. Multiple active tenants, no `--tenant` flag: command returns `TENANT_AMBIGUOUS`
+   and fails without generating a snapshot.
+3. Compliance obligation with OPEN_RESEARCH due date (e.g., e-invoice AATO
+   threshold): section status is `INCOMPLETE` and obligation entry shows
+   `due_date: null` with reason.
+4. Period locked through 2026-08-20; as-of query date is 2026-08-21: snapshot
+   shows the prior lock and any current blocking conditions without hidden
+   inference.
+5. Bank reconciliation skill proposes 10 matches; user confirms 3; snapshot shows
+   7 unreconciled lines, not 10 proposed.
+6. Two concurrent `agent-bahi status` queries: both return snapshots of the same
+   point-in-time data (same `as_of_date`, `snapshot_id`); identical queries
+   return identical `content_hash`.
+7. Snapshot generation fails (rule pack corrupted, database locked): returns
+   distinct nonzero exit code with partial snapshot including outcomes for each
+   section; does not return `exit 0` with hidden gaps.
+8. `--json` output is valid JSON; parseable without shell escaping or embedded
+   secrets; drill-down commands use array format `["command", "arg1", "arg2"]`.
+9. Human and `--json` renderings of the same snapshot have identical facts,
+   amounts, and urgency classifications; formatting differs only in presentation.
+10. Overdue statute-due GSTR-3B filing blocked; health state is `BLOCKED` with
+    `due_date: "2026-07-15"` and `severity: "BLOCKED"`.
+
+### 1.3.3 Error codes and common contract for all CLI commands
 
 | Error code | Meaning and required behavior |
 | --- | --- |

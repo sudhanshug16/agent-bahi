@@ -297,7 +297,9 @@ The product records evidence supplied by the taxpayer or CA; it does not infer a
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** `agent-bahi status` is tenant-wide and read-only. It shows BookSets and TaxCases separately. It does not require `--book-set`.
+**Note:** PT-014 remains open and gates only BookSet/TaxCase-specific behavior. The global company health status command is separately defined and owner-approved in [[CLI-008](../discovery/accounting-contracts.md#cli-008)] (non-approval cross-reference only; this PT entry does not change CLI-008's status or scope).
+
+**Decision:** `agent-bahi status` in the personal-tax context is tenant-wide and read-only. It shows BookSets and TaxCases separately. It does not require `--book-set`.
 
 Every mutation, reconciliation, import, and correction requires an explicit BookSet when more than one eligible BookSet exists. Every TaxCase mutation requires immutable `--tax-case tc_...`, or FY plus filing sequence only when that pair is unambiguous.
 

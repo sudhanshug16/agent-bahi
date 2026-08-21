@@ -299,6 +299,87 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 
 ---
 
+## CLI-008 Acceptance Scenarios: Company Health Status (Owner-Approved)
+
+`agent-bahi status` is a read-only deterministic snapshot command that produces immutable company health observations. The following scenarios are mandatory acceptance tests for implementation:
+
+**Tenant Selection and Context**:
+
+1. **Single active tenant, no `--tenant` flag**: Command auto-selects tenant; snapshot includes `tenant_id` and succeeds.
+2. **Multiple active tenants, no `--tenant` flag**: Command returns `TENANT_AMBIGUOUS` exit code 2; no snapshot generated.
+3. **Explicit `--tenant <name>` with single tenant**: Succeeds; snapshot confirms selected tenant.
+4. **Explicit `--tenant` with wrong name**: Returns `TENANT_NOT_FOUND` error; no snapshot.
+
+**Snapshot Immutability and Determinism**:
+
+5. **Identical query run twice at same point in time**: Both snapshots have identical `snapshot_id`, `as_of_date`, `content_hash`.
+6. **Query run at different times**: New snapshots have distinct `snapshot_id` and `as_of_date`; `content_hash` differs.
+7. **Human and `--json` output from same snapshot**: Identical facts (amounts, dates, counts, drill-down commands); formatting only differs.
+8. **Drill-down commands in human and JSON output**: Both use array format `["agent-bahi", "command", "arg1"]` (never shell strings, secrets, or environment variables).
+
+**Health States and Severity Ordering**:
+
+9. **`HEALTHY` state**: All obligations current, no blocks, no overdue items; snapshot succeeds with `overall_health: "HEALTHY"`.
+10. **`ACTION_REQUIRED` state**: Upcoming obligation or non-blocking exception within N days (N from tenant config); `overall_health: "ACTION_REQUIRED"`.
+11. **`BLOCKED` state**: Overdue obligation, missing approval, or period lock blocking mutations; `overall_health: "BLOCKED"`.
+12. **Overdue compliance obligation ranked first**: GSTR-3B due 2026-07-15, invoice aging due 2026-08-20; compliance section lists GSTR-3B first with `severity: "BLOCKED"`.
+
+**Section Completeness and Partial Snapshots**:
+
+13. **All required sections present**: command-failures, blocks-and-partials, unreconciled-bank, overdue-invoices, unpaid-bills, evidence-pending, compliance-obligations, other-exceptions.
+14. **Section with zero items**: Count is 0, section status is `HEALTHY`, no items array (or empty array).
+15. **Section with incomplete data** (e.g., missing rule pack for GSTR deadline): Section status `INCOMPLETE`, items marked with reason `RULE_PACK_MISSING`, snapshot `overall_health: "PARTIAL"`.
+16. **Unknown applicability or deadline** (e.g., e-invoice AATO threshold uncertain): Item shows `due_date: null`, `severity: "INCOMPLETE/UNKNOWN"`, never assumes healthy.
+
+**Bank Reconciliation and Aging**:
+
+17. **Unreconciled bank lines**: Section includes count, total amount by currency, earliest date, drill-down command to `reconciliation show --status unmatched`.
+18. **Bank reconciliation skill proposes 10 matches; user confirms 3**: Snapshot shows 7 unreconciled (confirmed state only, not proposed candidates).
+19. **Overdue invoice aging**: AR section includes count of overdue invoices, total due amount, earliest due date, drill-down to `invoice show --status posted --aging overdue`.
+
+**Compliance and Statutory Deadlines**:
+
+20. **GSTR-1 filing deadline passed**: Section shows `status: "overdue"`, `due_date: "2026-07-15"` (FY 2026-07), `severity: "BLOCKED"`, drill-down to `gst filing show --gstin <gstin>`.
+21. **TDS payment due 7-Aug; snapshot as-of 2026-08-10**: Shows `status: "overdue"`, drill-down to `payroll payment show --type tds --period-start 2026-04-01`.
+22. **Payroll remittance deadline in future (30 days)**: Shows `status: "due"`, `severity: "ACTION_REQUIRED"`, not `"BLOCKED"`.
+
+**Partial Completions and Blocks**:
+
+23. **Bank import in progress (batch partially committed)**: blocks section shows operation, item count, status, and drill-down to resume/retry.
+24. **Period locked through 2026-08-15**: blocks section shows lock status, locked-through date, unlock drill-down command.
+25. **Reconciliation confirmation required**: Evidence section shows count of pending confirmations, severity `ACTION_REQUIRED`, drill-down to list/confirm pending.
+
+**Output Modes and Determinism**:
+
+26. **Human output**: Readable summary with overall health, section headings, counts, material amounts, earliest dates, and brief drill-down hints (not full command arrays).
+27. **`--json` output**: Valid JSON; parseable without shell escaping; all fields present (snapshot metadata, tenant_id, overall_health, sections with items).
+28. **Stdout contains snapshot only**: Stderr contains progress/warnings.
+29. **Exit code 0 for complete success**: Even if `overall_health: "BLOCKED"` (snapshot computed successfully; company health is separate from command success).
+30. **Exit code with partial snapshot**: Distinct nonzero code (TBD internal) when section fails but partial snapshot is returned; internal numeric value not exposed as exit code.
+
+**Queries and Drill-Down Navigation**:
+
+31. **Drill-down command from GSTR-3B obligation**: `agent-bahi gst filing show --gstin <gstin>` is valid and returns filing details.
+32. **Drill-down command from unreconciled bank**: `agent-bahi reconciliation show --status unmatched` returns unmatched statement lines.
+33. **Drill-down command from overdue AP aging**: `agent-bahi bill show --status posted --aging overdue` returns bill records.
+34. **All drill-down commands use valid command registry**: No invented commands, no shell syntax, no environment variable substitution.
+
+**Failure Modes and Edge Cases**:
+
+35. **Database corruption or lock timeout**: Snapshot returns partial result with affected section marked `DATA_UNAVAILABLE`; does not return empty/healthy snapshot.
+36. **Multiple simultaneous `status` queries**: Both succeed; both may return snapshots with identical `as_of_date` if taken in same logical transaction time; no blocking or timeout.
+37. **Query with future `--as-of` date**: Returns snapshot as if queried at that future date (deterministic from stored data at that point, not predictive).
+38. **Empty tenant** (no invoices, bills, obligations): Snapshot returns `HEALTHY` with zero counts in all sections (not absent sections).
+39. **Compliance obligation with research-gated threshold** (e.g., e-invoice applicability unknown): Item shows `applicability: "OPEN_RESEARCH"`, `status: null`, `severity: "INCOMPLETE"`.
+
+**Read-Only Guarantee**:
+
+40. **`status` command never triggers mutation**: No posting, no reconciliation match, no filing, no bank import, no approval gate.
+41. **`status` command idempotent**: Calling twice returns identical snapshots (same `snapshot_id`, `as_of_date`, `content_hash`).
+42. **Snapshot as-of date does not advance**: Multiple calls at the same timestamp return same snapshot; advancing timestamp to a later point generates a new snapshot.
+
+---
+
 ## Deferred Work (Preserved Extensibility)
 
 - **Inventory**: No stock/warehouse/COGS/batches/serials/manufacturing. Document lines retain structure for future integration.

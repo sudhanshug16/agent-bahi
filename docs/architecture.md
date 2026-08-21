@@ -1744,7 +1744,7 @@ Every slice acceptance requires:
 The following remaining RECOMMENDED decisions in [architecture-decisions.md](discovery/architecture-decisions.md) remain subject to architect-tier debate or explicit owner acceptance:
 
 - **ARC-001** through **ARC-014** (core architecture).
-- **CLI-001** through **CLI-007** (CLI contract).
+- **CLI-001** through **CLI-008** (CLI contract).
 - **SKL-001** through **SKL-005** (skills).
 - **SEC-001, SEC-002** (security).
 - **OBS-001** (observability).
