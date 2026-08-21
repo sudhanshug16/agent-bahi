@@ -1890,7 +1890,7 @@ Mapping from key requirements/decisions to decision IDs and architecture section
 ## Appendix: Quick Links to Discovery Documents
 
 **OWNER REVIEW & APPROVAL** (prerequisite):
-- [Owner Review Docket](discovery/owner-review-docket.md): Compact index of the remaining owner-review records; T-001–T-010 are owner-approved and TypeScript + Bun is owner-selected.
+- [Owner Review Docket](discovery/owner-review-docket.md): Compact index of the remaining owner-review records; T-001–T-011 are owner-approved and TypeScript + Bun is owner-selected.
 - [Tentative Decisions and Overnight Protocol](discovery/tentative-decisions.md): Full details for each T-ID with rationale, reversal paths, and owner-review status.
 - [Implementation Plan](discovery/implementation-plan.md): Gate0 proof spikes, Phase 1–9 sequencing, prerequisites.
 

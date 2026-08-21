@@ -112,10 +112,11 @@ needed to support acquisition or capitalization, automatic depreciation, and
 disposal tracking. Depreciation runs and disposals must be traceable to the
 asset and the resulting ledger postings.
 
-The separate book/tax schedule model is **T-003 TENTATIVE - NOT OWNER-APPROVED**
+The separate book/tax schedule model is **T-003 OWNER-APPROVED**
 ([tentative decision](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default)).
+The separate book/tax schedule model is settled; exact statutory tax methods and rates remain research-gated.
 The relationship and exact methods remain configuration/policy boundaries, and
-the owner may reverse the tentative default without changing the asset-register
+the owner may adjust specific rate/method choices through future rule-pack updates without changing the asset-register
 or schedule identity seams. No method or rate may be hidden in the register.
 For tax depreciation, [Rule 25](https://www.incometaxindia.gov.in/w/rule-25-9)
 and its effective Appendix I/II tables are the rate source. Preserve

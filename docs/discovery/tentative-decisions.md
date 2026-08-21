@@ -439,7 +439,7 @@ Owner-approved. Partial batch completion is a distinct nonzero result with per-i
 **Question**: What is the scope of personal income-tax support for the sole-proprietor owner?
 
 **Approved Scope**:
-- **Full individual income-tax scope**: Complete personal income-tax computation and filing for the sole proprietor owner (e.g., ITR-3 for self-employed, ITR-4 for business income).
+- **Full individual income-tax scope**: Complete personal income-tax computation and filing for the sole proprietor owner. Form selection is year-specific and fact-driven per PT-006: where business or profession income exists, ITR-1 and ITR-2 are excluded; ITR-4 is selected only if the official presumptive-return predicates are satisfied, otherwise ITR-3 is selected.
 - **Accounting separation**: Personal income-tax is linked to but accounting-separated from business/GST books. Personal income sources and deductions are tracked and reported independently, with clear boundaries between personal and business financial records.
 - **Linked but distinct**: The sole proprietor's personal assets, income, and deductions are modeled separately within the same tenant as business/GST books, enabling consolidated compliance but preserving accounting clarity.
 
