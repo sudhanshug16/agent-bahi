@@ -111,6 +111,7 @@ Or, owner may request deeper Frappe integration (e.g., schema adoption) after si
 - Frappe Books is AGPL-3.0; verifiable at https://github.com/frappe/books.
 - Apache-2.0 is used by other accounting projects (Wave, Invoice Ninja OSS distributions) and enables unrestricted commercial agent use.
 - India GST/payroll patterns in Frappe Books are documented and publicly available (e.g., GST return structure, statutory compliance gates).
+- [Zoho Books and Frappe Books Feature Parity Matrix](zoho-frappe-parity.md) documents Frappe Books AGPL-3.0 license and compares feature parity with Zoho Books, confirming Frappe as concept/behavior reference only.
 
 **Owner Review Status**:
 Awaiting owner review. Do not commit any LICENSE file changes. This entry documents the reasoning for Apache-2.0 recommendation so owner can approve/reject the license choice in a separate decision. If owner approves a different license (AGPL-3.0, MIT, other), that becomes a new SETTLED_OWNER_DECISION.

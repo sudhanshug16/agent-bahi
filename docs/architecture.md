@@ -32,7 +32,7 @@ The following are explicitly out of scope for v1 and remain deferred:
 - **RBAC implementation**: Authorization hooks are present and no-ops for v1; RBAC is deferred. Actor, source, and permission context are threaded through every mutation.
 - **Web server/microservices**: CLI is the primary adapter. API and web clients are future options; reusable application services enable this without breaking changes.
 - **Direct government filing**: There is no universal auto-filing policy. Each filing (GST, TDS, e-invoice, e-way bill, income tax, MCA, etc.) has its own researched submission boundary or remains prepare/validate/export only. GSTR-1 is the only settled filing boundary (user/CA manual portal upload); other filings require individual approval and research.
-- **Zoho import until final phase**: Zoho Books is the validated migration source but is intentionally deferred to Phase 9 and must not drive the canonical accounting model.
+- **Zoho import until final phase**: Zoho Books is the validated migration source but is intentionally deferred to Phase 9 and must not drive the canonical accounting model. Feature parity with Zoho (and reference to Frappe Books) is validated in [zoho-frappe-parity.md](discovery/zoho-frappe-parity.md).
 
 ---
 
