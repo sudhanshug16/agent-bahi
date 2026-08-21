@@ -1,6 +1,6 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** PT-001, PT-002, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
 Sudhanshu's explicit owner approvals of PT-001, PT-002, and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
 
@@ -61,7 +61,7 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-PT-001, PT-002, and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
+PT-001, PT-002, PT-003, and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
@@ -132,19 +132,38 @@ Account codes remain tenant-wide unique, immutable, and never reused, while acco
 **Open choice:** Physical schema, migration ordering, and the precise list of BookSet-owned aggregates require the reviewed schema RFC.
 
 <a id="pt-003"></a>
-### PT-003: Atomic same-tenant transfers
+### PT-003: Atomic same-tenant inter-BookSet transfer with balanced linked legs
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** A same-tenant transfer uses two balanced, linked legs, one in each affected BookSet. The transfer classification never suppresses supply, sale, loan, drawing, or tax facts.
+**Decision:** A same-tenant transfer between two BookSets is represented by exactly two balanced, linked, independently reconciled accounting entries/legs—one in each affected BookSet. Both legs carry an identical purpose classification selected once at the shared event level. Each leg's ledger accounts are derived deterministically from that shared purpose. The transfer wrapper never suppresses the underlying supply, sale, loan, drawing, expense, or tax fact.
 
-**Boundary:** The engine records source BookSet, destination BookSet, purpose, evidence, and the linked legs in one atomic operation. A transfer is not an eraser for the underlying transaction.
+**Supported purposes:** Capital introduced/withdrawal, proprietor/owner loan (business to personal or personal to business), due-to-owner/due-from-business, drawings, proprietor reimbursement, or other equivalent accounting terminology reflecting the real economic relationship. Use precise accounting wording, not an exhaustive closed enum. An ambiguous purpose fails closed; an agent may propose a classification, but posting requires explicit human confirmation under the existing evidence/confirmation policy.
 
-**Failure mode:** A personal-to-business movement is posted only on one side, or a drawing is relabelled as a neutral transfer and disappears from a TaxCase.
+**Boundary:** The engine records source BookSet, destination BookSet, shared purpose, evidence, and the two linked legs in one atomic transaction. Each leg posts to the same BookSet and independently balances. A transfer is not an eraser for the underlying transaction; if it is actually a supply, sale, loan, drawing, or expense, those facts must be represented explicitly in the accounting entries.
 
-**Control:** The operation fails closed when either BookSet, the transfer purpose, or the required evidence binding is ambiguous.
+**Atomic commitment and idempotency:** Both linked entries commit or fail together. They preserve an immutable audit link and idempotency guarantee so that a duplicate or interrupted submission does not post two independent sets of legs.
 
-**Open choice:** Exact account vocabulary and UI/CLI shape await the canonical migration and architecture review.
+**Failure mode:** A personal-to-business movement is posted only on one side, or a drawing is relabelled as a neutral transfer and disappears from a TaxCase, or the underlying economic fact is suppressed by a transfer wrapper.
+
+**Control:** The operation fails closed when either BookSet, the transfer purpose, the evidence binding, or form selection is ambiguous.
+
+**Example 1—Personal bank to business current account:** A proprietor moves ₹100,000 personal savings to the business current account for working capital.
+- Personal leg: `Dr due-from-business-investment / Cr personal-bank ₹100k`
+- Business leg: `Dr business-bank / Cr owner-capital-introduced ₹100k`
+- Purpose: `capital-introduced` (shared across both legs)
+- Both legs in one atomic transaction; both BookSets reconcile; the proprietor's personal bank decreases and the investment commitment increases; the business bank increases and the capital obligation increases.
+
+**Example 2—Personal bank directly pays a business expense:** A proprietor uses their personal SBI account to pay a software vendor ₹20,000 on behalf of the consulting business.
+- Personal leg: `Dr due-from-business-expense / Cr personal-bank ₹20k`
+- Business leg: `Dr business-software-expense ₹20k / Dr eligible-input-tax ₹3.6k / Cr vendor-payable ₹23.6k` (GST-eligible treatment per applicable business GSTIN and rule snapshot)
+- Purpose: `proprietor-funded-expense` (shared across both legs)
+- Funding settlement in a separate atomic transfer: business `Dr vendor ₹23.6k / Cr due-to-owner ₹23.6k`; personal `Dr due-from-business ₹23.6k / Cr bank ₹23.6k`
+- Both legs in one atomic transaction; each BookSet reconciles; no fictional receipt into the business bank.
+
+**Consolidated personal-tax reporting:** The transfer representation ensures that when a TaxCase aggregates both personal and business BookSets for annual income-tax filing, the same-tenant movement is not double-counted as an expense in the personal BookSet and again as an unrelated business expense.
+
+**Open choice:** Exact ledger-account vocabulary, UI/CLI shape, and form-eligibility proof await the canonical migration and architecture review.
 
 <a id="pt-004"></a>
 ### PT-004: Personal bank, investment, property, rent, and loan subledgers

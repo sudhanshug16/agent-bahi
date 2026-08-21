@@ -2,7 +2,7 @@
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED.
 
-**Scope:** This is a documentation-only, dialect-neutral relational contract for the personal-tax data model. It grants no Gate0, implementation, CLI, migration, library, or code authority. PT-001, PT-002, and PT-009 retain the status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**; PT-003 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. See the canonical [personal-tax decision packet](personal-tax-scope.md), including the existing [PT-004](personal-tax-scope.md#pt-004) anchor.
+**Scope:** This is a documentation-only, dialect-neutral relational contract for the personal-tax data model. It grants no Gate0, implementation, CLI, migration, library, or code authority. PT-001, PT-002, PT-003, and PT-009 retain the status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**; PT-004 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. See the canonical [personal-tax decision packet](personal-tax-scope.md), including the existing [PT-004](personal-tax-scope.md#pt-004) anchor.
 
 This document deliberately contains no executable schema, dialect syntax, migration, or claim of mechanical validation. The contract describes required identities, relationships, immutability, and transaction gates. Gate0 proof obligations remain open.
 

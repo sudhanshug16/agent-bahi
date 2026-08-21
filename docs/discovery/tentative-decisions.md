@@ -735,7 +735,7 @@ are complete.
 
 ## Personal Tax Decisions (PT-001 through PT-016)
 
-**Personal Tax status:** PT-001, PT-002, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
+**Personal Tax status:** PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
 
 All Personal Tax decisions are documented in the canonical discovery packet: [Personal Tax Discovery Packet](personal-tax-scope.md). Cross-link index:
 
@@ -743,7 +743,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 |-------|-------|------|
 | PT-001 | Individual/PAN Tenant Model with Multiple BookSets | [personal-tax-scope.md § PT-001](personal-tax-scope.md#pt-001) |
 | PT-002 | BookSet-Owned Records with Tenant_ID + Book_Set_ID | [personal-tax-scope.md § PT-002](personal-tax-scope.md#pt-002) |
-| PT-003 | Atomic Same-Tenant Inter-BookSet Transfer with Balanced Linked Legs | [personal-tax-scope.md § PT-003](personal-tax-scope.md#pt-003) |
+| PT-003 | Atomic Same-Tenant Inter-BookSet Transfer with Balanced Linked Legs |  OWNER-APPROVED; NOT ARCHITECT-REVIEWED | [personal-tax-scope.md § PT-003](personal-tax-scope.md#pt-003) |
 | PT-004 | Personal Bank, Investment/Tax-Lot, Property/Rent/Loan Subledgers | [personal-tax-scope.md § PT-004](personal-tax-scope.md#pt-004) |
 | PT-005 | ONE TaxCase/Return per Taxpayer/Year Covers ALL Applicable BookSets | [personal-tax-scope.md § PT-005](personal-tax-scope.md#pt-005) |
 | PT-006 | Form Selection is Year-Specific and Fact-Driven | [personal-tax-scope.md § PT-006](personal-tax-scope.md#pt-006) |
@@ -758,7 +758,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 | PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; Redacted Logs; No False Compliance Claims | [personal-tax-scope.md § PT-015](personal-tax-scope.md#pt-015) |
 | PT-016 | Immutable Original + Linked Correction/Revised/Rectification Cases | [personal-tax-scope.md § PT-016](personal-tax-scope.md#pt-016) |
 
-**Status**: PT-001, PT-002, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-003 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
+**Status**: PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
 
 ---
 
