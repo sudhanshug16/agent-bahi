@@ -36,7 +36,7 @@ This document defines the contracted boundaries for statutory compliance workflo
 
 ### Effective Rule Pack
 
-- **Salary TDS**: Excluded; section 392 salary is payroll-owned. Forms 130/138 are payroll-owned outputs but are not salary-exclusive: s393(1) Table 8(iii) specified-senior-citizen payments use Form 130 under Rule 215 and Form 138 under Rule 219, with ordinary Rule 218 timing. See [payroll-compliance-matrix.md](payroll-compliance-matrix.md);
+- **Salary TDS (s392)** and **s393(1) Table 8(iii) specified-senior-citizen TDS**: Excluded from this non-payroll TDS contract. Both are payroll-owned (s392 salary; Table 8(iii) as payroll-issued Forms 130/138 transport, though Table 8(iii) is not salary-exclusive). Form 138 quarterly statement semantics, due dates (Q1 31 Jul, Q2 31 Oct, Q3 31 Jan, Q4 31 May), branch identity, filing/acceptance/rejection evidence, and certificate deadlines are **canonical in [payroll-compliance-matrix.md](payroll-compliance-matrix.md)**; this contract does not duplicate them. This contract references only the non-payroll TDS sections: s393 resident non-salary (Forms 140/131), s394 TCS (Forms 143/133), and the special month-end Form 141→132 route for specific tables. Do not confuse Table 8(iii) as salary or select general-nonpayroll forms;
 - **Resident non-salary TDS**: Section 393 table-driven routing: 194M→Table 6(ii), rent→Table 2(i)/(ii), interest→Table 5(i)–(iii), goods purchase→Table 8(ii), 194LA→Table 3(iii), ordinary property transfer→Table 3(i), specified-senior-citizen bank payments→Table 8(iii). Forms 131/132/140/141/143/144 and the Table 8(iii) Form 130/138 branch are selected only where Rules 215/218/219 directly route them;
 - **TCS**: Section 394, Rule 218 payment, Rule 219 Form 143 statements, and Rule 215 Form 133 certificates;
 - **Historical law**: Income-tax Act 1961, old sections 192/194A/194H/194I/194LA/194Q (legacy aliases only for pre-1 April 2026 periods).
@@ -274,21 +274,31 @@ issuance/delivery are separate transitions.
 
 ---
 
-## Hard Predecessor for Every Legal Action
+## Hard Predecessor for Compliance-Decision Actions Only
 
-Every legal action in this contract—TDS/TCS deduction, tax computation, tax
-posting, deadline generation, payment, export, filing, advance-tax action,
-Form 26, tax depreciation, or certificate/statement generation—must first have
+Every compliance-decision action in this contract—form selection, TDS/TCS
+deduction/rate/threshold selection, tax computation, tax posting, deadline
+generation, compliance export/filing, advance-tax action, Form 26 selection,
+tax depreciation, or certificate/statement generation—must first have
 `source_verified=true` and a non-stale `effective_rule_snapshot` containing
 official source, rule version, effective date, jurisdiction, and applicability
-facts. If either is absent or stale, or the rule status is **OPEN** or
-**TENTATIVE**, the action must return **REVIEW/BLOCK** and must not select a
-form, compute/post tax, generate a deadline, pay, export, file, generate Form
-26, or post tax depreciation.
+facts for that specific obligation.
 
-| Audit ID | Control | Source basis | Status/gate |
-|---|---|---|---|
-| STAT-GATE-001 | Source verification and effective snapshot precede every legal action | Linked ITD section/rule matrices and official Form 26 FAQ | VERIFIED product control; missing/stale/OPEN/TENTATIVE → REVIEW/BLOCK |
+**Scope of the gate**: If either source_verified or effective_rule_snapshot is
+absent, stale, or the rule status is **OPEN** or **TENTATIVE** for a specific
+tax/filing obligation, the action must return **REVIEW/BLOCK** for that
+affected obligation only—form selection, tax computation/posting, deadline
+generation, compliance export, filing, or related statutory outputs for that
+obligation.
+
+**Unblocked work**: Core bookkeeping (invoice/bill/payment/journal posting),
+draft entry, evidence reconciliation, and already-researched statutory slices
+(e.g., GSTR-1 when GST is verified) proceed independently. The gate is
+obligation-specific, not blanket.
+
+| Audit ID | Control | Source basis | Scope | Status/gate |
+|---|---|---|---|---|
+| STAT-GATE-001 | Source verification and effective snapshot precede every compliance-decision action | Linked ITD section/rule matrices and official Form 26 FAQ | Form selection, tax computation, posting, deadline generation, export/filing for affected obligation only | VERIFIED product control; missing/stale/OPEN/TENTATIVE for specific tax/filing → REVIEW/BLOCK for that obligation; unrelated core bookkeeping and already-researched slices proceed |
 
 ## Product Validation Policy
 
@@ -314,14 +324,14 @@ These are product rules for deterministic statutory workflows. They are not clai
 
 ## No Unapproved Product Defaults
 
-This contract must link to [tentative-decisions.md](tentative-decisions.md) for every product choice not explicitly settled. Examples:
+This contract must link to [tentative-decisions.md](tentative-decisions.md) for every product choice not explicitly settled. The following examples have been assigned tentative-decision IDs and moved to tentative-decisions.md:
 
-- **Advance-tax payment workflow**: How does system handle estimated-tax input? Auto-calculation from FY projection, or manual entry? → **TENTATIVE** (link to tentative-decisions.md);
-- **Depreciation depreciation recalculation**: If asset acquisition date or rate changes retroactively, does system auto-recalculate prior-year depreciation or block? → **TENTATIVE** (link to tentative-decisions.md);
-- **Form 140/141 export format**: JSON, XML, or both? → **TENTATIVE** (link to tentative-decisions.md);
-- **Amendment/revised return workflow**: If return is rejected or taxpayer wants to amend, does system support revised return (ITR-X) or only re-filing? → **TENTATIVE** (link to tentative-decisions.md).
+- **[T-007: Advance-tax estimated-amount input](tentative-decisions.md#entry-t-007-advance-tax-estimated-amount-input%E2%80%94manual-entry-or-auto-projection)**: How does system handle estimated-tax input? Auto-calculation from FY projection, or manual entry? → Tentative default: manual operator entry.
+- **[T-008: Retroactive depreciation recalculation](tentative-decisions.md#entry-t-008-retroactive-depreciation-recalculation%E2%80%94block-or-auto-recalculate)**: If asset acquisition date or rate changes retroactively, does system auto-recalculate prior-year depreciation or block? → Tentative default: block with correction path.
+- **[T-009: Form 140/141 export format](tentative-decisions.md#entry-t-009-form-140141-export-format%E2%80%94json-xml-or-both)**: JSON, XML, or both? → Tentative default: JSON primary, XML if discovered as official.
+- **[T-010: Amendment/revised return workflow](tentative-decisions.md#entry-t-010-amendment-revised-return-workflow%E2%80%94itr-x-or-re-filing)**: If return is rejected or taxpayer wants to amend, does system support revised return (ITR-X) or only re-filing? → Tentative default: re-filing only; amendment deferred.
 
-No product gate, auto-decision, or default behavior must exist without explicit Sudhanshu approval and documentation in approved decision record.
+No product gate, auto-decision, or default behavior must exist without explicit Sudhanshu approval and documentation in [tentative-decisions.md](tentative-decisions.md) or [decisions.md](decisions.md).
 
 ---
 

@@ -32,12 +32,22 @@ defines obligation scope, due-event calculation, validation gates, human/profess
 
 This documentation milestone does not approve implementation, portal submission, or compliance decision automation; it establishes verified baselines and marks all unverified items OPEN.
 
-All statutory phases have a hard predecessor: `source_verified=true` and a
-non-stale `effective_rule_snapshot` with official source, version, effective
-date, jurisdiction, and applicability facts. Missing/stale snapshots or
-**OPEN**/**TENTATIVE** rules return **REVIEW/BLOCK** with no form selection,
-tax computation/posting, deadline generation, payment, export, filing,
-advance-tax action, Form 26, or tax-depreciation posting.
+All statutory-compliance-decision phases (form selection, tax computation,
+posting, deadline generation, compliance filing, advance-tax action, Form 26
+audit report, tax-depreciation posting) have a hard predecessor:
+`source_verified=true` and a non-stale `effective_rule_snapshot` with
+official source, version, effective date, jurisdiction, and applicability
+facts. Missing/stale snapshots or **OPEN**/**TENTATIVE** rules for a specific
+tax/filing return **REVIEW/BLOCK** for that affected obligation only—form
+selection, tax computation/posting, deadline generation, compliance export,
+filing, or related statutory outputs.
+
+**Unrelated core bookkeeping, draft entry, validated reconciliation, and
+already-researched statutory slices may proceed.** Legal research gates block
+only the affected compliance action/filing/obligation, not entire modules. For
+example: TDS thresholds may be OPEN while regular GST and GSTR-1 are settled;
+a missing advanced-tax rule does not block GSTR-1 export for already-researched
+GST items.
 
 Explicit follow-ups before statutory-compliance implementation decisions:
 

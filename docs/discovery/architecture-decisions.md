@@ -335,20 +335,35 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 - **Silent failure prevented**: Filing submitted with wrong data because reconciliation was skipped, missing GSTR-1 filing detected too late, GSP transmission failure with no rollback.
 - **Reversal trigger**: Once GSP integration/artifact format is researched and tested, the decision point is whether to add direct submission as an optional feature (not a requirement).
 
-**CMP-006: E-invoice default (IRP via configured adapter)**
+**CMP-006: E-invoice default (IRP via configured adapter)—RESEARCH-GATED and DEFERRED**
 
-- **Recommendation**: When applicable (B2B, exports, stock transfers, etc.), use a configured IRP adapter for direct submission with export/upload/import-response fallback. Do not issue/finalize the invoice until IRN and signed QR evidence are recorded. Transport retries are idempotent and cannot duplicate IRNs. E-invoice is not mandatory for all invoices; applicability rules remain **OPEN RESEARCH**.
-- **Alternative**: Manual e-invoice generation and upload; or no e-invoice support.
-- **Rationale**: Direct IRP submission is automated if available; fallback is manual. Recorded evidence (IRN, QR) is the canonical proof. Idempotent retries prevent duplicates.
-- **Silent failure prevented**: Invoice issued without e-invoice when required, duplicate IRN on retry, evidence lost in a migration.
-- **Reversal trigger**: If IRP credentials/onboarding is complex, make credential provisioning an explicit setup step separate from invoice finalization.
+**Status**: TENTATIVE_AGENT_DEFAULT (with significant OPEN_RESEARCH component) — **NOT OWNER-APPROVED**
 
-**CMP-007: E-way bill default (configured API with state-specific rules OPEN RESEARCH)**
+- **Recommendation**: When applicable (B2B, exports, stock transfers, etc.) and when applicability/transport/state research is complete and owner-approved, use a configured IRP adapter for direct submission with export/upload/import-response fallback. Do not issue/finalize the invoice until IRN and signed QR evidence are recorded. Transport retries are idempotent and cannot duplicate IRNs. E-invoice is not mandatory for all invoices; applicability rules remain **OPEN RESEARCH** until satisfactory closed.
+- **Deferred Gate**: This adapter remains **RESEARCH-GATED and NOT V1-AUTHORIZED** until:
+  1. E-invoice applicability (B2B thresholds, exports, stock transfers, state-specific exemptions) is verified from official GST Portal/GSTN sources.
+  2. IRP credential provisioning, submission transport, and error-handling are researched and documented.
+  3. Sudhanshu explicitly approves this adapter after research closure.
+- **Until research completion**: Agent-bahi will not invoke e-invoice adapters. GSTR-1 B2B invoices are prepared and validated normally; users must handle e-invoice submission separately outside agent-bahi or wait for research completion and owner approval. See [T-005](tentative-decisions.md#entry-t-005-v1-scope-focus%E2%80%94regular-small-business-gst-accounting-profiles) for V1 scope and [architecture-decisions.md § Open Research](architecture-decisions.md#open-research--deferred-list) for pending e-invoice research.
+- **Alternative**: Manual e-invoice generation and upload outside agent-bahi; or no e-invoice support until researched.
+- **Rationale**: Direct IRP submission is automated if available after research confirms applicability; fallback is manual. Recorded evidence (IRN, QR) is the canonical proof. Idempotent retries prevent duplicates. Research closure and explicit owner approval are prerequisites; no tentative assumptions about IRP credentials or applicability may enter V1.
+- **Silent failure prevented**: Invoice issued with unauthorized e-invoice when not applicable, duplicate IRN on retry, credentials exposed, or unapproved adapter invoked despite research gaps.
+- **Reversal trigger**: After research closure and owner approval, if IRP credentials/onboarding proves complex, make credential provisioning an explicit setup step separate from invoice finalization.
 
-- **Recommendation**: Configured API adapter for e-way bill with manual fallback. When effective-dated applicable rules determine that an e-way bill is required, block movement/dispatch until valid EWB evidence is recorded. Thresholds, exemptions, state-specific rules, and which movements/modes require EWB remain **OPEN RESEARCH**.
-- **Alternative**: No e-way bill support; manual generation.
-- **Rationale**: API is the preferred path if implemented. Applicability, thresholds, exemptions, and state-specific rules are determined by effective-dated compliance rules and remain unresolved; research is required per state and applicability scenario.
-- **Silent failure prevented**: Movement/dispatch blocked forever because state rule is unknown, EWB issued for exempt movement.
+**CMP-007: E-way bill default (configured API with state-specific rules)—RESEARCH-GATED and DEFERRED**
+
+**Status**: TENTATIVE_AGENT_DEFAULT (with significant OPEN_RESEARCH component) — **NOT OWNER-APPROVED**
+
+- **Recommendation**: After applicability/transport/state research is complete and owner-approved, use a configured API adapter for e-way bill with manual fallback. When effective-dated applicable rules determine that an e-way bill is required, block movement/dispatch until valid EWB evidence is recorded. Thresholds, exemptions, state-specific rules, and which movements/modes require EWB remain **OPEN RESEARCH** until satisfactory closed.
+- **Deferred Gate**: This adapter remains **RESEARCH-GATED and NOT V1-AUTHORIZED** until:
+  1. E-way bill applicability (inter-state vs. intra-state, value thresholds, exempt movements, state-specific exemptions) is verified from official GST Portal/state authority sources.
+  2. State-specific rules and carrier/mode applicability are documented per origin state, destination state, and movement type.
+  3. E-way-bill API credentials, submission transport, and error-handling are researched.
+  4. Sudhanshu explicitly approves this adapter after research closure.
+- **Until research completion**: Agent-bahi will not invoke e-way-bill adapters. Movements and dispatch are prepared normally; users must handle e-way-bill generation and submission separately outside agent-bahi or wait for research completion and owner approval. See [T-005](tentative-decisions.md#entry-t-005-v1-scope-focus%E2%80%94regular-small-business-gst-accounting-profiles) for V1 scope and [architecture-decisions.md § Open Research](architecture-decisions.md#open-research--deferred-list) for pending e-way-bill research.
+- **Alternative**: No e-way bill support in V1; manual e-way-bill generation outside agent-bahi until researched.
+- **Rationale**: API is the preferred path if implemented after research confirms applicability per state and movement type. Applicability, thresholds, exemptions, and state-specific rules are determined by effective-dated compliance rules and remain unresolved; research is required per state and applicability scenario. Research closure and explicit owner approval are prerequisites; no tentative assumptions about state rules or API credentials may enter V1.
+- **Silent failure prevented**: Movement/dispatch blocked forever because state rule is unknown, EWB issued for exempt movement, or unapproved adapter invoked despite research gaps.
 - **Reversal trigger**: Once state rules are researched and keyed (e.g., by origin state, destination state, value), implement as a compliance rule package with effective dates.
 
 **CMP-008: CA handoff bundle per period**
