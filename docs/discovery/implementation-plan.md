@@ -332,7 +332,10 @@ are mandatory acceptance tests for implementation:
 
 **Section Completeness and Partial Snapshots**:
 
-13. **All required sections present**: command-failures, blocks-and-partials, unreconciled-bank, overdue-invoices, unpaid-bills, evidence-pending, compliance-obligations, other-exceptions.
+13. **All required sections present**: the normalized section IDs are
+    `operations` (Command/Operation Failures), `blocks-and-partials`,
+    `unreconciled-bank`, `overdue-invoices`, `unpaid-bills`, `evidence-pending`,
+    `compliance-obligations`, and `other-exceptions`.
 14. **Section with zero items**: Count is 0, section `outcome: "COMPLETE"`, section `health: "HEALTHY"`, and no items array (or an empty array).
 15. **Section with incomplete data** (e.g., missing rule pack for GSTR deadline): Section `outcome: "DATA_UNAVAILABLE"`, item carries an `UNKNOWN`/`INCOMPLETE` reason and evidence references, snapshot `completeness: "PARTIAL"`, and health is not conclusive.
 16. **Unknown applicability or deadline** (e.g., e-invoice AATO threshold uncertain): Section `outcome: "APPLICABILITY_UNKNOWN"`, item shows `due_date: null`, an `UNKNOWN`/`INCOMPLETE` reason, and evidence references; it never assumes healthy.
@@ -369,21 +372,31 @@ are mandatory acceptance tests for implementation:
 32. **Drill-down command from unreconciled bank**: `drilldown.argv` is `["agent-bahi", "reconciliation", "show", "--status", "unmatched"]` and returns unmatched statement lines.
 33. **Drill-down command from overdue AP aging**: `drilldown.argv` is `["agent-bahi", "bill", "show", "--status", "posted", "--aging", "overdue"]` and returns bill records.
 34. **All drill-down commands use valid command registry**: No invented commands, no shell syntax, no environment variable substitution.
+35. **Focused status projection is a registry-validated fallback**: Given an
+    already-created immutable snapshot with actual ID `snap:2026-08-21:001`,
+    the registry accepts `drilldown.argv` `["agent-bahi", "status", "--snapshot",
+    "snap:2026-08-21:001", "--focus", "operations"]` and returns the detailed
+    `operations` items with the same snapshot ID, `content_hash`, and evidence
+    references. It reads that snapshot without recomputing or mutating state;
+    a nonexistent/tenant-mismatched snapshot or an unregistered section ID
+    fails closed with a nonzero result and no mutation. Fallback argv always
+    contains the actual snapshot ID and normalized section ID; registered
+    domain-specific drill-downs remain allowed when they exist.
 
 **Failure Modes and Edge Cases**:
 
-35. **Database corruption or lock timeout**: Snapshot returns partial or failed result with the affected section marked `DATA_UNAVAILABLE` or `FAILED`, structured evidence references, and no conclusive `health: "HEALTHY"` result.
-36. **Multiple simultaneous `status` queries**: Both succeed; both may return snapshots with identical `as_of_date` if taken in same logical transaction time; no blocking or timeout.
-37. **Query with future `--as-of` date**: Returns snapshot as if queried at that future date (deterministic from stored data at that point, not predictive).
-38. **Empty tenant** (no invoices, bills, obligations): Complete snapshot returns `health: "HEALTHY"`, `completeness: "COMPLETE"`, and zero counts in all sections (not absent sections).
-39. **Compliance obligation with research-gated threshold** (e.g., e-invoice applicability unknown): Section outcome is `APPLICABILITY_UNKNOWN`; item shows `applicability: "OPEN_RESEARCH"`, `status: null`, an `UNKNOWN`/`INCOMPLETE` reason, and evidence references.
-40. **Evidence traceability**: Snapshot/source metadata, every section, every item, and every summary card carries `source_id`, `evidence_id`, and an immutable hash/equivalent reference sufficient to trace health and unknown claims.
+36. **Database corruption or lock timeout**: Snapshot returns partial or failed result with the affected section marked `DATA_UNAVAILABLE` or `FAILED`, structured evidence references, and no conclusive `health: "HEALTHY"` result.
+37. **Multiple simultaneous `status` queries**: Both succeed; both may return snapshots with identical `as_of_date` if taken in same logical transaction time; no blocking or timeout.
+38. **Query with future `--as-of` date**: Returns snapshot as if queried at that future date (deterministic from stored data at that point, not predictive).
+39. **Empty tenant** (no invoices, bills, obligations): Complete snapshot returns `health: "HEALTHY"`, `completeness: "COMPLETE"`, and zero counts in all sections (not absent sections).
+40. **Compliance obligation with research-gated threshold** (e.g., e-invoice applicability unknown): Section outcome is `APPLICABILITY_UNKNOWN`; item shows `applicability: "OPEN_RESEARCH"`, `status: null`, an `UNKNOWN`/`INCOMPLETE` reason, and evidence references.
+41. **Evidence traceability**: Snapshot/source metadata, every section, every item, and every summary card carries `source_id`, `evidence_id`, and an immutable hash/equivalent reference sufficient to trace health and unknown claims.
 
 **Read-Only Guarantee**:
 
-41. **`status` command never triggers mutation**: No posting, no reconciliation match, no filing, no bank import, no approval gate.
-42. **`status` command idempotent**: Calling twice returns identical snapshots (same `snapshot_id`, `as_of_date`, `content_hash`).
-43. **Snapshot as-of date does not advance**: Multiple calls at the same timestamp return same snapshot; advancing timestamp to a later point generates a new snapshot.
+42. **`status` command never triggers mutation**: No posting, no reconciliation match, no filing, no bank import, no approval gate.
+43. **`status` command idempotent**: Calling twice returns identical snapshots (same `snapshot_id`, `as_of_date`, `content_hash`).
+44. **Snapshot as-of date does not advance**: Multiple calls at the same timestamp return same snapshot; advancing timestamp to a later point generates a new snapshot.
 
 ---
 

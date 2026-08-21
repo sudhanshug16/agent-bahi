@@ -121,6 +121,27 @@ filing, or other state changes.
   (comma-separated), content hash, computation timestamp, and immutable source
   references.
 
+**Focused Snapshot Projection (registered CLI-008 route)**:
+
+- The command registry includes the read-only projection
+  `agent-bahi status --snapshot <actual_snapshot_id> --focus <section_id>`.
+  The angle-bracket values describe command syntax only; emitted `drilldown.argv`
+  contains the actual snapshot ID from the enclosing status result and the
+  normalized section ID, never placeholders.
+- `section_id` is one of the normalized required status section IDs:
+  `operations`, `blocks-and-partials`, `unreconciled-bank`, `overdue-invoices`,
+  `unpaid-bills`, `evidence-pending`, `compliance-obligations`, or
+  `other-exceptions`. `operations` is the routing ID for the
+  Command/Operation Failures section.
+- The projection reads the already-created immutable snapshot identified by
+  `--snapshot`; it does not recompute any section, create a new snapshot, or
+  mutate state. It returns the detailed items for the selected section together
+  with the same snapshot `content_hash` and the same snapshot/section/item
+  `evidence_refs`.
+- An unknown snapshot ID, tenant-scope mismatch, or invalid section ID fails
+  closed with a nonzero validation/not-found result. It does not fall back to a
+  fresh status computation and does not mutate state.
+
 **Health and Completeness**:
 
 - `health` describes known business health and is exactly one of
@@ -169,7 +190,11 @@ applicable, and `evidence_refs`. The per-section `outcome` enum is exactly
 All sections include a `drilldown` object with a complete `argv: string[]` command
 (never a shell string or secret) that is valid against the command registry. The
 argv contains the executable as the first element and every argument as separate
-tokens. Items and summary cards use the same evidence-reference contract.
+tokens. Registered domain-specific drill-downs remain allowed when they exist.
+For every summary card, the focused snapshot projection above is the deterministic
+fallback route when no registered domain-specific route exists; its argv uses the
+snapshot's actual ID and the card's normalized section ID. Items and summary cards
+use the same evidence-reference contract.
 
 1. **Command/Operation Failures**: Failed or blocked CLI operations with error codes,
    remediation context, and drill-down command.
@@ -232,7 +257,7 @@ Deterministic ordering:
 ```json
 {
   "snapshot": {
-    "id": "<snapshot-id>",
+    "id": "snap:2026-08-21:001",
     "as_of_date": "2026-08-21",
     "schema_version": "1.0",
     "rule_pack_versions": "<comma-separated versions>",
@@ -260,6 +285,7 @@ Deterministic ordering:
   "sections": [
     {
       "name": "command-failures",
+      "section_id": "operations",
       "outcome": "COMPLETE|PARTIAL|FAILED|DATA_UNAVAILABLE|APPLICABILITY_UNKNOWN",
       "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
       "evidence_refs": [
@@ -300,13 +326,14 @@ Deterministic ordering:
             }
           ],
           "drilldown": {
-            "argv": ["agent-bahi", "operations", "show", "--scope", "failures"]
+            "argv": ["agent-bahi", "status", "--snapshot", "snap:2026-08-21:001", "--focus", "operations"]
           }
         }
       ]
     },
     {
       "name": "unreconciled-bank-lines",
+      "section_id": "unreconciled-bank",
       "outcome": "COMPLETE|PARTIAL|FAILED|DATA_UNAVAILABLE|APPLICABILITY_UNKNOWN",
       "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
       "evidence_refs": [
@@ -326,6 +353,7 @@ Deterministic ordering:
     },
     {
       "name": "compliance-obligations",
+      "section_id": "compliance-obligations",
       "outcome": "COMPLETE|PARTIAL|FAILED|DATA_UNAVAILABLE|APPLICABILITY_UNKNOWN",
       "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
       "evidence_refs": [
@@ -412,6 +440,14 @@ its computation.
 12. Every snapshot source, section, item, and summary card has a source/evidence
     ID plus immutable hash/equivalent reference; an unknown or incomplete fact
     points to the source observation that made it unknown.
+13. **Focused snapshot projection**: For an existing immutable snapshot, the
+    registry accepts `agent-bahi status --snapshot <actual_snapshot_id> --focus
+    <section_id>` only for the normalized required section IDs. It returns that
+    section's detailed items with the same snapshot ID, `content_hash`, and
+    evidence references without recomputing or mutating state; an invalid
+    snapshot or section fails closed. Every fallback `drilldown.argv` contains
+    the actual snapshot ID and normalized section ID, while a registered
+    domain-specific drill-down remains valid when one exists.
 
 ### 1.3.2 Error codes and common contract for all CLI commands
 
