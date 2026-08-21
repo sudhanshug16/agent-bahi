@@ -1,8 +1,8 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005, PT-007, PT-010, PT-014, and PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001, PT-002, PT-003, PT-004, PT-005, PT-006, PT-007, PT-008, PT-009, PT-010, PT-011, PT-012, PT-013, PT-014, PT-015, and PT-016 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
-Sudhanshu's explicit owner approvals of PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
+Sudhanshu's explicit owner approvals of all 16 personal-tax decisions (PT-001 through PT-016) are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
 
 ## 1. Verdict and scope
 
@@ -61,7 +61,7 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005, PT-007, PT-010, PT-014, and PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
+All 16 decisions (PT-001 through PT-016) have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
@@ -188,21 +188,50 @@ No static tax rule is embedded here. Subledgers preserve facts and evidence with
 **Implementation boundary:** Schema granularity is a product/data-model choice; the government does not mandate this hierarchy. Keep user-extensible labels/tags possible without allowing them to override canonical factual fields or statutory classification. Preserve effective-dated property/use and investment-lot facts to avoid silent historical overwrite. Preserve prior PT-001, PT-002, PT-003, and PT-009 semantics and all existing evidence/human-confirmation boundaries.
 
 <a id="pt-005"></a>
-### PT-005: One non-posting TaxCase per taxpayer, period, and filing sequence
+### PT-005: Books/BookSets remain current accounting truth; live non-posting TaxCase with immutable FilingSnapshot
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Create one **NON-POSTING** TaxCase per taxpayer, year, and filing sequence. It automatically includes every applicable BookSet and external source.
+**Decision:** Books/BookSets remain the current accounting truth. TaxCase is a live non-posting taxpayer/PAN + FY + filing-lineage workspace, not a frozen copy of books. The TaxCase aggregates applicable BookSets for filing purposes without replacing their ledgers.
+
+Create one **NON-POSTING** TaxCase per taxpayer, year, and filing sequence. It automatically enumerates every applicable BookSet and external source.
+
+**FilingSnapshot Binding:**
+
+An immutable FilingSnapshot is created when needed and references:
+- Exact BookSet ledger versions and event cursors (as-of date alone is insufficient)
+- Source artifact hashes and parser versions
+- AuthorityPack binding
+- Frozen eligibility facts
+- Tax computation version and hash
+- `as_of_instant` timestamp
+- Content hash of all snapshot data
 
 **Boundary:** A TaxCase is a preparation, evidence, validation, export, and filing-lineage object. It does not replace or merge the underlying books. Applicable BookSets and sources must be enumerated; omission is an error, never a default.
 
-**Failure mode:** A TaxCase is built from only the currently selected BookSet, producing a complete-looking but incomplete return.
+The TaxCase membership snapshot is one sealed normalized set created at case creation. No insert, update, or delete is allowed on the old case's membership after creation. Before `validate`, `export`, `submit`, or `finalize`, applicability is deterministically checked against current taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. If an applicable BookSet or required external source was added, removed, or changed since the snapshot, the old TaxCase is marked `STALE` and a successor with a new complete membership set is created; the old snapshot remains unchanged and all affected actions stay blocked until that successor is ready.
+
+**TaxComputation and ExportRuns:**
+
+TaxComputation derives from exactly one FilingSnapshot and never posts to the books. Multiple immutable ExportRuns are allowed; one explicitly selected export may be marked submission-bound. SubmissionAttempt records binding the selected ExportRun to a receipt or raw portal status.
+
+**Pre-Submission Changes:**
+
+Before submission, when books or sources change, a new FilingSnapshot and ExportRun are created in the same live TaxCase. This allows the case to reflect current state without destroying prior work.
+
+**Post-Submission Lineage:**
+
+Post-submission correction/revised/updated/rectification work follows PT-016 semantics: a linked successor TaxCase with independent FilingSnapshot and ExportRun.
+
+**Broker Evidence Scope:**
+
+Broker is only a conditional evidence source when investment facts apply; it is not universally required.
+
+**Failure mode:** A TaxCase is built from only the currently selected BookSet, producing a complete-looking but incomplete return. Books are edited in place instead of creating a new snapshot. Submission evidence is not bound to the exact ExportRun/output hash.
 
 **Control:** TaxCase creation stores the immutable taxpayer, period, filing sequence, BookSet set, external-source set, and snapshot bindings. A missing applicable source stays visible and blocks the affected action.
 
-The TaxCase membership snapshot is one sealed normalized set created at case creation. No insert, update, or delete is allowed on the old case's membership after creation. Before `validate`, `export`, `submit`, or `finalize`, applicability is deterministically checked against current taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. If an applicable BookSet or required external source was added, removed, or changed since the snapshot, the old TaxCase is marked `STALE` and a successor with a new complete membership set is created; the old snapshot remains unchanged and all affected actions stay blocked until that successor is ready.
-
-**Open choice:** Exact TaxCase persistence and inclusion-query shape require the canonical contract migration.
+**Open choice:** Exact TaxCase, FilingSnapshot, and ExportRun persistence and object shape require the canonical contract migration.
 
 <a id="pt-006"></a>
 ### PT-006: Year-specific, fact-driven form selection
@@ -222,23 +251,43 @@ There is no generic form priority order, threshold shortcut, business-assets sho
 **Note:** PT-007 AuthorityPack sourcing/binding remains unresolved and does not prevent owner approval of this semantic rule.
 
 <a id="pt-007"></a>
-### PT-007: Bind period, trigger, and four independent official bindings
+### PT-007: Immutable hashed AuthorityPack binding
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Every TaxCase binds the period and trigger facts plus four independent official bindings atomically and immutably:
+**Decision:** Every TaxCase binds an immutable hashed AuthorityPack atomically and immutably. The AuthorityPack contains the complete applicable period/filing trigger/law/rule snapshot and official schema, validation rules, utility reference/version, instructions, provenance, effective dates, and compatibility metadata.
 
-1. governing Act determined from the normalized income period;
-2. period;
-3. filing trigger;
-4. effective-dated compatible rule snapshot;
-5. four independent official bindings: schema, validation rules, utility, and instructions. Each binding is immutable, source-bound, hashed, effective-dated, and compatible with the period, Act, and selected form.
+**AuthorityPack Contents:**
+
+An AuthorityPack is an immutable bundle containing:
+- Applicable tax period and filing trigger
+- Governing Act (determined from normalized income period)
+- Official schema and validation rules
+- Utility reference and version
+- Instructions and guidance
+- Provenance and source evidence
+- Effective dates and compatibility metadata
+- Exact pack ID and content hash
+
+**V1 Sourcing:**
+
+V1 uses bundled and manually reviewed AuthorityPacks. There is no live-scraping dependency.
+
+**Exact Pack Binding:**
+
+The exact pack ID and hash bind to each FilingSnapshot and export. Missing or incompatible pack returns REVIEW/BLOCK.
+
+**Future Authority Registry:**
+
+A future separate authority-registry project is out of scope for V1. It may later publish signed and hashed packs consumed by ID/hash. This decision does not pre-approve that future work.
+
+**Period and Act Mapping:**
 
 The FY 2025-26 case binds the Income-tax Act 1961 and AY 2026-27 context. The Tax Year 2026-27 case binds the Income-tax Act 2025 from the 1 Apr 2026 boundary. The binding is exact; a rule from one period cannot leak into another.
 
-**Failure mode:** A form validates under one release while the TaxCase silently uses a different Act, rule, validator, utility, or instruction release.
+**Failure mode:** A form validates under one release while the TaxCase silently uses a different Act, rule, validator, utility, or instruction release. An AuthorityPack is created ad-hoc or sourced from a live endpoint without hash/versioning.
 
-**Control:** All four official bindings and the compatible rule snapshot are mandatory before validation or export. Any missing, stale, conflicting, unapproved, source-unbound, or incompatible binding returns REVIEW/BLOCK. Schema validation alone never marks a TaxCase legally correct.
+**Control:** The AuthorityPack binding is mandatory before validation or export. Any missing, stale, conflicting, unapproved, source-unbound, or incompatible pack returns REVIEW/BLOCK. Schema validation alone never marks a TaxCase legally correct.
 
 <a id="pt-008"></a>
 ### PT-008: Preserve AIS, TIS, and 26AS artifacts
@@ -271,21 +320,37 @@ Live Account Aggregator or partner connections are future and not a V1 dependenc
 **Control:** Raw file and derived records are linked by content hash and parser release. Re-import creates a new evidence version or an explicit duplicate outcome; it never mutates the original.
 
 <a id="pt-010"></a>
-### PT-010: Nine-state source readiness
+### PT-010: READY requires complete, deterministic, nonempty catalog with all entries resolved
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
 **Decision:** Source readiness uses exactly these states: `UNKNOWN`, `DECLARED_NOT_APPLICABLE`, `EXPECTED`, `INGESTED`, `RECONCILED`, `CONFLICT`, `INCOMPLETE`, `READY`, `STALE`.
 
-Before readiness evaluation, the complete required source catalog is deterministically enumerated from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. The catalog must be non-empty and complete. Every required catalog entry must be either `RECONCILED` or `READY`, or have evidenced `DECLARED_NOT_APPLICABLE` status. Any required `UNKNOWN`, `EXPECTED`, `INGESTED`, `CONFLICT`, `INCOMPLETE`, or `STALE` entry returns `REVIEW/BLOCK` for the affected action.
+A TaxCase is READY only when:
+1. A deterministic, nonempty complete required-source catalog exists
+2. Every required catalog entry is resolved:
+   - Either `RECONCILED` or `READY`, **OR**
+   - `DECLARED_NOT_APPLICABLE` with evidence
+3. No required entry is `UNKNOWN`, `EXPECTED`, `INGESTED`, `CONFLICT`, `INCOMPLETE`, or `STALE`
+4. AuthorityPack is bound
+5. Deterministic validations pass
 
-`RECONCILED -> READY` is allowed only for a complete, non-empty catalog when every required entry is reconciled or ready, any not-applicable entry is evidenced, no required conflict, incomplete, or stale state exists, and deterministic validations pass. An empty or not-yet-enumerated catalog can never pass `READY`.
+**Reconciliation Requirement for Conflicts:**
 
-Required unresolved states block only the affected computation, export, or filing action. They do not block unrelated BookSet work. Optional unresolved sources remain visible and do not silently disappear.
+AIS/26AS/books differences may be marked READY only with explicit reconciliation recording:
+- Amount of discrepancy
+- Reason for difference
+- Supporting evidence
+- Actor who reviewed and approved
+- Date of reconciliation
 
-User or CA acknowledgement can provide review evidence, but it cannot relabel a mandatory gap as READY.
+The fact of reconciliation (not acknowledgement alone) is the requirement; unresolved conflict cannot be overridden by user checkbox or CA acknowledgement.
 
-**Failure mode:** A missing artifact is treated as optional because a user acknowledged the checklist, or an optional source is hidden because it is unresolved.
+**Failure mode:** A missing artifact is treated as optional because a user acknowledged a checklist. An optional source is hidden because it is unresolved. A conflict is marked READY without explicit reconciliation reason/amount/evidence/actor/date.
+
+**Control:** Before readiness evaluation, the complete required source catalog is deterministically enumerated from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. An empty or not-yet-enumerated catalog can never pass `READY`. Required unresolved states block only the affected computation, export, or filing action; they do not block unrelated BookSet work. Optional unresolved sources remain visible and do not silently disappear.
+
+**Open choice:** Exact prompt and review mechanics remain part of the canonical contract migration and Gate0.
 
 <a id="pt-011"></a>
 ### PT-011: GST output follows business BookSet and GSTIN
@@ -338,21 +403,30 @@ The product records evidence supplied by the taxpayer or CA; it does not infer a
 **Note:** Exact FilingSnapshot/ExportRun object split remains part of unresolved PT-005 refinement; do not pre-approve it here.
 
 <a id="pt-014"></a>
-### PT-014: Tenant-wide read-only status and explicit mutation scope
+### PT-014: Stable explicit IDs and fail-closed mutation scope
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Note:** PT-014 remains **TENTATIVE - NOT OWNER-APPROVED** and gates only
-BookSet/TaxCase-specific behavior. The global company health status command is
-separately defined and owner-approved in [CLI-008](accounting-contracts.md#cli-008)
-(non-approval cross-reference only; this PT entry does not change CLI-008's
-status or scope).
+**Decision:** BookSets and TaxCases use stable explicit IDs such as `bs_...` and `tc_...`.
 
-**Decision:** `agent-bahi status` in the personal-tax context is tenant-wide and read-only. It shows BookSets and TaxCases separately. It does not require `--book-set`.
+Tenant-wide read-only `agent-bahi status` is allowed without a selected BookSet and spans all BookSets in the tenant without `--book-set`.
 
-Every mutation, reconciliation, import, and correction requires an explicit BookSet when more than one eligible BookSet exists. Every TaxCase mutation requires immutable `--tax-case tc_...`, or FY plus filing sequence only when that pair is unambiguous.
+Every mutation requires explicit scope:
+- Every BookSet mutation/import/reconciliation/correction requires explicit `--book-set` flag, even when only one candidate exists
+- Every TaxCase mutation/export requires explicit `--tax-case tc_...` flag
 
-Ambiguity returns `AMBIGUOUS_BOOKSET` or `AMBIGUOUS_TAXCASE`; the command does not guess. A read-only overview cannot authorize a mutation.
+**Tenant Selection:**
+
+A sole tenant may still be implicit. Multiple tenants require explicit tenant selection. Entity creation auto-creates one default BookSet.
+
+**Failure Modes:**
+
+- Implicit BookSet selection based on "last used" or "most likely candidate"
+- TaxCase selected by "most recent creation date"
+- Mutation succeeding despite ambiguous scope
+- Implicit tenant selection when multiple tenants exist
+
+**Control:** Ambiguity returns `AMBIGUOUS_BOOKSET` or `AMBIGUOUS_TAXCASE`; the command does not guess. A read-only overview cannot authorize a mutation. The command fails closed when scope is ambiguous.
 
 <a id="pt-015"></a>
 ### PT-015: Privacy and security boundary
@@ -370,17 +444,35 @@ There is no blanket local-SQLite exemption, India-only claim, automatic Signific
 **Failure mode:** Redacted operational logs still expose raw evidence, or a product disclaimer is mistaken for a legal determination.
 
 <a id="pt-016"></a>
-### PT-016: Immutable original and linked successor TaxCases
+### PT-016: Immutable original and linked successor cases; post-submission lineage
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Preserve the immutable original TaxCase and create linked successor TaxCases for a revised, updated, rectification, defect-response, or other verified mechanism.
+**Decision:** Post-submission, preserve the immutable original TaxCase and create linked successor TaxCases for revised, updated, rectification, defect-response, or other verified mechanism-driven corrections.
 
-The mechanism selection remains **OPEN**. The successor returns REVIEW/BLOCK until the year-specific branch, eligibility, portal route, schema, and evidence requirements are researched and owner-approved. The product does not select a mechanism automatically from a date, user preference, or generic label.
+**Pre-Submission Behavior:**
 
-**Failure mode:** A filed case is edited in place, or a correction route is inferred without verifying the governing period and portal route.
+Before submission evidence binds a FilingSnapshot/ExportRun, changes to books or sources create a new FilingSnapshot and ExportRun within the same live TaxCase (see PT-005). The original case remains the authoritative container; prior snapshots and exports are preserved as immutable history.
 
-**Control:** Store original-case linkage, trigger evidence, selected mechanism after approval, immutable source snapshots, and the successor's independent filing state.
+**Post-Submission Behavior:**
+
+Once submission evidence binds snapshot/export to receipt/raw portal status, those original submission artifacts and states are immutable. Correction/revised/rectification/defect-response work uses:
+- A linked successor TaxCase (same taxpayer, same period, new filing sequence)
+- Independent FilingSnapshot
+- Independent ExportRun
+- Independent SubmissionAttempt and filing evidence
+
+**Current Books Independence:**
+
+Current books continue to update independently throughout. The successor case references only the current books state as of its FilingSnapshot timestamp.
+
+**Mechanism Selection:**
+
+The exact official correction route (revised, rectification, defect-response, etc.) is year/rule/portal-specific and must be verified by the applicable AuthorityPack and official evidence. The mechanism is never guessed from a user label or elapsed time; verification happens before marking the successor READY.
+
+**Failure mode:** A filed case is edited in place. A correction route is inferred without verifying the governing period and portal route. Original submission artifacts are not preserved as immutable records.
+
+**Control:** Store original-case linkage, trigger evidence, selected mechanism after verification, immutable source snapshots, and the successor's independent filing state. Before validation/export, verify the applicable mechanism per the AuthorityPack; missing or unapproved mechanism returns REVIEW/BLOCK.
 
 ## 5. Source and import matrix
 
@@ -510,7 +602,7 @@ The DPDP Act and Rules are legal research sources. CERT-In Directions under sect
 
 Implementation is blocked until all of the following are reviewed and approved:
 
-1. Architect review of PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015; owner and architect approval of PT-005, PT-007, PT-010, PT-014, and PT-016.
+1. Architect review of all 16 PT decisions (PT-001 through PT-016). Owner approval is recorded for all decisions.
 2. Canonical contract migration from one legal entity/one balanced book to the reviewed individual/PAN tenant plus independently balanced BookSets model.
 3. Immutable official rule snapshots and official schema or validator releases for each supported period and form.
 4. Year-specific correction-route research and owner-approved mechanism selection.
@@ -590,4 +682,4 @@ The following cannot approve a personal-tax action on their own:
 
 ## 11. Review handoff
 
-The canonical packet is complete as a discovery baseline. PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 owner approval is recorded, but architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.
+The canonical packet is complete as a discovery baseline. All 16 personal-tax decisions (PT-001 through PT-016) have owner approval recorded. Architect review, the documented Gate-0/readiness safeguards, the breaking tenant/BookSet contract, the source and readiness boundaries, the coordinated canonical migration, and the open research gates remain required before implementation planning proceeds.

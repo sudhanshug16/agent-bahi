@@ -1,8 +1,8 @@
 # Personal Tax Physical-Schema RFC
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED.
+**Status:** NOT ARCHITECT-REVIEWED; owner approval recorded for corresponding PT decisions (PT-001 through PT-016 all OWNER-APPROVED).
 
-**Scope:** This is a documentation-only, dialect-neutral relational contract for the personal-tax data model. It grants no Gate0, implementation, CLI, migration, library, or code authority. PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 retain the status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**; PT-005, PT-007, PT-010, PT-014, and PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. See the canonical [personal-tax decision packet](personal-tax-scope.md), including the existing [PT-004](personal-tax-scope.md#pt-004) anchor.
+**Scope:** This is a documentation-only, dialect-neutral relational contract for the personal-tax data model. It grants no Gate0, implementation, CLI, migration, library, or code authority. All 16 PT decisions (PT-001 through PT-016) have the status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. See the canonical [personal-tax decision packet](personal-tax-scope.md), including all anchors PT-001 through PT-016.
 
 This document deliberately contains no executable schema, dialect syntax, migration, or claim of mechanical validation. The contract describes required identities, relationships, immutability, and transaction gates. Gate0 proof obligations remain open.
 
@@ -258,6 +258,6 @@ No proof is claimed here. These obligations must be directed, run, and evidenced
 
 ## 6. Review and authority boundary
 
-This RFC remains tentative and is not architect-reviewed. PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 remain owner-approved but not architect-reviewed; PT-005, PT-007, PT-010, PT-014, and PT-016 remain tentative and not owner-approved. The RFC does not approve Gate0, implementation, schema deployment, a dialect, a migration, a utility, a portal route, or a dependency. Only explicit owner direction followed by the existing Gate0 and review gates can change that boundary.
+This RFC is not architect-reviewed. All 16 PT decisions (PT-001 through PT-016) are owner-approved; NOT ARCHITECT-REVIEWED. The RFC does not approve Gate0, implementation, schema deployment, a dialect, a migration, a utility, a portal route, or a dependency. Only architect review followed by the existing Gate0 and review gates can change that boundary.
 
 **End of RFC.**

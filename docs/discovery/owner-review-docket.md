@@ -1,6 +1,6 @@
 # Owner Review Docket: Tentative Decisions T-001 through T-011
 
-**✓ STATUS UPDATE: T-001 through T-011 are now OWNER-APPROVED. PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are OWNER-APPROVED; NOT ARCHITECT-REVIEWED. PT-005, PT-007, PT-010, PT-014, and PT-016 remain TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED.**
+**✓ STATUS UPDATE: T-001 through T-011 are now OWNER-APPROVED. All 16 PT decisions (PT-001 through PT-016) are OWNER-APPROVED; NOT ARCHITECT-REVIEWED.**
 
 T-001 through T-011 are owner-approved as settled decision frameworks, while remaining subject to research gates and implementation authorization. Sudhanshu has approved each T-decision as a binding framework, though specific implementation (library choices, statutory artifacts, filing adapters) remains gated by research closure or explicit future approval. TypeScript + Bun is selected per T-011; Gate0 proof spikes (STK-001 through STK-006) are a mandatory prerequisite (NOT authorized by this docs review) to validate platform/database/arithmetic correctness before implementation. This table is a compact index, not a duplicate specification. Follow the link to each entry for full rationale, alternatives, risks, and reversal path.
 
@@ -28,9 +28,9 @@ T-001 through T-011 are owner-approved as settled decision frameworks, while rem
 
 ## Personal Tax Decisions PT-001 through PT-016
 
-**Personal Tax status:** PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005, PT-007, PT-010, PT-014, and PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**.
+**Personal Tax status:** All 16 decisions (PT-001 through PT-016) are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**.
 
-A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope.md), documents 16 core decisions for sole-proprietor personal income-tax expansion. Complete individual tax is **in product scope**; PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 have the owner-approved status above, while PT-005, PT-007, PT-010, PT-014, and PT-016 retain the tentative status above. The table below is a compact index; full specifications and rationale are in the canonical packet.
+A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope.md), documents 16 core decisions for sole-proprietor personal income-tax expansion. Complete individual tax is **in product scope**; all 16 decisions now have owner approval. The table below is a compact index; full specifications and rationale are in the canonical packet.
 
 | PT-ID | Title | Recommended Option | First Affected Gate/Phase | Link |
 |-------|-------|-------------------|--------------------------|------|
@@ -38,20 +38,20 @@ A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope
 | PT-002 | BookSet-Owned Records with Tenant_ID + Book_Set_ID | A BookSet is one independently balanced books/business boundary, not a bank account; company tenants normally have one BookSet across multiple bank/cash/card accounts; every posted record belongs to exactly one BookSet; raw imported lines may remain unassigned until classified | Phase 2 (Data Model) | [Personal Tax Packet § PT-002](personal-tax-scope.md#pt-002) |
 | PT-003 | Atomic Same-Tenant Inter-BookSet Transfer | Two balanced linked legs with shared purpose; transfer classification does not suppress underlying tax facts; includes personal-to-business and direct-payment examples; no double-counting in consolidated reporting | Phase 3 (Posting Engine) | [Personal Tax Packet § PT-003](personal-tax-scope.md#pt-003) |
 | PT-004 | Personal Bank, Investment, Property/Rent/Loan Subledgers | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | Phase 5 (Reports/Assets/FX) | [Personal Tax Packet § PT-004](personal-tax-scope.md#pt-004) |
-| PT-005 | ONE TaxCase/Return per Year Covers ALL BookSets + External Sources | Atomic return per taxpayer/year/filing sequence; never separate or omit applicable BookSet | Phase 7 (Compliance) | [Personal Tax Packet § PT-005](personal-tax-scope.md#pt-005) |
+| PT-005 | Books/BookSets Remain Current Accounting Truth; Live Non-Posting TaxCase with Immutable FilingSnapshot | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | Phase 7 (Compliance) | [Personal Tax Packet § PT-005](personal-tax-scope.md#pt-005) |
 | PT-006 | Form Selection Year-Specific and Fact-Driven | ITR form chosen annually per facts and rules; no universal ITR-3/4 mapping | Phase 7 (Compliance) | [Personal Tax Packet § PT-006](personal-tax-scope.md#pt-006) |
-| PT-007 | Bind Governing Act, Period, Trigger, and Four Official Bindings | TaxCase atomically binds period/Act/trigger, compatible rule snapshot, and four immutable source-bound effective-dated bindings (schema, validation rules, utility, instructions) before validation/export | Phase 7 (Compliance) | [Personal Tax Packet § PT-007](personal-tax-scope.md#pt-007) |
+| PT-007 | Immutable Hashed AuthorityPack Binding | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | Phase 7 (Compliance) | [Personal Tax Packet § PT-007](personal-tax-scope.md#pt-007) |
 | PT-008 | Preserve Primary Artifacts; AIS Including TIS; 26AS; Reconcile Without Overwrite | External sources stored immutably; reconciliation non-destructive; gaps explicit | Phase 7 (Compliance) | [Personal Tax Packet § PT-008](personal-tax-scope.md#pt-008) |
 | PT-009 | Hashed File-First V1; No Credentials/OTP/Automation; AA Future | User downloads files manually; hash + immutable storage; AA integration deferred | Phase 7 (Compliance) | [Personal Tax Packet § PT-009](personal-tax-scope.md#pt-009) |
-| PT-010 | Progressive Source Readiness Model (UNKNOWN through STALE) | 9-state progression; no arbitrary thresholds; mandatory gaps block only affected action | Phase 7 (Compliance) | [Personal Tax Packet § PT-010](personal-tax-scope.md#pt-010) |
+| PT-010 | READY Requires Complete, Deterministic, Nonempty Catalog with All Entries Resolved | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | Phase 7 (Compliance) | [Personal Tax Packet § PT-010](personal-tax-scope.md#pt-010) |
 | PT-011 | GST Output to Business BookSet/GSTIN; Personal Label Alone Does Not Decide | Explicit routing for business-use; personal source label is not determinative | Phase 7 (Compliance) | [Personal Tax Packet § PT-011](personal-tax-scope.md#pt-011) |
 | PT-012 | TDS/TCS/Remittance Branches Effective-Dated by Role and Facts | Versioned role/transaction gate; missing mandatory rule or evidence returns REVIEW/BLOCK | Phase 7 (Compliance) | [Personal Tax Packet § PT-012](personal-tax-scope.md#pt-012) |
 | PT-013 | ITR-Specific Portal States/Evidence; No Universal ARN | Exactly five official ITD labels mapped to normalized codes (SUBMITTED, VERIFIED, PROCESSED, DEFECTIVE, CASE_TRANSFERRED_TO_ASSESSING_OFFICER), with exact raw label and evidence retained; invalidity is separate derived evidence-backed consequence | Phase 7 (Compliance) | [Personal Tax Packet § PT-013](personal-tax-scope.md#pt-013) |
-| PT-014 | Status Tenant-Wide Read-Only; BookSet/TaxCase Separate; Mutations Fail Closed | No --book-set flag required for overview; mutations requiring explicit disambiguation fail closed | Phase 2 (CLI) | [Personal Tax Packet § PT-014](personal-tax-scope.md#pt-014) |
+| PT-014 | Stable Explicit IDs and Fail-Closed Mutation Scope | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | Phase 2 (CLI) | [Personal Tax Packet § PT-014](personal-tax-scope.md#pt-014) |
 | PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; No False Compliance Claims | Privacy by default; file permissions; redacted logs; deployment classification; disclaimer disclaimers | Phase 1 (Setup) | [Personal Tax Packet § PT-015](personal-tax-scope.md#pt-015) |
-| PT-016 | Immutable Original + Linked Correction/Revised/Updated/Rectification Cases | Separate TaxCases linked to original; mechanism selected by verified rules, not user choice | Phase 7 (Compliance) | [Personal Tax Packet § PT-016](personal-tax-scope.md#pt-016) |
+| PT-016 | Immutable Original and Linked Successor Cases; Post-Submission Lineage | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | Phase 7 (Compliance) | [Personal Tax Packet § PT-016](personal-tax-scope.md#pt-016) |
 
-**Owner Review Status**: PT-001, PT-002, PT-003, PT-004, PT-006, PT-008, PT-009, PT-011, PT-012, PT-013, and PT-015 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005, PT-007, PT-010, PT-014, and PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical specifications, rationale, alternatives, risks, and reversal paths are in [Personal Tax Discovery Packet § 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016).
+**Owner Review Status**: All 16 decisions (PT-001 through PT-016) are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical specifications, rationale, alternatives, risks, and reversal paths are in [Personal Tax Discovery Packet § 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016).
 
 ---
 

@@ -1203,7 +1203,44 @@ Separate, parallel migration paths:
 
 **Testing gates**: Fresh install + every supported upgrade path, dialect conformance, and target-platform driver behavior are tested on all three supported dialects before release. Remote database configuration is optional for a user; these driver, migration, conformance, and platform proofs are mandatory release evidence.
 
-### Content-Addressed Immutable Evidence
+### Database Compatibility and Migration Safety (Owner-Stated Requirement; TENTATIVE Recommended Refinement)
+
+**Owner-Stated Requirement** (recorded without architect review or approval):
+
+A CLI carrying migrations must guard database compatibility. Incompatible clients and tenants must not operate against a database with schema/data-format versions they do not understand.
+
+**TENTATIVE RECOMMENDED REFINEMENT — NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED:**
+
+The following refinements are proposed for review and approval by the owner and architect:
+
+1. **Schema and Data-Format Versioning**:
+   - Distinct schema/data-format version separate from CLI semantic version.
+   - Explicit compatibility matrix/ranges mapping CLI versions to supported database schema versions.
+   - A given CLI release declares which database schema versions it can operate against.
+
+2. **Pre-Operation Compatibility Check**:
+   - Check database schema/data-format version before each business operation (not just at startup).
+   - Reject operations if CLI version is incompatible with database schema version.
+   - Return actionable error message identifying the incompatibility and required action.
+
+3. **Migration Execution Safety**:
+   - Never initiate a schema migration in the middle of a business operation.
+   - For SQLite: Acquire exclusive lock, perform preflight validation, backup before migration, execute migration transactionally, test idempotency and resumability.
+   - For PostgreSQL/MySQL: Establish database-wide lease or maintenance barrier across all tenants and concurrent clients before migration begins.
+   - All migrations are transactional, idempotent, and resumable from failure.
+
+4. **Fail-Before-Read/Write Strategy**:
+   - If an old CLI version connects to a newer database schema, fail before attempting any read or write operation.
+   - If a database is undergoing migration, clients must not initiate new operations; active operations must complete or be rolled back before migration proceeds.
+   - Maintenance mode or explicit schema-version declaration at connection time prevents silent data corruption or incompatibility.
+
+**Unresolved (explicitly NOT approved or recommended here; deferred for separate decision):**
+
+- Whether migrations are invoked automatically at CLI startup or require explicit operator command.
+- The compatibility window: e.g., whether a CLI release supports only the immediately prior schema version or multiple past versions.
+- Backup and rollback policy: e.g., automatic rollback on migration failure, manual recovery procedures, version downgrade strategy.
+
+These unresolved details must be decided separately by the owner and architect and are not implemented by this documentation.
 
 **Storage port**: Abstraction for evidence blob storage.
 
