@@ -99,9 +99,11 @@ the semantic operation and error code are binding.
 ### 1.3.1 Company Health Status (CLI-008)
 
 `agent-bahi status` is a top-level, tenant-scoped, read-only command that
-produces a deterministic immutable snapshot of company health. It is **owner-approved**
-and generates no mutations, reconciliation triggers, posting, approval, filing,
-or other state changes.
+produces a deterministic immutable snapshot of company health. The global CLI-008
+contract is **owner-approved**. That approval covers this semantic contract only;
+it does not authorize implementation, Gate0, a phase, or PT-014 behavior. The
+command generates no mutations, reconciliation triggers, posting, approval,
+filing, or other state changes.
 
 **Tenant Selection**:
 
@@ -116,7 +118,38 @@ or other state changes.
 - Identical queries return identical snapshots from the same point in time; a later
   query with a different as-of date returns a new distinct snapshot.
 - Snapshot metadata includes ID, as-of date, schema version, rule-pack versions
-  (comma-separated), content hash, and computation timestamp.
+  (comma-separated), content hash, computation timestamp, and immutable source
+  references.
+
+**Health and Completeness**:
+
+- `health` describes known business health and is exactly one of
+  `HEALTHY | ACTION_REQUIRED | BLOCKED`.
+- `completeness` describes acquisition/computation and is exactly one of
+  `COMPLETE | PARTIAL | FAILED`.
+- `health: HEALTHY` is conclusive only when `completeness: COMPLETE`. A partial
+  or failed snapshot never reports `HEALTHY` as conclusive: use `BLOCKED` when a
+  known blocking fact exists, otherwise use `ACTION_REQUIRED` as the
+  non-conclusive state and surface every `UNKNOWN`/`INCOMPLETE` fact.
+- A fully computed unhealthy snapshot (`ACTION_REQUIRED` or `BLOCKED`) exits
+  successfully because computation succeeded; business health is not command
+  success.
+- Partial or failed acquisition returns a shell-visible distinct nonzero result
+  with the snapshot (when available) and structured per-section outcomes. The
+  numeric value is an internal/TBD implementation choice now, but it must not be
+  hidden from the shell once implemented and must never be exit 0.
+
+**Evidence References**:
+
+- The snapshot has a `sources` array. Every source entry contains a stable
+  `source_id`, an `evidence_id`, and an immutable hash/version reference.
+- The snapshot, every section, every item, and every rendered summary card
+  carries `evidence_refs` containing those same source/evidence IDs and an
+  immutable hash or equivalent content-addressed reference. A health claim or
+  `UNKNOWN` outcome without a traceable reference is invalid.
+- Missing, stale, conflicting, or unavailable inputs are represented by the
+  referenced source observation and a visible `UNKNOWN`/`INCOMPLETE` reason; an
+  absent reference must not be treated as healthy data.
 
 **Output Determinism**:
 
@@ -129,10 +162,13 @@ or other state changes.
 
 **Required Sections**:
 
-Each section includes counts, material amounts (in applicable currency), urgency
-/severity classification, and earliest due date where applicable. All sections
-include an argv-array drill-down command (never a shell string or secret) that
-is valid against the command registry.
+Each section includes an `outcome`, known `health`, counts, material amounts (in
+applicable currency), urgency/severity classification, earliest due date where
+applicable, and `evidence_refs`. The per-section `outcome` enum is exactly
+`COMPLETE | PARTIAL | FAILED | DATA_UNAVAILABLE | APPLICABILITY_UNKNOWN`.
+All sections include an argv-array drill-down command (never a shell string or
+secret) that is valid against the command registry. Items and summary cards use
+the same evidence-reference contract.
 
 1. **Command/Operation Failures**: Failed or blocked CLI operations with error codes,
    remediation context, and drill-down command.
@@ -164,31 +200,31 @@ Deterministic ordering:
 3. **Tenant-configured materiality/risk rules**: Apply when applicability/deadline
    /catalog is known and verified.
 4. If applicability, deadline, or statutory catalog is missing, unknown, or
-   OPEN_RESEARCH: mark `INCOMPLETE/UNKNOWN` and treat snapshot as partial; never
-   infer healthy or assume none.
+   OPEN_RESEARCH: mark the affected fact `UNKNOWN`/`INCOMPLETE`, set the affected
+   section outcome to `APPLICABILITY_UNKNOWN` or `DATA_UNAVAILABLE`, and treat
+   the snapshot as incomplete; never infer healthy or assume none.
 
-**Overall Health State** (machine data):
+**Known Business Health** (machine data):
 
 - `HEALTHY`: No overdue obligations, no blocks, no material exceptions.
 - `ACTION_REQUIRED`: Upcoming obligations, non-blocking exceptions, or material
   items requiring attention.
 - `BLOCKED`: Statutory due date passed, filing gate failed, reconciliation
   confirmation required, or other blocking condition.
-- If any section fails to compute (rule pack unavailable, data corruption,
-  external service timeout): return distinct nonzero result with section-level
-  outcome recorded; the overall state is `PARTIAL` or `PARTIAL_FAILURE`.
 
 **Snapshot Failure Handling**:
 
 - Snapshot acquisition succeeds even when company health requires action; machine
-  data records overall health (`HEALTHY`, `ACTION_REQUIRED`, `BLOCKED`).
+  data records `health` (`HEALTHY`, `ACTION_REQUIRED`, `BLOCKED`) and
+  `completeness: COMPLETE`.
 - A section fails to compute when its data cannot be gathered (missing rule pack,
   database corruption, timeout) or its deadline/applicability is unknown/missing:
-  record outcome (e.g., `RULE_PACK_MISSING`, `DATA_UNAVAILABLE`, `APPLICABILITY_UNKNOWN`)
-  and mark that section's visibility as partial.
-- Snapshot persists with per-section outcome; the entire snapshot is not rejected.
-  This separates command failure (unable to generate any snapshot) from unhealthy
-  books (snapshot complete but requires action).
+  record one of the required outcomes (`PARTIAL`, `FAILED`, `DATA_UNAVAILABLE`,
+  `APPLICABILITY_UNKNOWN`), preserve the visible reason, and set completeness to
+  `PARTIAL` or `FAILED`.
+- Snapshot data persists with per-section outcomes whenever an envelope can be
+  emitted; the entire snapshot is not silently replaced by an empty/healthy
+  result. This separates an acquisition failure from unhealthy books.
 
 **JSON Schema**:
 
@@ -200,30 +236,83 @@ Deterministic ordering:
     "schema_version": "1.0",
     "rule_pack_versions": "<comma-separated versions>",
     "content_hash": "<sha256-hex>",
-    "computed_at": "2026-08-21T12:34:56Z"
+    "computed_at": "2026-08-21T12:34:56Z",
+    "evidence_refs": [
+      {
+        "source_id": "src:ledger:2026-08-21",
+        "evidence_id": "ev:snapshot:001",
+        "immutable_ref": "sha256:<sha256-hex>"
+      }
+    ]
   },
+  "sources": [
+    {
+      "source_id": "src:ledger:2026-08-21",
+      "evidence_id": "ev:ledger:2026-08-21",
+      "immutable_ref": "sha256:<sha256-hex>",
+      "status": "AVAILABLE"
+    }
+  ],
   "tenant_id": "<tenant>",
-  "overall_health": "HEALTHY|ACTION_REQUIRED|BLOCKED|PARTIAL",
+  "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
+  "completeness": "COMPLETE|PARTIAL|FAILED",
   "sections": [
     {
       "name": "command-failures",
-      "status": "HEALTHY|ACTION_REQUIRED|BLOCKED|PARTIAL|RULE_PACK_MISSING",
-      "count": 0,
+      "outcome": "COMPLETE|PARTIAL|FAILED|DATA_UNAVAILABLE|APPLICABILITY_UNKNOWN",
+      "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
+      "evidence_refs": [
+        {
+          "source_id": "src:operations:2026-08-21",
+          "evidence_id": "ev:operations:001",
+          "immutable_ref": "sha256:<sha256-hex>"
+        }
+      ],
+      "count": 1,
       "items": [
         {
+          "item_id": "item:operation:001",
           "code": "PERIOD_LOCKED",
           "message": "Period locked through 2026-08-15",
           "severity": "BLOCKED",
+          "evidence_refs": [
+            {
+              "source_id": "src:operations:2026-08-21",
+              "evidence_id": "ev:operation:001",
+              "immutable_ref": "sha256:<sha256-hex>"
+            }
+          ],
           "drill_down": {
             "command": "agent-bahi",
             "args": ["period", "lock", "show"]
           }
         }
+      ],
+      "cards": [
+        {
+          "card_id": "card:command-failures",
+          "health": "BLOCKED",
+          "evidence_refs": [
+            {
+              "source_id": "src:operations:2026-08-21",
+              "evidence_id": "ev:operations:001",
+              "immutable_ref": "sha256:<sha256-hex>"
+            }
+          ]
+        }
       ]
     },
     {
       "name": "unreconciled-bank-lines",
-      "status": "HEALTHY|ACTION_REQUIRED",
+      "outcome": "COMPLETE|PARTIAL|FAILED|DATA_UNAVAILABLE|APPLICABILITY_UNKNOWN",
+      "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
+      "evidence_refs": [
+        {
+          "source_id": "src:bank:2026-08-21",
+          "evidence_id": "ev:bank:2026-08-21",
+          "immutable_ref": "sha256:<sha256-hex>"
+        }
+      ],
       "count": 5,
       "total_amount": 50000,
       "currency": "INR",
@@ -235,13 +324,29 @@ Deterministic ordering:
     },
     {
       "name": "compliance-obligations",
-      "status": "HEALTHY|ACTION_REQUIRED|BLOCKED|INCOMPLETE",
+      "outcome": "COMPLETE|PARTIAL|FAILED|DATA_UNAVAILABLE|APPLICABILITY_UNKNOWN",
+      "health": "HEALTHY|ACTION_REQUIRED|BLOCKED",
+      "evidence_refs": [
+        {
+          "source_id": "src:rules:gstr-1:2026-07",
+          "evidence_id": "ev:rules:2026-08-21",
+          "immutable_ref": "sha256:<sha256-hex>"
+        }
+      ],
       "items": [
         {
+          "item_id": "item:obligation:gstr-1:2026-07",
           "obligation": "GSTR-1 FY 2026-07",
           "status": "due|overdue",
           "due_date": "2026-08-25",
           "severity": "ACTION_REQUIRED|BLOCKED",
+          "evidence_refs": [
+            {
+              "source_id": "src:rules:gstr-1:2026-07",
+              "evidence_id": "ev:obligation:gstr-1:2026-07",
+              "immutable_ref": "sha256:<sha256-hex>"
+            }
+          ],
           "drill_down": {
             "command": "agent-bahi",
             "args": ["gst", "filing", "show", "--gstin", "18AABCT1234H1Z0"]
@@ -255,10 +360,11 @@ Deterministic ordering:
 
 **Human Output Format**:
 
-A bounded text summary showing the same facts as JSON: overall health state,
-count of exceptions per section, material amounts, earliest due dates, and
-brief drill-down commands. Overview may rank or collapse sections but must not
-silently suppress unresolved items. Include totals for collapsed items.
+A bounded text summary showing the same facts as JSON: `health`,
+`completeness`, count of exceptions per section, material amounts, earliest due
+dates, evidence IDs/hashes, and brief drill-down commands. Overview may rank or
+collapse sections but must not silently suppress unresolved items. Include
+totals and evidence references for collapsed cards.
 
 **Read-Only Guarantee**:
 
@@ -273,8 +379,10 @@ its computation.
 2. Multiple active tenants, no `--tenant` flag: command returns `TENANT_AMBIGUOUS`
    and fails without generating a snapshot.
 3. Compliance obligation with OPEN_RESEARCH due date (e.g., e-invoice AATO
-   threshold): section status is `INCOMPLETE` and obligation entry shows
-   `due_date: null` with reason.
+   threshold): section outcome is `APPLICABILITY_UNKNOWN`, snapshot
+   `completeness: PARTIAL`, health is `ACTION_REQUIRED` but non-conclusive, and
+   the obligation entry shows `due_date: null`, an `UNKNOWN`/`INCOMPLETE` reason,
+   and evidence references.
 4. Period locked through 2026-08-20; as-of query date is 2026-08-21: snapshot
    shows the prior lock and any current blocking conditions without hidden
    inference.
@@ -283,17 +391,25 @@ its computation.
 6. Two concurrent `agent-bahi status` queries: both return snapshots of the same
    point-in-time data (same `as_of_date`, `snapshot_id`); identical queries
    return identical `content_hash`.
-7. Snapshot generation fails (rule pack corrupted, database locked): returns
-   distinct nonzero exit code with partial snapshot including outcomes for each
-   section; does not return `exit 0` with hidden gaps.
+7. Snapshot generation is partial or fails (rule pack corrupted, database
+   locked): returns a distinct nonzero shell result with `completeness: PARTIAL`
+   or `FAILED`, structured outcomes for each section, and evidence references;
+   it does not return `exit 0` or a conclusive `HEALTHY` result with hidden gaps.
 8. `--json` output is valid JSON; parseable without shell escaping or embedded
    secrets; drill-down commands use array format `["command", "arg1", "arg2"]`.
 9. Human and `--json` renderings of the same snapshot have identical facts,
    amounts, and urgency classifications; formatting differs only in presentation.
-10. Overdue statute-due GSTR-3B filing blocked; health state is `BLOCKED` with
-    `due_date: "2026-07-15"` and `severity: "BLOCKED"`.
+10. Overdue statute-due GSTR-3B filing blocked; `health` is `BLOCKED`,
+    `completeness` is `COMPLETE`, the command exits 0, and the snapshot contains
+    `due_date: "2026-07-15"`, `severity: "BLOCKED"`, and evidence references.
+11. A complete snapshot whose known business health is `ACTION_REQUIRED` or
+    `BLOCKED` exits 0 because computation succeeded; a partial or failed
+    snapshot exits with the distinct nonzero shell result.
+12. Every snapshot source, section, item, and summary card has a source/evidence
+    ID plus immutable hash/equivalent reference; an unknown or incomplete fact
+    points to the source observation that made it unknown.
 
-### 1.3.3 Error codes and common contract for all CLI commands
+### 1.3.2 Error codes and common contract for all CLI commands
 
 | Error code | Meaning and required behavior |
 | --- | --- |

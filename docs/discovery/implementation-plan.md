@@ -292,16 +292,22 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 - **Evidence linking**: Material decisions have supporting evidence (content-addressed, immutable).
 - **Cash/accrual awareness**: Reports respect basis parameter; output shows effective basis; fixed-basis reports reject inapplicable basis.
 - **Multi-dialect conformance**: Same operation produces normalized-equivalent result on SQLite/PostgreSQL/MySQL.
-- **Exit-code taxonomy**: 0=success, 1=validation, 2=ambiguity, 3=conflict, 4=compliance-gate, 5=external-retryable, 6=external-terminal, 7=permission, 8=internal, TBD=partial-success.
+- **Exit-code taxonomy**: 0=successful computation, 1=validation, 2=ambiguity, 3=conflict, 4=compliance-gate, 5=external-retryable, 6=external-terminal, 7=permission, 8=internal. Partial or failed acquisition has a distinct nonzero shell result; its numeric value is internal/TBD until implementation and must be visible to the shell once implemented.
 - **No hardcoded rules**: All tax/compliance rules declared in effective-dated rule packs (not code-embedded); fail closed if missing/stale.
 - **Skill boundaries**: Skills invoke CLI only; cannot bypass gates or evidence requirements.
 - **No autonomous decisions**: Agents orchestrate skills; rules and gates from deterministic engine, not agent logic.
 
 ---
 
-## CLI-008 Acceptance Scenarios: Company Health Status (Owner-Approved)
+## CLI-008 Acceptance Scenarios: Company Health Status (Owner-Approved Contract)
 
-`agent-bahi status` is a read-only deterministic snapshot command that produces immutable company health observations. The following scenarios are mandatory acceptance tests for implementation:
+`agent-bahi status` is a read-only deterministic snapshot command that produces
+immutable company health observations. The canonical schema is
+[CLI-008](accounting-contracts.md#cli-008); these scenarios use its exact
+`health`, `completeness`, per-section `outcome`, and evidence-reference fields.
+The owner approval is for the contract only and does not authorize
+implementation, Gate0/phase work, or PT-014 behavior. The following scenarios
+are mandatory acceptance tests for implementation:
 
 **Tenant Selection and Context**:
 
@@ -319,17 +325,17 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 
 **Health States and Severity Ordering**:
 
-9. **`HEALTHY` state**: All obligations current, no blocks, no overdue items; snapshot succeeds with `overall_health: "HEALTHY"`.
-10. **`ACTION_REQUIRED` state**: Upcoming obligation or non-blocking exception within N days (N from tenant config); `overall_health: "ACTION_REQUIRED"`.
-11. **`BLOCKED` state**: Overdue obligation, missing approval, or period lock blocking mutations; `overall_health: "BLOCKED"`.
+9. **`HEALTHY` state**: All obligations current, no blocks, no overdue items; snapshot succeeds with `health: "HEALTHY"` and `completeness: "COMPLETE"`.
+10. **`ACTION_REQUIRED` state**: Upcoming obligation or non-blocking exception within N days (N from tenant config); `health: "ACTION_REQUIRED"` and complete computation exits 0.
+11. **`BLOCKED` state**: Overdue obligation, missing approval, or period lock blocking mutations; `health: "BLOCKED"` and complete computation exits 0.
 12. **Overdue compliance obligation ranked first**: GSTR-3B due 2026-07-15, invoice aging due 2026-08-20; compliance section lists GSTR-3B first with `severity: "BLOCKED"`.
 
 **Section Completeness and Partial Snapshots**:
 
 13. **All required sections present**: command-failures, blocks-and-partials, unreconciled-bank, overdue-invoices, unpaid-bills, evidence-pending, compliance-obligations, other-exceptions.
-14. **Section with zero items**: Count is 0, section status is `HEALTHY`, no items array (or empty array).
-15. **Section with incomplete data** (e.g., missing rule pack for GSTR deadline): Section status `INCOMPLETE`, items marked with reason `RULE_PACK_MISSING`, snapshot `overall_health: "PARTIAL"`.
-16. **Unknown applicability or deadline** (e.g., e-invoice AATO threshold uncertain): Item shows `due_date: null`, `severity: "INCOMPLETE/UNKNOWN"`, never assumes healthy.
+14. **Section with zero items**: Count is 0, section `outcome: "COMPLETE"`, section `health: "HEALTHY"`, and no items array (or an empty array).
+15. **Section with incomplete data** (e.g., missing rule pack for GSTR deadline): Section `outcome: "DATA_UNAVAILABLE"`, item carries an `UNKNOWN`/`INCOMPLETE` reason and evidence references, snapshot `completeness: "PARTIAL"`, and health is not conclusive.
+16. **Unknown applicability or deadline** (e.g., e-invoice AATO threshold uncertain): Section `outcome: "APPLICABILITY_UNKNOWN"`, item shows `due_date: null`, an `UNKNOWN`/`INCOMPLETE` reason, and evidence references; it never assumes healthy.
 
 **Bank Reconciliation and Aging**:
 
@@ -351,11 +357,11 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 
 **Output Modes and Determinism**:
 
-26. **Human output**: Readable summary with overall health, section headings, counts, material amounts, earliest dates, and brief drill-down hints (not full command arrays).
-27. **`--json` output**: Valid JSON; parseable without shell escaping; all fields present (snapshot metadata, tenant_id, overall_health, sections with items).
+26. **Human output**: Readable summary with `health`, `completeness`, section headings, counts, material amounts, earliest dates, evidence IDs/hashes, and brief drill-down hints (not full command arrays).
+27. **`--json` output**: Valid JSON; parseable without shell escaping; all fields present (snapshot metadata and sources, tenant_id, health, completeness, sections with outcomes and items/evidence references).
 28. **Stdout contains snapshot only**: Stderr contains progress/warnings.
-29. **Exit code 0 for complete success**: Even if `overall_health: "BLOCKED"` (snapshot computed successfully; company health is separate from command success).
-30. **Exit code with partial snapshot**: Distinct nonzero code (TBD internal) when section fails but partial snapshot is returned; internal numeric value not exposed as exit code.
+29. **Exit code 0 for complete success**: Even if `health: "BLOCKED"` (snapshot computed successfully; company health is separate from command success).
+30. **Exit code with partial or failed snapshot**: Distinct nonzero shell result when section acquisition is partial or failed; snapshot `completeness` is `PARTIAL` or `FAILED`, per-section outcomes are structured, and the numeric value is not hidden from the shell once implemented.
 
 **Queries and Drill-Down Navigation**:
 
@@ -366,17 +372,18 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 
 **Failure Modes and Edge Cases**:
 
-35. **Database corruption or lock timeout**: Snapshot returns partial result with affected section marked `DATA_UNAVAILABLE`; does not return empty/healthy snapshot.
+35. **Database corruption or lock timeout**: Snapshot returns partial or failed result with the affected section marked `DATA_UNAVAILABLE` or `FAILED`, structured evidence references, and no conclusive `health: "HEALTHY"` result.
 36. **Multiple simultaneous `status` queries**: Both succeed; both may return snapshots with identical `as_of_date` if taken in same logical transaction time; no blocking or timeout.
 37. **Query with future `--as-of` date**: Returns snapshot as if queried at that future date (deterministic from stored data at that point, not predictive).
-38. **Empty tenant** (no invoices, bills, obligations): Snapshot returns `HEALTHY` with zero counts in all sections (not absent sections).
-39. **Compliance obligation with research-gated threshold** (e.g., e-invoice applicability unknown): Item shows `applicability: "OPEN_RESEARCH"`, `status: null`, `severity: "INCOMPLETE"`.
+38. **Empty tenant** (no invoices, bills, obligations): Complete snapshot returns `health: "HEALTHY"`, `completeness: "COMPLETE"`, and zero counts in all sections (not absent sections).
+39. **Compliance obligation with research-gated threshold** (e.g., e-invoice applicability unknown): Section outcome is `APPLICABILITY_UNKNOWN`; item shows `applicability: "OPEN_RESEARCH"`, `status: null`, an `UNKNOWN`/`INCOMPLETE` reason, and evidence references.
+40. **Evidence traceability**: Snapshot/source metadata, every section, every item, and every summary card carries `source_id`, `evidence_id`, and an immutable hash/equivalent reference sufficient to trace health and unknown claims.
 
 **Read-Only Guarantee**:
 
-40. **`status` command never triggers mutation**: No posting, no reconciliation match, no filing, no bank import, no approval gate.
-41. **`status` command idempotent**: Calling twice returns identical snapshots (same `snapshot_id`, `as_of_date`, `content_hash`).
-42. **Snapshot as-of date does not advance**: Multiple calls at the same timestamp return same snapshot; advancing timestamp to a later point generates a new snapshot.
+41. **`status` command never triggers mutation**: No posting, no reconciliation match, no filing, no bank import, no approval gate.
+42. **`status` command idempotent**: Calling twice returns identical snapshots (same `snapshot_id`, `as_of_date`, `content_hash`).
+43. **Snapshot as-of date does not advance**: Multiple calls at the same timestamp return same snapshot; advancing timestamp to a later point generates a new snapshot.
 
 ---
 
