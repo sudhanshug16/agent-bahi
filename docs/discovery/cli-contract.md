@@ -1,5 +1,9 @@
 # CLI Contract: Reports, Reconciliation, and Period Controls
 
+[Accounting Contracts](accounting-contracts.md) is the canonical domain
+contract for the command families and machine-readable errors summarized here;
+this document retains the detailed basis, reconciliation, and lock rules.
+
 ## Basis-aware reports
 
 Reports that support selecting a recognition basis accept the optional exact

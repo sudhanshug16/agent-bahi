@@ -1,5 +1,10 @@
 # Data Model Requirements
 
+The domain-level source of truth for pre-implementation bookkeeping behavior
+is [Accounting Contracts](accounting-contracts.md). This document remains the
+entity/invariant requirement set; it does not duplicate the per-domain command,
+state, posting, evidence, and acceptance contract.
+
 ## Canonical Records and Report Basis
 
 Stored invoices, payments, bills, and ledger postings are the canonical accounting records. Cash- and accrual-basis reports are derived views over those records. The data model must not maintain duplicate cash and accrual copies of an invoice, payment, bill, or ledger posting, and changing or selecting a report basis must not rewrite the stored canonical record.

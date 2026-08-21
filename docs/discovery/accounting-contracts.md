@@ -1,0 +1,1193 @@
+# Accounting Contracts
+
+**Status:** Canonical pre-implementation contract. This document defines the
+bookkeeping boundary that implementation must satisfy. It authorizes no code
+or schema work by itself; the Definition of Ready in
+[`docs/architecture.md`](../architecture.md#22-definition-of-ready-for-implementation)
+still applies.
+
+**As of:** 2026-08-21
+
+**Relationship to other discovery documents:** This is the domain-level
+contract assembled from the settled architecture and discovery rules. It does
+not replace the [architecture](../architecture.md),
+[data-model requirements](data-model-requirements.md),
+[CLI contract](cli-contract.md), [skill boundary](skill-architecture.md),
+[expense evidence policy](expense-evidence-policy.md),
+[GST matrix](gst-compliance-matrix.md),
+[payroll matrix](payroll-compliance-matrix.md), or
+[roadmap](roadmap.md). If this document describes an unresolved product choice,
+the choice is marked **TENTATIVE - NOT OWNER-APPROVED** and points to
+[`tentative-decisions.md`](tentative-decisions.md). A reversible implementation
+detail that does not change product or statutory behavior may be marked
+**INTERNAL_ARCHITECTURE_DECISION**.
+
+## 1. Contract-wide invariants
+
+### 1.1 Scope and command envelope
+
+- One legal entity is one independent tenant. Every accounting command selects
+  exactly one tenant; no command creates a cross-tenant relationship or paired
+  entry. The effective `tenant_id` is echoed in human and JSON output.
+- GST-scoped commands resolve exactly one active, applicable GSTIN. Non-GST
+  commands use `gst_context=none`, do not resolve a GSTIN, reject an inapplicable
+  `--gstin`, and return `gstin_id: null`.
+- Every mutation carries a request ID, tenant context, actor/source, timestamp,
+  expected version where applicable, and a content hash. The same request ID
+  with the same content returns the original result; the same request ID with
+  different content returns `IDEMPOTENCY_CONFLICT`.
+- Posted records and ledger postings are immutable. A correction is an
+  explicit reversal plus a new replacement version, linked by reason, actor,
+  timestamp, and lineage. A posted record is never edited, deleted, or voided
+  in place.
+- The normal posting lifecycle is exactly:
+  `Draft -> Validated -> Posted -> Settled`.
+  `Settled` is derived from explicit allocations or an explicit close-out, and
+  may be partial while the record remains open. A document must not skip
+  validation. Pre-post drafts may be cancelled/voided; posted records require
+  reversal lineage.
+- Every final posting is one atomic balanced journal: total debits equal total
+  credits in the relevant currency/base-currency representation. Account
+  balances and all report views are derived from the canonical postings.
+- A locked period rejects create, edit, delete, void, reversal, and replacement
+  operations whose accounting date is on or before the inclusive
+  `locked-through` date. The error names the lock scope and date. Unlock or
+  bounded partial unlock requires an impact preview, non-empty reason, actor,
+  audit record, and explicit confirmation.
+- No product rule in this contract invents statutory rates, thresholds, filing
+  formats, due dates, or filing behavior. Effective-dated rule packs and the
+  applicable GST/payroll matrix supply those facts. Missing, stale, or ambiguous
+  rules fail closed for the affected statutory decision while ordinary drafts
+  and lawful gross bookkeeping may continue with a visible exception.
+
+### 1.2 Common field and evidence requirements
+
+Every tenant-scoped record has an immutable internal ID, `tenant_id`, created
+and updated UTC timestamps, actor/source metadata, and a monotonic version.
+Every posted or externally evidenced record also preserves:
+
+- accounting date and tenant fiscal-year/profile version;
+- currency, exact amount representation, and base-currency amount where needed;
+- source record/document ID, correction lineage, and posting/journal ID;
+- request ID and idempotency record;
+- evidence IDs, content hashes, validation outcome, and rule-pack versions;
+- audit events for state transitions and decisions; and
+- optional reporting-tag split lines whose totals reconcile to the source amount.
+
+Evidence is content-addressed and immutable. Missing evidence is retained as a
+visible exception, not silently treated as valid. In particular, a missing
+receipt never blocks gross expense or asset posting. The bookkeeping-support,
+business-purpose, income-tax deductibility, and GST ITC lanes remain separate;
+ITC is never inferred from an attachment or portal population alone.
+
+### 1.3 Common CLI and error contract
+
+Command families use the names below as the stable discovery vocabulary. Exact
+parser spelling and schema versions are an **INTERNAL_ARCHITECTURE_DECISION**;
+the semantic operation and error code are binding.
+
+| Error code | Meaning and required behavior |
+| --- | --- |
+| `TENANT_REQUIRED` / `TENANT_AMBIGUOUS` | No tenant or more than one active tenant was resolved; do not guess. |
+| `GSTIN_REQUIRED` / `GSTIN_AMBIGUOUS` / `GSTIN_NOT_APPLICABLE` | Required GST context is missing, ambiguous, or has no applicable active registration. |
+| `NOT_FOUND` / `TENANT_SCOPE_VIOLATION` | The record is absent or belongs to another tenant; never leak another tenant's details. |
+| `VALIDATION_FAILED` / `REQUIRED_FIELD_MISSING` | The input or domain invariants are invalid; return field paths and remediation. |
+| `INVALID_STATE_TRANSITION` | The requested transition is not allowed from the current state. |
+| `POSTED_IMMUTABLE` / `CORRECTION_REQUIRED` | A posted record was targeted for mutation; require reversal plus replacement. |
+| `UNBALANCED_POSTING` | The deterministic journal does not balance; commit nothing. |
+| `PERIOD_LOCKED` / `LOCK_CONFIRMATION_REQUIRED` | A lock blocks the date or an unlock/reopen lacks preview, reason, or confirmation. |
+| `IDEMPOTENCY_CONFLICT` | A request ID was reused for different content; commit nothing. |
+| `CONCURRENCY_CONFLICT` / `SERIES_ALLOCATION_CONFLICT` | Expected version or exclusive allocation lock failed; retry only with a newly prepared plan. |
+| `MISSING_RULE` / `STALE_RULE` / `AMBIGUOUS_RULE` | A required effective-dated rule is unavailable or not unique; statutory finalization fails closed. |
+| `EVIDENCE_EXCEPTION` / `ITC_EVIDENCE_REQUIRED` | Evidence is absent or does not support the requested tax lane; gross bookkeeping may still be allowed. |
+| `ALLOCATION_CONFIRMATION_REQUIRED` / `RECONCILIATION_CONFIRMATION_REQUIRED` | Agent proposal is not human-approved for a high-consequence allocation or match. |
+| `CURRENCY_MISMATCH` / `RATE_REQUIRED` | Currency or explicit rate data is inconsistent or missing. |
+| `UNKNOWN_EXTERNAL_OUTCOME` | An external attempt is quarantined; no blind retry or transport switch is allowed. |
+| `BASIS_NOT_APPLICABLE` | The caller supplied `--basis` to a fixed-basis report; never ignore it. |
+| `UNSUPPORTED_V1_SCOPE` | The request requires inventory, warehouse, COGS, or another deferred product area. |
+
+Machine-readable failures contain `error.code`, a plain-language `message`,
+`tenant_id` when safely known, `gstin_id` when applicable, field/entity
+references, and remediation data. Human output labels the effective tenant,
+GSTIN (or `not applicable`), request ID, and exception/warning state.
+
+### 1.4 Shared state, posting, correction, concurrency, and skill boundary
+
+The engine owns state machines, account-role templates, tax calculations,
+permissions/gates, period locks, idempotency, and ledger invariants. The CLI
+validates input and is the only mutation boundary exposed to people or skills.
+Skills gather evidence, propose or sequence work, pause for explicit human
+confirmation, call only named CLI commands, and verify the result. An agent
+cannot approve its own allocation, reconciliation, tax exception, or period
+reopen and cannot import domain services directly.
+
+Routine edits use optimistic version checks. Number allocation, posting,
+reconciliation, close/reopen, fixed-asset runs, and other high-consequence
+operations use exclusive serialization plus prepare/preview -> validate ->
+commit with a plan hash. A failed check rolls back the complete transaction;
+there is no last-write-wins or silent retry.
+
+All templates below name account *roles*, not statutory account names. A tenant
+maps roles to its chart of accounts. Tax components are selected by the
+effective rule pack; this contract does not state statutory rates.
+
+## 2. Party, contact, address, and tax identity
+
+**Scope and identifiers.** A party is a tenant-scoped customer, supplier,
+employee, owner, government authority, or other counterparty. A party has a
+stable internal ID and a unique, tenant-scoped human reference. Contact and
+address records have their own IDs and effective date/version. Tax identities
+are separate typed records, never a free-text replacement for the party: type
+(for example GSTIN, PAN, or other configured identity), normalized value,
+jurisdiction, status, effective interval, source, and verification result.
+There is no cross-tenant party or intercompany identity.
+
+**Required fields and states.** Required fields are party kind, display/legal
+name, at least one contact or an explicit `no_contact_provided` exception,
+country/jurisdiction, and actor/source. An address requires line/city/region/
+postal/country and an effective interval. A tax identity requires type, value,
+jurisdiction, effective dates, and verification state. Party states are
+`Draft -> Validated -> Active`, with `Suspended` and `Archived`; an identity
+may be `Unverified -> Verified` or `Rejected`, and a historical identity is
+`Superseded`. Master-data state does not post a journal.
+
+**Validation.** Enforce tenant uniqueness, normalized identity format, no
+overlapping active identity/address intervals for the same role, and explicit
+GSTIN applicability when a GST document uses the party. Do not infer tax
+registration, place of supply, withholding, or legal classification from a
+name, address, or email. A party referenced by a posted document is retained;
+archive it rather than deleting it.
+
+**Posting template.** None. Party creation, identity verification, address
+change, and archive never debit or credit an account. Invoice/bill/posting
+commands snapshot the selected party/address/tax identity into their own
+immutable document version.
+
+**Corrections, concurrency, and locks.** Correct a referenced identity or
+address prospectively by creating a new version; never rewrite a posted
+snapshot. Edits use expected version; identity verification and archival use a
+tenant-scoped lock. Period locks do not block a non-posting master-data change,
+but cannot be used to alter historical document snapshots.
+
+**Evidence and CLI.** Evidence may include registration proof, tax document,
+identity verification response, or operator note; each is hashed and linked to
+the decision. Command family: `party create|validate|update|archive|show`,
+`party address add|supersede`, and `party tax-identity add|verify|supersede`.
+Important failures are `REQUIRED_FIELD_MISSING`, `TENANT_SCOPE_VIOLATION`,
+`INVALID_STATE_TRANSITION`, `IDEMPOTENCY_CONFLICT`, and `CONCURRENCY_CONFLICT`.
+
+**Skill boundary and reports.** Party/contact skills may normalize supplied
+data and request verification, but may not invent identities or select a
+GSTIN. The engine returns the verified state. Reports include party master
+data, identity verification exceptions, address history, and documents whose
+party snapshot no longer matches the current master record.
+
+**Acceptance scenarios.**
+
+1. Two tenants create the same GSTIN value: both may have an isolated record;
+   a command in tenant A cannot read or attach tenant B's identity.
+2. An agent submits a name with no tax identity for a GST-required invoice:
+   the party may remain a draft, but invoice validation returns an explicit
+   missing/ambiguous identity error and posts nothing.
+3. A supplier changes address after a posted bill: the new address is a new
+   effective version and the old bill's address snapshot remains unchanged.
+
+## 3. Chart of accounts and control accounts
+
+**Scope and identifiers.** The chart of accounts (COA) is tenant-scoped. Each
+account has a stable internal ID and unique immutable account code within the
+tenant, plus a display name. The account record carries account role/type
+(asset, liability, equity, revenue, expense, tax, clearing/control), normal
+balance, parent, currency policy, reporting classification, active interval,
+and control-account metadata. Series are for journal/document families, not
+account codes; account codes are never reused.
+
+**Required fields and states.** Required fields are code, name, account type,
+reporting classification, normal balance, effective start date, and whether it
+is a control account. States are `Draft -> Validated -> Active`, then
+`Suspended` or `Archived`; an account with postings cannot be deleted. Control
+roles must be configured for at least AR, AP, bank/cash, unapplied receipt,
+unapplied payment, tax payable, recoverable ITC, realized FX, unrealized FX,
+accumulated depreciation, and any tenant-required clearing role before the
+corresponding operation is enabled.
+
+**Validation.** Codes and parent paths are unique and acyclic. Posting to a
+group/header account, archived account, incompatible currency, or inactive
+account is rejected. The engine derives balances from postings and checks
+control-account reconciliation; it never stores a mutable authoritative
+balance. A tax or payroll role is usable only when its effective rule/config
+binding exists; no account mapping supplies a statutory rate.
+
+**Posting template.** COA maintenance has no posting. All later templates
+resolve each role to one active account and fail with `VALIDATION_FAILED` if a
+required role is unmapped. Control accounts are the explicit holding places
+for unapplied cash, tax pending, ITC, AR/AP, FX, and accumulated depreciation;
+they are not hidden suspense balances.
+
+**Corrections, concurrency, and locks.** Rename or reclassify prospectively
+with an effective version. A posted account mapping is corrected by a new
+mapping and, if needed, a separately approved reclassification journal; never
+rewrite old postings. Code allocation and hierarchy edits serialize within a
+tenant. A period lock does not block COA master maintenance, but blocks any
+reclassification posting into the locked period.
+
+**Evidence and CLI.** Evidence includes owner/configuration approval, mapping
+source, and any rule-pack reference. Command family:
+`account create|validate|activate|suspend|archive|show`,
+`account hierarchy set`, and `account-control map|validate`. Errors include
+`ACCOUNT_NOT_POSTABLE`, `ACCOUNT_CODE_REUSED`, `CONTROL_ACCOUNT_UNMAPPED`,
+`INVALID_STATE_TRANSITION`, `PERIOD_LOCKED`, and the common idempotency and
+concurrency errors.
+
+**Skill boundary and reports.** A COA setup skill can propose mappings and
+show unmapped roles; only the engine validates and activates them. Reports
+include the COA tree, active/inactive accounts, control-account balances,
+unmapped-role exceptions, and trial balance derived from canonical postings.
+
+**Acceptance scenarios.**
+
+1. A user tries to reuse an archived account code: creation fails and the old
+   code remains reserved.
+2. A journal targets a header account: `ACCOUNT_NOT_POSTABLE` is returned and
+   no journal or idempotency side effect is committed.
+3. A tenant has two concurrent postings using the same control-account
+   mapping: both use the same immutable mapping version or one fails visibly on
+   version conflict; neither silently changes the other's account.
+
+## 4. Non-inventory item and service catalog
+
+**Scope and identifiers.** An item/service reference is tenant-scoped with a
+stable ID and unique tenant SKU/reference. It stores name/description, unit,
+default rate/currency, tax-treatment reference, default income/expense/asset
+account roles, active interval, and optional HSN/SAC or other classification
+only when supplied and supported by an effective rule. It is descriptive only.
+V1 has no stock, warehouse, valuation, COGS, batch, serial, or manufacturing
+record; a request requiring those returns `UNSUPPORTED_V1_SCOPE`.
+
+**Required fields and states.** Required fields are type (`item` or `service`),
+description/name, unit, default account role, and effective start date. States
+are `Draft -> Validated -> Active`, then `Suspended` or `Archived`.
+
+**Validation.** Rates use exact decimal/currency rules and are defaults, not
+immutable transaction prices. Tax treatment and classification must be
+effective-dated and must not be guessed from a description. A line snapshots
+the selected reference, description, quantity, unit, rate, tax treatment, and
+account role at validation.
+
+**Posting template.** None for catalog maintenance. A catalog reference only
+selects the revenue, expense, or asset role in an invoice/bill template. It
+never creates stock or COGS postings.
+
+**Corrections, concurrency, and locks.** Change defaults prospectively by
+version; do not rewrite posted line snapshots. SKU allocation and activation
+use tenant serialization. Period locks do not block catalog maintenance but
+block any attempt to use a changed historical rate/tax snapshot as a rewrite.
+
+**Evidence and CLI.** Preserve supplier/customer price list, classification
+source, and tax-rule evidence where supplied. Command family:
+`catalog item|service create|validate|activate|archive|show` and
+`catalog classify`. Errors include `UNSUPPORTED_V1_SCOPE`,
+`ACCOUNT_NOT_POSTABLE`, `MISSING_RULE`, `INVALID_STATE_TRANSITION`, and common
+scope/idempotency/concurrency errors.
+
+**Skill boundary and reports.** Catalog skills may normalize descriptions or
+propose an account/classification; the engine requires explicit account and
+tax treatment before validation. Reports include active catalog, unused or
+unmapped references, line snapshot history, and tax-classification exceptions.
+
+**Acceptance scenarios.**
+
+1. A service is used on an invoice: the line snapshots its description and
+   account role; no stock quantity or COGS journal exists.
+2. A user requests warehouse stock for a catalog item: the command returns
+   `UNSUPPORTED_V1_SCOPE` rather than creating placeholder inventory rows.
+3. A rate changes after a posted invoice: a new catalog version affects future
+   drafts only; the posted line keeps its original rate.
+
+## 5. Estimates and sales orders (non-posting document surface)
+
+**Scope status.** The architecture names SO/PO drafts in the sales and
+purchases modules, but a settled owner decision does not separately approve
+the estimate/sales-order product surface. The following is therefore
+**TENTATIVE - NOT OWNER-APPROVED**, consistent with the scope protocol in
+[`tentative-decisions.md`](tentative-decisions.md): if retained in V1, both
+estimates and sales orders are non-posting documents. Owner approval may remove
+or change this surface without changing the posted ledger contract.
+
+**Scope, identifiers, fields, and states.** Records are tenant-scoped with a
+stable ID and separate non-posting series (`EST` and `SO`, or tenant-defined
+equivalents) scoped by tenant and financial year. Required fields are party,
+document date, expiry/expected date where applicable, currency, line snapshots,
+tax-treatment references, totals, and source/evidence metadata. Lifecycle is
+`Draft -> Validated -> Sent|Accepted|Rejected|Expired|Cancelled` or
+`Converted`; it never enters `Posted` or `Settled` and has no ledger balance.
+
+**Validation.** Validate party, currency, line arithmetic, account-role
+references, tax rule availability for a displayed estimate, and duplicate
+number/idempotency. Conversion creates a new invoice/bill draft linked to the
+source; it does not post the estimate/order and never copies mutable state by
+reference.
+
+**Deterministic posting template.** None. Estimates and sales orders never
+debit or credit an account, create an AR/AP balance, or enter a ledger report.
+
+**Corrections, concurrency, and locks.** Correction is a new version or
+cancellation before conversion; a converted source remains immutable.
+Sent/accepted conversion and series allocation use optimistic version checks
+plus series serialization. A period lock blocks a transactional accounting
+date if conversion would create a posted document; it does not turn the
+non-posting source into a journal.
+
+**Evidence and CLI.** Evidence includes quote/order approval,
+customer response, and conversion lineage. Command family:
+`estimate create|validate|send|accept|cancel|convert` and
+`sales-order create|validate|send|accept|cancel|convert`.
+Errors include `INVALID_STATE_TRANSITION`, `CONCURRENCY_CONFLICT`,
+`SERIES_ALLOCATION_CONFLICT`, `PERIOD_LOCKED`, and common validation errors.
+
+**Skill boundary.** Skills may prepare and present these documents; only
+explicit conversion and the invoice/bill CLI can create a posting.
+
+**Reports.** Pipeline counts, open commitments, conversion lineage, and an
+explicit note that these documents are excluded from trial balance, P&L,
+balance sheet, aging, and cash basis.
+
+**Acceptance scenarios.**
+
+1. An accepted sales order is created: no posting, AR balance, revenue, tax,
+   or cash entry is produced.
+2. Conversion is requested twice with the same request ID: the same invoice
+   draft/result is returned; a different payload with that ID fails closed.
+3. An order dated in a locked period is converted: the source remains intact,
+   while invoice validation returns `PERIOD_LOCKED` until an explicit reopen or
+   current-period choice is approved.
+
+## 6. Customer invoices
+
+**Scope and identifiers.** An invoice is a tenant-scoped business document
+with a stable ID and a number allocated only at legal issue/finalization. The
+series scope is tenant + applicable GSTIN (if required) + invoice family + FY;
+numbers are never reused and gaps receive an explicit reason. A foreign
+currency invoice stores the original amounts, immutable rate snapshot, base
+amounts, rate source, and rounding metadata.
+
+**Required fields and states.** Required fields are customer party snapshot,
+invoice date, due date/payment terms, currency, line snapshots, tax components
+or a recorded non-applicability decision, totals, account roles, GSTIN when
+`gst_context=required`, and evidence/exception state. State is
+`Draft -> Validated -> Posted -> Settled`; settlement may be partial. An
+applicable external issuance gate may insert `Issuance-Pending/Frozen` between
+Validated and Posted, but ARN never gates ledger posting.
+
+**Validation.** Validate tenant/GSTIN, party/address/tax identity as required,
+line and tax arithmetic, currency/rate, date/period, numbering plan, duplicate
+source references, and effective-dated tax rules. If e-invoice applicability
+is established by the rule pack, IRN/QR evidence is required before final
+issue/post; do not invent applicability or transport. A missing receipt does
+not apply to the customer's invoice and must not be silently treated as proof
+of payment.
+
+**Deterministic posting template.** On post:
+
+```text
+Dr Accounts Receivable (invoice total, base currency)
+  Cr Revenue / contra-revenue by line role (net supply amount)
+  Cr Output-tax payable by effective tax component (when applicable)
+```
+
+Round and allocate components according to the selected effective rule pack.
+An invoice with no tax has no output-tax line. The template must balance before
+commit.
+
+**Corrections, concurrency, and locks.** A pre-post draft may be cancelled.
+After posting, correction is a reversal journal that exactly negates the
+original posting plus a new corrected invoice with new version/number lineage;
+the original remains reportable. Finalization and number allocation serialize;
+draft edits use expected version. A locked accounting date rejects finalization,
+void, reversal, or replacement until the controlled reopen or current-period
+adjustment choice is explicitly confirmed.
+
+**Evidence and CLI.** Preserve invoice source, customer acceptance where
+available, tax calculation/rule version, e-invoice evidence where applicable,
+and correction lineage. Command family:
+`invoice create|validate|preview|post|show|void|correct` and
+`invoice issue-status`. Errors include `GSTIN_AMBIGUOUS`,
+`MISSING_RULE`, `UNBALANCED_POSTING`, `POSTED_IMMUTABLE`, `PERIOD_LOCKED`,
+`SERIES_ALLOCATION_CONFLICT`, and `UNKNOWN_EXTERNAL_OUTCOME`.
+
+**Skill boundary and reports.** AR skills may gather customer data, prepare a
+preview, and verify the posted result; they cannot choose a tax treatment,
+skip an issuance gate, or post directly. Reports include invoice register,
+AR aging/open balance, tax-output reconciliation, invoice-to-payment lineage,
+and correction history. Cash/accrual reports derive from this canonical
+invoice/payment data and state the effective basis/date range.
+
+**Acceptance scenarios.**
+
+1. A valid service invoice posts one balanced journal with AR, revenue, and any
+   rule-selected output-tax roles; retrying its request ID creates no second
+   journal or number.
+2. A posted invoice is edited: the command returns `POSTED_IMMUTABLE`; an
+   approved correction creates reversal + replacement and both remain visible.
+3. Two operators finalize drafts in one series concurrently: numbers are
+   unique, gaps are explained, and a failed transaction does not post partial
+   entries.
+
+## 7. Vendor bills
+
+**Scope and identifiers.** A bill is a tenant-scoped payable document with a
+stable internal ID and a unique supplier reference enforced within the tenant
+where the supplier supplies one. The internal bill number uses a tenant + bill
+series + FY scope; supplier document identity and GSTIN are separate fields.
+Foreign-currency and base-currency data follow the immutable rate contract.
+
+**Required fields and states.** Required fields are supplier snapshot,
+supplier document number/date, bill date, due date, currency, line snapshots,
+expense/asset roles, tax components or explicit non-applicability,
+GSTIN/GST evidence fields when the tax lane applies, totals, and evidence or
+exception state. Lifecycle is `Draft -> Validated -> Posted -> Settled`, with
+partial settlement derived from allocations.
+
+**Validation.** Validate duplicate supplier document identity, party and tax
+identity, line arithmetic, period, currency/rate, account roles, effective tax
+rules, and evidence lanes. Missing supplier receipt/bill evidence never blocks
+gross bookkeeping posting: post the lawful gross expense/asset with a visible
+evidence exception. ITC is independent and remains pending/ineligible until
+the prescribed document and other effective conditions are verified; GSTR-2B
+alone is not proof.
+
+**Deterministic posting template.** Initial gross posting when ITC is not yet
+valid:
+
+```text
+Dr Expense or asset cost (gross booked amount by line role)
+  Cr Accounts Payable (gross amount)
+```
+
+When the effective ITC lane is explicitly eligible at validation, the engine
+may split the debit into `Expense/asset net` and `Recoverable ITC`; otherwise
+the later approved ITC reclassification is:
+
+```text
+Dr Recoverable ITC
+  Cr Original expense/asset cost (same eligible tax portion)
+```
+
+Any tax reversal or ineligible classification is a separate deterministic
+adjustment under the effective rule; rates and filing behavior are not stated
+here.
+
+**Corrections, concurrency, and locks.** Posted bills require reversal plus a
+new corrected bill. Duplicate supplier references and finalization serialize;
+draft edits use expected version. Locked periods block bill posting, tax
+reclassification, settlement, reversal, and replacement dated in the period.
+
+**Evidence and CLI.** Preserve supplier invoice/debit-note evidence, receipt
+of supply where required, GSTR-2B snapshot, validation result, ITC state, and
+exception with owner/review date. Command family:
+`bill create|validate|preview|post|show|void|correct`,
+`bill itc-status`, and `bill itc-reclassify`. Errors include
+`EVIDENCE_EXCEPTION`, `ITC_EVIDENCE_REQUIRED`, `DUPLICATE_DOCUMENT`,
+`MISSING_RULE`, `POSTED_IMMUTABLE`, `PERIOD_LOCKED`, and
+`UNBALANCED_POSTING`.
+
+**Skill boundary and reports.** AP skills may collect bills and propose
+categorization or ITC review; the engine decides whether gross posting and
+ITC reclassification are valid. Reports include AP aging, bill register,
+gross-vs-ITC pending analysis, vendor statement reconciliation, evidence
+exceptions, and ITC document/match/claim lanes. Cash/accrual reports remain
+derived views.
+
+**Acceptance scenarios.**
+
+1. A bill has no receipt: the gross expense/AP journal posts once with an
+   evidence exception; the ITC lane is not marked eligible.
+2. A later valid prescribed document and match are explicitly approved: one
+   ITC reclassification posts and the original bill remains immutable.
+3. A duplicate supplier document is submitted under a new request ID: it is
+   rejected before posting and identifies the existing tenant-scoped record.
+
+## 8. Credit notes, debit notes, and vendor credits
+
+**Scope and identifiers.** Adjustment documents are tenant-scoped, linked to
+the original invoice/bill or a documented standalone reason, and use separate
+number series by family, FY, and applicable GSTIN. Their own IDs, source
+document IDs, tax-rule snapshots, and correction lineage are immutable.
+
+**Required fields and states.** Required fields are party, note type and
+direction, original document reference where required, note date, reason,
+currency/rate, affected lines/amount, tax components, and evidence. Normal
+lifecycle is `Draft -> Validated -> Posted -> Settled`; the settlement status
+is the residual balance impact on the linked document. A vendor credit is a
+supplier-issued credit against a bill and follows the same state rule.
+
+**Validation.** Validate that the note does not exceed the eligible source
+balance unless an explicit rule/approval permits it, that original references
+and tax-period/amendment links are valid, and that the GSTIN/rule context is
+correct. A note is not a shortcut around a posted correction. Do not infer tax
+rates, legal time limits, or filing transport; store the effective rule and
+source.
+
+**Deterministic posting templates.** The engine uses the source document's
+account roles and the note's signed direction:
+
+```text
+Customer credit note: Dr Revenue/returns and output-tax reversal roles
+                     Cr Accounts Receivable
+Customer debit note:  Dr Accounts Receivable
+                     Cr Revenue and output-tax roles
+Vendor credit:        Dr Accounts Payable
+                     Cr Expense/asset and input-tax reversal roles
+Vendor debit note:    Dr Expense/asset and applicable ITC roles
+                     Cr Accounts Payable
+```
+
+The effective tax rule controls component eligibility and the exact reversal;
+the journal must balance. A note may be a corrective replacement child but
+never mutates the source posting.
+
+**Corrections, concurrency, and locks.** A posted note is corrected only with
+reversal plus a new note/replacement lineage. Number allocation, source-balance
+check, and finalization serialize. Locked periods reject note posting,
+reversal, and replacement; an approved current-period adjustment remains
+explicitly linked to the original period.
+
+**Evidence and CLI.** Preserve original note, supplier/customer communication,
+tax rule, and amendment/portal evidence where applicable. Command family:
+`credit-note create|validate|post|void|correct`,
+`debit-note create|validate|post|void|correct`, and
+`vendor-credit create|validate|post|void|correct`. Errors include
+`SOURCE_BALANCE_EXCEEDED`, `INVALID_STATE_TRANSITION`, `MISSING_RULE`,
+`PERIOD_LOCKED`, `POSTED_IMMUTABLE`, and `UNBALANCED_POSTING`.
+
+**Skill boundary and reports.** Skills may gather the note and propose its
+source link; they cannot silently create a reversal or change the source. AR/AP
+reports show notes in aging, source-to-adjustment lineage, tax reconciliation,
+and correction history. Compliance exports use their prescribed basis and
+reject an inapplicable report-basis flag.
+
+**Acceptance scenarios.**
+
+1. A customer credit note reverses the linked receivable, revenue, and tax
+   roles in one balanced journal and reduces the open invoice amount.
+2. A vendor credit is posted without a valid ITC document: the payable/cost
+   adjustment is recorded, but ITC remains independently pending/ineligible.
+3. The same note is retried with its request ID: the original result is
+   returned; a different source link under that ID returns
+   `IDEMPOTENCY_CONFLICT`.
+
+## 9. Receipts and payments
+
+**Scope and identifiers.** A receipt is money received; a payment is money
+paid. Each is a tenant-scoped settlement record with stable ID, document number
+from a receipt/payment series scoped by tenant + FY, bank/cash account,
+transaction date, external reference if supplied, paid currency/amount, and
+evidence. An explicit allocation is a separate child record or atomically
+bound plan; receipt/payment creation does not guess its target.
+
+**Required fields and states.** Required fields are direction, bank/cash
+account, amount/currency, accounting date, counterparty where known,
+external reference where available, and evidence/exception state. Lifecycle is
+`Draft -> Validated -> Posted -> Settled`; `Posted` means cash movement booked,
+while `Settled` is derived from allocations or explicit unapplied close-out.
+`Unapplied`, `Partially Allocated`, `Fully Allocated`, `Overpaid`, and
+`Refunded` are allocation views, not shortcuts around posting.
+
+**Validation.** Validate bank/cash ownership, currency and rate, duplicate
+external reference where reliable, amount precision, period, and evidence. A
+bank export or pending instruction is not proof of a payment; actual debit or
+credit evidence is required for clearing. Unclear external outcomes are
+quarantined and cannot be retried blindly.
+
+**Deterministic posting template.** Initial cash movement uses explicit control
+accounts:
+
+```text
+Customer receipt: Dr Bank/Cash
+                  Cr Unapplied Customer Receipts
+Supplier payment: Dr Unapplied Supplier Payments
+                  Cr Bank/Cash
+```
+
+An explicit allocation then transfers the control balance to AR/AP (see §10).
+An implementation may combine the two journals atomically when the approved
+allocation is present, but the resulting roles and audit lineage must be
+equivalent.
+
+**Corrections, concurrency, and locks.** A posted receipt/payment is immutable;
+reverse it and create a corrected cash movement. Number allocation, bank
+reference uniqueness, and posting serialize; allocation uses row locks on the
+cash record and each open item. A locked period blocks cash posting, reversal,
+refund, and allocation dated there.
+
+**Evidence and CLI.** Preserve bank statement/receipt, external reference,
+source payment advice, and any refund evidence. Command family:
+`receipt create|validate|post|show|reverse`,
+`payment create|validate|post|show|reverse`, and
+`cash-movement evidence attach`. Errors include `CURRENCY_MISMATCH`,
+`DUPLICATE_EXTERNAL_REFERENCE`, `UNKNOWN_EXTERNAL_OUTCOME`,
+`PERIOD_LOCKED`, `POSTED_IMMUTABLE`, and `UNBALANCED_POSTING`.
+
+**Skill boundary and reports.** Cash skills may import evidence and prepare an
+unapplied movement; only explicit validated CLI commands post it. Skills may
+not infer that a bank export equals a debit. Reports include cash/bank ledger,
+unapplied receipts/payments, payment register, refund register, and actual
+evidence gaps.
+
+**Acceptance scenarios.**
+
+1. A customer receipt arrives with no invoice reference: it posts to the bank
+   and unapplied-receipt control account; no invoice is silently selected.
+2. A payroll bank file was generated but no debit is observed: no payment
+   posting clears net-pay payable; the export remains a separate state.
+3. A cash movement retry uses the same request ID: it cannot duplicate the
+   bank entry or number.
+
+## 10. Payment allocations, partial/unapplied/overpayment/refund
+
+**Scope and identifiers.** An allocation is tenant-scoped and links one posted
+receipt/payment to one or more eligible invoices, bills, notes, or payroll
+payables. It has a stable ID, allocation reference, source movement ID, target
+ID, applied amount in target currency, paid amount/currency, immutable rate
+snapshot, and allocation plan/approval identity. Allocation numbering is
+tenant + FY + allocation family; IDs are never reused.
+
+**Required fields and states.** Required fields are source, target (or explicit
+unapplied reason), applied amount, currency/rate, date, actor, and evidence.
+States are `Proposed -> Reviewed/Confirmed -> Persisted -> Reversed`; the
+document view is `Unapplied`, `Partially Allocated`, `Fully Allocated`, or
+`Overpaid`. A refund is a new confirmed movement linked to the unapplied or
+overpaid balance and state `Requested -> Approved -> Posted -> Settled`.
+
+**Validation and confirmation.** Validate tenant and currency, open balance,
+amount precision, rate, eligible state, no duplicate source-target application,
+and total allocation not exceeding the source or target unless the excess is
+explicitly overpayment/unapplied. Matching proposals are non-deterministic;
+the engine accepts only an explicit human confirmation or a policy-approved
+human-origin approval token. Agent confirmation alone is not human
+confirmation.
+
+**Deterministic posting template.** For a customer receipt allocation:
+
+```text
+Dr Unapplied Customer Receipts
+  Cr Accounts Receivable for the applied invoice/note amount
+```
+
+For a supplier payment allocation:
+
+```text
+Dr Accounts Payable for the applied bill/note amount
+  Cr Unapplied Supplier Payments
+```
+
+Cross-currency settlement adds separate bank-fee and realized-FX gain/loss
+roles so the applied document amount and bank amount both reconcile. A partial
+allocation leaves the residual control balance. An overpayment remains in the
+unapplied control account until applied or refunded. A refund posts:
+
+```text
+Dr Unapplied/overpayment control account
+  Cr Bank/Cash
+```
+
+No allocation silently changes revenue, expense, tax, or the original document.
+
+**Corrections, concurrency, and locks.** Reverse an allocation with an explicit
+reversal allocation and, if needed, a replacement allocation; never edit its
+amount in place. Lock source movement, target open item, and series while
+persisting. A locked period blocks allocation/reversal/refund dated in it.
+
+**Evidence and CLI.** Preserve the candidate proposal, bank evidence, source
+and target snapshots, human approval, rate, and refund authorization. Command
+family: `allocation propose|preview|confirm|persist|reverse|show`,
+`allocation refund preview|approve|post`, and
+`allocation unapplied|overpayment`. Errors include
+`ALLOCATION_CONFIRMATION_REQUIRED`, `ALLOCATION_EXCEEDS_BALANCE`,
+`CURRENCY_MISMATCH`, `RATE_REQUIRED`, `CONCURRENCY_CONFLICT`,
+`PERIOD_LOCKED`, and `RECONCILIATION_CONFIRMATION_REQUIRED`.
+
+**Skill boundary and reports.** The reconciliation skill gathers evidence and
+proposes candidates. A person reviews/approves; the CLI validates and persists;
+the engine posts deterministically. Reports include AR/AP aging with partial
+balances, unapplied cash, overpayments, refund status, allocation lineage,
+FX/fee components, and unmatched candidates.
+
+**Acceptance scenarios.**
+
+1. A ₹100,000 receipt is confirmed against a ₹60,000 invoice: the allocation
+   transfers ₹60,000, the invoice is partial, and ₹40,000 remains unapplied.
+2. Two concurrent users confirm the last ₹60,000 of an invoice: one persists;
+   the other receives `CONCURRENCY_CONFLICT` or an eligible-balance error and
+   creates no duplicate clearing.
+3. A ₹40,000 overpayment is refunded after approval: one refund journal debits
+   the control account and credits bank, with refund evidence and no revenue
+   reversal.
+
+## 11. Journals
+
+**Scope and identifiers.** A journal is a tenant-scoped balanced accounting
+document with a stable ID and number from the journal series scoped by tenant +
+FY. It may be system-generated from a source document or explicitly created as
+a manual adjustment. GSTIN is not applicable unless a journal is explicitly a
+GST-scoped tax adjustment; internal journals must reject an irrelevant
+`--gstin`.
+
+**Required fields and states.** Required fields are journal date, description/
+reason, source type/ID, line account roles/accounts, debit/credit amounts,
+currency/base amounts, rule version if a calculated adjustment, actor, and
+evidence. Lifecycle is `Draft -> Validated -> Posted -> Settled`; a journal
+normally reaches Settled immediately because it has no external open balance.
+
+**Validation.** Validate exactly one tenant, active postable accounts, balanced
+debits/credits, currency/rounding, no unsupported tax inference, source
+lineage, period, and required approval for high-consequence or control-account
+adjustments. A manual journal cannot be used to bypass invoice/bill/payment
+state, ITC evidence, payroll rule, or reconciliation gates.
+
+**Deterministic posting template.** A manual journal's template is the explicit
+validated list of account roles and amounts:
+
+```text
+Dr each supplied debit account role
+  Cr each supplied credit account role
+```
+
+System journals use the source domain template and retain the source ID. The
+engine rejects any imbalance before number allocation/commit.
+
+**Corrections, concurrency, and locks.** Posted journals require reversal plus
+replacement journal with reason and linked IDs. Posting-number allocation and
+control-account adjustments serialize; drafts use expected version. A period
+lock blocks journal posting/reversal/replacement in that period. Reopening is
+never inferred from a failed journal.
+
+**Evidence and CLI.** Preserve adjustment memo, support, approval, source
+calculation, and rule versions. Command family:
+`journal create|validate|preview|post|show|reverse|correct`. Errors include
+`UNBALANCED_POSTING`, `ACCOUNT_NOT_POSTABLE`, `POSTED_IMMUTABLE`,
+`PERIOD_LOCKED`, `MISSING_RULE`, and `INVALID_STATE_TRANSITION`.
+
+**Skill boundary and reports.** A journal skill may prepare a proposed entry
+from evidence and show a plan; only the CLI/engine can validate and post it.
+Reports include journal register, account drill-down, adjustment and reversal
+lineage, control-account reconciliation, and audit exceptions.
+
+**Acceptance scenarios.**
+
+1. A journal with debits and credits differing by one minor unit returns
+   `UNBALANCED_POSTING` and commits no record.
+2. A correction to a posted journal creates a balancing reversal and a new
+   replacement while preserving the original report trail.
+3. A journal command supplied with `--gstin` but declared non-GST fails with an
+   explicit inapplicable-context error and does not resolve a GSTIN.
+
+## 12. Bank statement import and reconciliation
+
+**Scope and identifiers.** A bank account and statement batch are tenant
+scoped. Each import has a stable batch ID, source filename/reference, content
+hash, bank-account ID, statement period, currency, and import sequence. Each
+line has a stable line ID and deterministic fingerprint from the source batch,
+line number, date, amount, direction, and bank reference; duplicates are
+retained as duplicate observations rather than silently collapsed.
+
+**Required fields and states.** A batch requires bank account, statement dates,
+currency, source evidence/hash, and parser/preset version. A line requires
+value date, amount, direction, currency, description, and source reference (or
+an explicit missing-field exception). Line state is
+`Imported -> Proposed -> Reviewed/Approved -> Persisted -> Reconciled`, with
+`Unmatched`, `Held`, `Rejected`, and `Exception` outcomes. Proposal is not a
+match and never posts.
+
+**Validation and confirmation.** Validate tenant/account ownership, parser
+version, duplicate fingerprints, currency, precision, opening/closing balance
+reconciliation where the source supplies it, and eligible target state. A
+skill may rank candidates; only a human-confirmed, CLI-validated match is
+persisted. Explicitly record no-match and ambiguity. Import is atomic per
+batch unless the contract returns a declared, non-zero partial result (the
+default is reject the full invalid batch).
+
+**Deterministic posting template.** Import and proposal have no posting.
+Persisting a match has no hidden posting; it links an already posted cash
+movement to an invoice/bill/payment. If a bank fee or unrecorded cash event is
+explicitly approved, create a separate journal:
+
+```text
+Dr Bank-fee or configured expense role
+  Cr Bank/Cash
+```
+
+Actual salary/payment clearing is posted only after the statement evidence
+supports the debit; an export or bank acceptance is not a debit.
+
+**Corrections, concurrency, and locks.** An imported source line is immutable;
+correction creates a new observation or reversal of the match, never mutation
+of the source evidence. Match persistence locks the bank line and target open
+item. A period lock blocks a new posting, fee journal, or correction dated in
+the period, but does not delete or hide imported evidence.
+
+**Evidence and CLI.** Preserve original statement bytes/hash, parser preset,
+line mapping, candidate proposal, skill version, actor, approval, validation,
+and result. Command family:
+`bank-account create|show`, `bank-statement import|show|reject`,
+`reconciliation propose|review|match|unmatch|show`, and
+`reconciliation fee preview|post`. Errors include
+`RECONCILIATION_CONFIRMATION_REQUIRED`, `DUPLICATE_STATEMENT_LINE`,
+`CURRENCY_MISMATCH`, `TENANT_SCOPE_VIOLATION`, `PERIOD_LOCKED`, and
+`CONCURRENCY_CONFLICT`.
+
+**Skill boundary and reports.** The bank-reconciliation skill gathers
+statement/open-item evidence and proposes candidates. It must stop for human
+selection/approval when ambiguity exists. The CLI is the sole write boundary;
+the engine owns matching eligibility and posting. Reports include statement
+coverage, unmatched and ambiguous lines, reconciled balances, bank-to-ledger
+variance, fees, payment evidence, and provenance by skill/version.
+
+**Acceptance scenarios.**
+
+1. A CSV contains a repeated bank reference: both source lines remain visible;
+   one cannot silently overwrite the other, and the import reports the
+   duplicate for review.
+2. A skill proposes two invoice matches for one credit: no match is persisted
+   until a human confirms one; the rejected candidate remains in provenance.
+3. A bank statement shows a salary debit after a generated export: the
+   explicit debit can clear net-pay payable once, while the export alone never
+   posts or clears it.
+
+## 13. FX realization and period-end revaluation
+
+**Scope status.** Immutable document and settlement rate snapshots, separate
+realized FX, and auditable open-item revaluation are settled. The exact FX
+provider and fallback chain remain **TENTATIVE - NOT OWNER-APPROVED / OPEN
+RESEARCH** under [T-004](tentative-decisions.md#entry-t-004-exchange-rate-provider-and-fx-workflowtentativeopen-pending-source-audit).
+No provider, statutory rate, or automatic fallback is invented here.
+
+**Scope and identifiers.** FX data is tenant-scoped with one base currency.
+Each foreign-currency document, settlement allocation, rate snapshot, and
+revaluation adjustment has a stable ID, source document/open-item IDs, source
+and target currencies, exact quote direction, rate, source/timestamp, and
+rounding metadata. Revaluation runs use a tenant + period + currency/open-item
+scope and an immutable run ID.
+
+**Required fields and states.** A foreign document/bill requires original
+currency amounts and immutable document-to-base rate snapshot. A settlement
+requires bank/paid currency and amount, applied document currency/amount, and
+application rate. A revaluation requires period, open-item set, rate snapshot,
+rule/source, plan hash, actor, and reason. Settlement follows the common
+document lifecycle; rate snapshots are `Captured -> Verified -> Bound`, and a
+revaluation run is `Draft -> Validated -> Posted -> Reversed`.
+
+**Validation.** Reject missing/ambiguous rate, reversed quote direction,
+floating-point/precision loss, changed bound rate, wrong open-item set, or
+cross-tenant source. A selected rate is immutable after posting. Revaluation
+must not mutate the original document or settlement rate and must not combine
+realized and unrealized gain/loss.
+
+**Deterministic posting templates.** A cross-currency settlement balances the
+document clearing, bank amount, bank fees, and realized difference:
+
+```text
+Dr/Cr Accounts Receivable or Accounts Payable (document-currency application)
+Dr Bank-fee expense (when applicable)
+Dr/Cr Realized FX gain/loss (balancing difference)
+  Cr/Dr Bank/Cash (paid-currency amount)
+```
+
+The direction is determined by receivable/payable and sign; it is computed,
+not chosen by an agent. Period-end revaluation of open AR/AP:
+
+```text
+Dr/Cr Open AR/AP revaluation adjustment
+  Cr/Dr Unrealized FX gain/loss
+```
+
+The next-period reversal, if required by the selected policy, is an explicit
+linked reversal; no original amount changes. Book/tax or statutory treatment
+uses only an effective rule and separate adjustment roles.
+
+**Corrections, concurrency, and locks.** Correct a realized settlement or
+revaluation with reversal plus replacement and preserve both rate snapshots.
+Rate binding, allocation, and revaluation run use exclusive locks over the
+affected tenant/open items. A locked period rejects a dated revaluation,
+reversal, or replacement; a later-period adjustment must be explicit.
+
+**Evidence and CLI.** Preserve bank advice, source document, rate source,
+provider response/manual source, quote direction, precision, and plan hash.
+Command family: `fx-rate capture|verify|show`,
+`fx settlement preview|post|reverse`, and
+`fx revalue preview|validate|post|reverse`. Errors include `RATE_REQUIRED`,
+`CURRENCY_MISMATCH`, `AMBIGUOUS_RULE`, `UNKNOWN_EXTERNAL_OUTCOME`,
+`PERIOD_LOCKED`, and `UNBALANCED_POSTING`.
+
+**Skill boundary and reports.** FX skills may collect a source rate and prepare
+a revaluation preview; they cannot silently select a provider/fallback or
+rewrite a bound rate. Reports include foreign open items, rate provenance,
+realized FX, unrealized revaluation by period, reversals, bank fees, and base/
+original currency drill-down.
+
+**Acceptance scenarios.**
+
+1. A USD bill and INR settlement preserve both original amounts and the
+   application rate; the deterministic journal separates AP clearing, bank,
+   fee, and realized FX.
+2. A period-end rate changes an open receivable: revaluation posts a separate
+   unrealized adjustment and the invoice's original rate remains unchanged.
+3. A rate provider is unavailable: the command returns `RATE_REQUIRED` or
+   requests an explicit documented source; it does not silently use today's
+   rate.
+
+## 14. Fixed assets and separate book/tax schedules
+
+**Scope status.** Asset register, acquisition/capitalization, depreciation,
+disposal, and traceable journals are settled as a product area. The exact book
+method and tax depreciation rule remain **TENTATIVE - NOT OWNER-APPROVED** in
+[T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default)
+and [open research](architecture-decisions.md#open-research--deferred-list).
+The tentative SLM default is not a statutory claim and must not be coded until
+the owner/research gate is closed.
+
+**Scope and identifiers.** Each asset, asset class, book schedule, tax
+schedule, depreciation run, capitalization event, and disposal has a stable
+tenant-scoped ID. Asset codes are unique within the tenant and never reused.
+An asset stores acquisition source, in-service date, location/custodian,
+currency/cost, residual/value basis, book-policy version, tax-rule-pack
+version, useful-life/method inputs where approved, and linked evidence.
+
+**Required fields and states.** Acquisition requires supplier/source document,
+cost components, date, asset class, capitalization decision, account roles,
+and evidence/tax lane. Asset state is `Proposed -> Capitalized -> In Service
+-> Fully Depreciated|Disposed`; schedule state is `Draft -> Validated ->
+Active -> Superseded`. Depreciation run is `Draft -> Validated -> Posted`.
+Book and tax schedules are always separate records, even when their results
+coincide.
+
+**Validation.** Validate cost arithmetic, source/document, asset class,
+capitalization policy, in-service date, account mappings, rule versions,
+period, and duplicate asset identity. Tax schedule calculations fail closed
+without an applicable effective rule. Book schedule defaults are configuration,
+not hard-coded law. Do not infer ITC from capitalization or receipt presence.
+
+**Deterministic posting templates.** Acquisition/capitalization:
+
+```text
+Dr Fixed-asset cost role (and eligible recoverable-tax role only when valid)
+  Cr Accounts Payable or Bank/Cash
+```
+
+Book depreciation run:
+
+```text
+Dr Book depreciation expense by class/department
+  Cr Accumulated depreciation for the asset
+```
+
+Tax schedule is separately calculated and reported. It does not silently
+rewrite book depreciation or post a statutory tax adjustment; any tax-only
+ledger adjustment requires an approved effective rule and distinct tax-
+adjustment roles. Disposal:
+
+```text
+Dr Accumulated depreciation
+Dr/Cr Disposal gain/loss (balancing residual)
+  Cr Fixed-asset cost
+```
+
+Proceeds, receivable, and tax components are separate roles where applicable.
+
+**Corrections, concurrency, and locks.** A posted acquisition/depreciation/
+disposal is corrected by reversal plus replacement; schedule history and
+already-posted runs remain immutable. Asset activation and depreciation runs
+serialize per tenant/asset/period. Locked periods block acquisition,
+depreciation, disposal, reversal, and schedule-affecting replacement.
+
+**Evidence and CLI.** Preserve invoice, capitalization approval, asset
+identity, in-service evidence, book/tax rule versions, run plan, disposal
+evidence, and tax-lane exceptions. Command family:
+`asset create|validate|capitalize|show|dispose`,
+`asset-schedule book|tax create|validate|supersede`, and
+`depreciation preview|validate|post|reverse`. Errors include `MISSING_RULE`,
+`STALE_RULE`, `DUPLICATE_ASSET`, `PERIOD_LOCKED`, `POSTED_IMMUTABLE`, and
+`UNBALANCED_POSTING`.
+
+**Skill boundary and reports.** Fixed-asset skills gather invoices and
+physical/in-service evidence, prepare runs, and verify journals. They cannot
+choose an unresolved tax method or merge book and tax schedules. Reports
+include asset register, additions/disposals, book depreciation, tax schedule,
+book-vs-tax variance, accumulated depreciation, and evidence exceptions.
+
+**Acceptance scenarios.**
+
+1. A capital asset is acquired with missing receipt: lawful gross acquisition
+   bookkeeping can post with an evidence exception; ITC is not inferred.
+2. A book depreciation run posts while its tax schedule remains separate; the
+   report shows the variance without rewriting the book journal.
+3. A disposal correction is requested in a locked period: it fails visibly;
+   after approved reopen/adjustment, reversal and replacement preserve the
+   original asset history.
+
+## 15. Close and reopen
+
+**Scope and identifiers.** Close is a tenant-scoped, period-scoped control
+record with stable ID, period boundaries, module scope (global or specific),
+preparation plan hash, checklist results, actor/approval, and lock ID. Reopen
+is a separately identified, bounded control operation. Close/reopen records do
+not share a document number series; their IDs and audit records are immutable.
+
+**Required fields and states.** Close requires tenant, period, scope, trial
+balance/report snapshots, unresolved exceptions, reconciliation status, open
+items, pending statutory/evidence gates where relevant, actor, and explicit
+approval. State is `Draft -> Validated -> Approved -> Closed`; a reopen is
+`Requested -> Previewed -> Confirmed -> Open`, followed by a new `Closed`
+record after work. Close is not complete merely because a lock write succeeds.
+
+**Validation.** The engine checks balanced ledger, required reconciliations,
+unresolved exception policy, pending allocations, FX/asset/payroll runs in
+scope, and applicable rule/evidence gates. The system never invents a
+statutory filing result from a local report. For a late document the user must
+choose controlled reopen/original-date posting or current-period adjustment;
+the skill cannot select automatically.
+
+**Posting template.** Close/reopen itself has no journal. Required adjustment,
+depreciation, FX, or correction journals are separate validated documents. A
+current-period adjustment uses the normal journal/document template and links
+back to the late source and close decision.
+
+**Corrections, concurrency, and locks.** A close decision is immutable; a
+reopen creates a new bounded control record with reason, impact preview, actor,
+and approval. Close/reopen uses exclusive tenant/period serialization. While
+closed, all in-period mutation commands return `PERIOD_LOCKED`; a failed write
+cannot implicitly open the period.
+
+**Evidence and CLI.** Preserve checklist, report hashes, reconciliations,
+exception list, approval token, lock state, reopen impact, and resulting
+adjustments. Command family: `period close preview|validate|approve|commit`,
+`period reopen preview|confirm|commit`, `period lock show`, and
+`period late-document preview|choose`. Errors include
+`LOCK_CONFIRMATION_REQUIRED`, `PERIOD_LOCKED`, `CONCURRENCY_CONFLICT`,
+`RECONCILIATION_CONFIRMATION_REQUIRED`, and `INVALID_STATE_TRANSITION`.
+
+**Skill boundary and reports.** Close skills gather checklists, produce
+previews, and route exceptions. The engine owns lock semantics and final
+approval. Reports include close checklist/status, locked-through dates,
+reopen history, late-document decisions, unresolved exceptions, and post-close
+adjustment lineage.
+
+**Acceptance scenarios.**
+
+1. A period close preview finds an unreconciled bank line: it cannot commit
+   until the exception is resolved or an explicit policy-approved exception is
+   recorded.
+2. An invoice dated inside a closed period is attempted: `PERIOD_LOCKED` names
+   the period; no date shift or posting occurs automatically.
+3. The user approves a bounded reopen, posts the late document, and relocks:
+   each action has separate audit records and the final lock is visible.
+
+## 16. Reports and derived views
+
+**Scope and identifiers.** Reports are tenant-scoped read operations with a
+stable report name/version, request ID, date range or as-of date, filters,
+effective basis, rule versions, source snapshot identifiers, and output hash.
+They do not allocate numbers or create business-document IDs.
+
+**Required inputs and states.** A report requires exactly one tenant, date
+range/as-of date, report type, output format, and any applicable GSTIN. A
+basis-aware report accepts exact `--basis cash|accrual`; if omitted it uses
+the tenant default and returns the effective basis. A fixed-basis/compliance
+report rejects an inapplicable flag with `BASIS_NOT_APPLICABLE`. Report state
+is `Requested -> Validated -> Generated` or `Exception`; generation is
+read-only.
+
+**Validation.** Validate tenant/GSTIN, dates, filters, report version, source
+snapshot consistency, tag split reconciliation, currency conversion metadata,
+and fixed-basis semantics. Cash and accrual are derived views over the same
+canonical invoices, bills, payments, and postings; the report command never
+rewrites or duplicates those records. A compliance export uses its prescribed
+recognition rules and does not accept a cosmetic basis override.
+
+**Posting template.** None. Reports never debit, credit, settle, reconcile,
+close, or repair a ledger. A report that finds an imbalance or drift returns an
+exception and points to source postings; it does not auto-fix them.
+
+**Corrections, concurrency, and locks.** A report output is an immutable
+snapshot/hash; regenerate a new version when source state changes. Read-only
+reports may run against a locked period and must show its lock state. A
+high-consequence filing/close snapshot uses prepare/validate/commit and an
+exclusive snapshot lock; an ordinary report does not open a period.
+
+**Evidence and CLI.** Preserve query parameters, effective tenant/GSTIN,
+source record/posting IDs, rate/rule versions, output hash, and report schema
+version. Command family:
+`report trial-balance|profit-loss|balance-sheet|aging|reconciliation|exceptions|tagged-analysis|compliance`
+with `report snapshot|show|export`. Errors include `BASIS_NOT_APPLICABLE`,
+`TENANT_AMBIGUOUS`, `GSTIN_AMBIGUOUS`, `VALIDATION_FAILED`, and
+`MISSING_RULE` for a statutory report.
+
+**Skill boundary and reports.** Reporting skills select a named report,
+provide filters, explain exceptions, and verify output metadata. They cannot
+change report basis silently, alter postings, or call a mutation to repair a
+result. Core outputs are trial balance, P&L, balance sheet, AR/AP aging,
+unapplied/overpayment, bank reconciliation, FX, asset book/tax variance,
+close status, evidence exceptions, tagged analysis, and filing-specific
+working papers. Every output has human labels and JSON fields for basis/date
+range, currencies, rule versions, and provenance.
+
+**Acceptance scenarios.**
+
+1. `report profit-loss --basis cash` and `--basis accrual` return different
+   derived views of the same canonical records and never create duplicate
+   invoices or postings.
+2. A fixed-basis compliance report given `--basis cash` returns
+   `BASIS_NOT_APPLICABLE` rather than ignoring the flag.
+3. A report generated while the period is locked succeeds read-only and shows
+   the lock metadata; it cannot mutate the period or ledger.
+
+## 17. Explicit V1 boundaries and deferred work
+
+- No inventory, stock movements, warehouses, valuation, automated COGS, batches,
+  serials, or manufacturing. Item/service and line references are the only V1
+  seam.
+- Payroll remains a first-class roadmap domain governed by the
+  [payroll matrix](payroll-compliance-matrix.md) and existing payroll scope;
+  this bookkeeping contract does not invent payroll rates, statutory forms,
+  attendance, leave, or bank-payment behavior. Payroll journals must still use
+  the common lifecycle, immutable correction, evidence, lock, idempotency, and
+  explicit-bank-debit rules.
+- GSTR-1's prepare/validate/export plus user/CA portal filing and ARN evidence
+  is the only settled filing boundary. Other filing transports, e-invoice,
+  and e-way-bill behavior remain filing-specific and must follow the GST
+  matrix, tentative docket, and effective rule packs.
+- Exact FX provider/fallback and fixed-asset depreciation methods are not
+  settled. Existing immutable snapshots and separate schedules are the stable
+  seams if those choices change.
+
+## 18. Contract acceptance checklist
+
+Implementation is contract-ready only when golden tests and CLI contract tests
+demonstrate all of the following:
+
+- tenant and GSTIN isolation, explicit ambiguity errors, and no cross-tenant
+  effects;
+- exact balanced postings for every template and no posting for non-posting
+  documents, catalog, reconciliation proposals, close controls, or reports;
+- `Draft -> Validated -> Posted -> Settled`, derived partial/unapplied states,
+  and valid external-issuance gates where applicable;
+- posted immutability with reversal-plus-replacement lineage;
+- deterministic number allocation with preserved explained gaps;
+- idempotent replay and conflicting request-ID rejection;
+- optimistic conflicts and exclusive locks for posting, allocation,
+  reconciliation, asset runs, and close/reopen;
+- inclusive period-lock rejection and explicit preview/confirmation for reopen;
+- missing receipt does not block gross bookkeeping while ITC/tax lanes remain
+  separate and visible;
+- explicit human confirmation for allocation and reconciliation;
+- separate realized/unrealized FX and separate book/tax depreciation
+  schedules;
+- report basis derived from canonical records, effective basis/date metadata,
+  and `BASIS_NOT_APPLICABLE` for fixed-basis reports; and
+- evidence hashes, rule versions, actor, timestamps, source lineage, and
+  machine-readable error codes on every mutation and high-consequence output.
+
+These scenarios are the minimum contract fixture set for the implementation
+slices in the [roadmap](roadmap.md). Statutory rates, thresholds, filing
+behavior, and unresolved owner choices require separate research/approval and
+must not be smuggled into implementation through a default.

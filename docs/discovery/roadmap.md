@@ -51,6 +51,7 @@ Before Phase 1 implementation begins:
 - Ledger posting mechanics and invariant constraints
 - Explicit CLI commands with deterministic validation and engine-owned permission/gate checks
 - Optional tenant-defined reporting dimensions (tags) attached at transaction or line level; allocations use explicit split document lines with one tag per split line and totals that reconcile to the source amount; tags are orthogonal to accounting and do not affect posting, balance, tax, or compliance
+- Implement against the [Accounting Contracts](accounting-contracts.md) as the canonical pre-implementation domain contract; unresolved owner choices remain gated there.
 
 **Exit Conditions**:
 - Core tables defined with primary/foreign key relationships
@@ -103,6 +104,7 @@ Before Phase 1 implementation begins:
 
 **Scope**:
 - Implement initial job-skills from Phase 2 contracts (invoice creation, bill recording, payment matching, expense categorization, journal entries)
+- Use the [Accounting Contracts](accounting-contracts.md) for the shared `Draft -> Validated -> Posted -> Settled` lifecycle, immutable correction lineage, account-role templates, and explicit allocation/reconciliation boundaries.
 - Invoice and bill creation with validation, aging tracking, and automated tax treatment
 - Payment matching and clearing with multi-currency support and exchange-gain/loss calculation
 - Expense recording and categorization, including native evidence, employee claims, advances, reimbursements, and corporate-card workflows

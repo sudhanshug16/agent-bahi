@@ -1,5 +1,10 @@
 # Agent Skills Architecture
 
+Skills orchestrate the [Accounting Contracts](accounting-contracts.md) through
+the CLI. That contract owns domain states, posting templates, evidence gates,
+idempotency, and ledger invariants; this document owns the skill/engine/agent
+boundary and versioned job shape.
+
 ## Purpose
 
 agent-bahi is a deterministic accounting and compliance engine plus a set of

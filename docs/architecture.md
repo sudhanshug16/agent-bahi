@@ -4,7 +4,7 @@
 
 **Date/As-of**: 2026-08-20
 
-**Scope**: This document is a working architecture informed by [Provisional Architecture Decisions](discovery/architecture-decisions.md), [Discovery Decisions](discovery/decisions.md), [Data Model Requirements](discovery/data-model-requirements.md), and cross-cutting research baselines. It combines SETTLED constraints from discovery with RECOMMENDED provisional architecture choices. New recommendations remain provisional because architect-tier debates could not run in an apprentice-only session; Sudhanshu reviews and adjusts all RECOMMENDED entries before implementation.
+**Scope**: This document is a working architecture informed by [Provisional Architecture Decisions](discovery/architecture-decisions.md), [Discovery Decisions](discovery/decisions.md), [Data Model Requirements](discovery/data-model-requirements.md), and cross-cutting research baselines. The domain-level bookkeeping contract is the canonical pre-implementation detail for the accounting records and posting templates: see [Accounting Contracts](discovery/accounting-contracts.md). It combines SETTLED constraints from discovery with RECOMMENDED provisional architecture choices. New recommendations remain provisional because architect-tier debates could not run in an apprentice-only session; Sudhanshu reviews and adjusts all RECOMMENDED entries before implementation.
 
 **Authorization**: This document authorizes no implementation. Sudhanshu must review, adjust, and confirm the architecture. Proof spikes and OPEN RESEARCH gates remain hard blockers before Phase 1 begins. The definition of ready (§22) must be satisfied.
 
@@ -1420,7 +1420,7 @@ Workflow:
 
 1. Agent invokes `report profit-loss --basis accrual --start 2026-01-01 --end 2026-03-31`.
 2. [TX] Query ledger postings for P&L accounts (revenue, expenses) in accrual basis (invoice dates).
-3. Generate report: Gross revenue - COGS - Expenses = Net profit.
+3. Generate report: Gross revenue - Expenses = Net profit. V1 has no inventory or automated COGS; the report must not invent a COGS line.
 4. [REVIEW] If tags defined, agent requests `report profit-loss --basis accrual --tag Project-A`.
 5. Query applies tag filter: only lines with Project-A tag included.
 6. [TX] Generate JSON with effective basis, date range, rule version, tag applied.
@@ -1703,6 +1703,7 @@ All of the following must be true before Phase 1 implementation begins:
 - [Decisions](discovery/decisions.md): Confirmed decisions and working defaults.
 - [Provisional Architecture Decisions](discovery/architecture-decisions.md): SETTLED, RECOMMENDED, OPEN RESEARCH, DEFERRED.
 - [Data Model Requirements](discovery/data-model-requirements.md): Entities, invariants, canonical records.
+- [Accounting Contracts](discovery/accounting-contracts.md): Canonical pre-implementation domain contracts and account-role posting templates.
 - [CLI Contract](discovery/cli-contract.md): Reports, reconciliation, period controls.
 - [Skill Architecture](discovery/skill-architecture.md): Engine/CLI/skill/agent responsibilities.
 - [GST Compliance Matrix](discovery/gst-compliance-matrix.md): Verified research baseline; GSTR-1, GSTR-3B, e-invoice, e-way bill.
