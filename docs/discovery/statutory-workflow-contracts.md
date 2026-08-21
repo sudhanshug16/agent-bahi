@@ -14,7 +14,7 @@ This document defines the contracted boundaries for statutory compliance workflo
 
 ### In Scope
 
-- **TDS/TCS obligations (non-payroll)**: Section 393 (resident non-salary) and section 394 (TCS) with Rule 218 payment and Rule 219 statements/certificates. Section 392 salary is excluded entirely and lives only in the payroll contract;
+- **TDS/TCS obligations (non-payroll)**: Section 393 (resident non-salary) and section 394 (TCS), with Rule 218 governing payment, Rule 219 governing statements, and Rule 215 governing certificates. Section 392 salary is excluded entirely and lives only in the payroll contract; the s393(1) Table 8(iii) specified-senior-citizen branch is non-salary but uses the payroll-owned Forms 130/138 under Rules 215/219;
 - **Annual income-tax return filing**: Profile-driven return deadlines (s263: 31 Oct audited, 31 Aug non-audit business/profession, 31 Jul other, 30 Nov only explicit s172-report cases), separate tax computation artifact, Form 26 (s63 audit report only), e-Filing portal submission;
 - **Advance tax**: Sections 404/408 installment tracking and credit reconciliation;
 - **Company statutory compliance**: Section 139 auditor appointment (mandatory for all companies), annual accounts, Board report, AGM (except OPC), Registrar filings under Companies Act 2013;
@@ -23,7 +23,7 @@ This document defines the contracted boundaries for statutory compliance workflo
 
 ### Out of Scope / Linked Contracts
 
-- **Payroll TDS**: Form 130 (annual salary), Form 138 (quarterly salary statement) — see [payroll-compliance-matrix.md](payroll-compliance-matrix.md). Salary is out of scope for this contract;
+- **Payroll TDS**: s392 salary ownership and the payroll-owned Form 130/Form 138 workflow — see [payroll-compliance-matrix.md](payroll-compliance-matrix.md). Forms 130/138 are not salary-exclusive because s393(1) Table 8(iii) uses them; salary is out of scope for this contract;
 - **Payroll EPF/ESI/PT/LWF**: Statutory contributions — see [payroll-compliance-matrix.md](payroll-compliance-matrix.md);
 - **GST obligations**: GSTR-1, GSTR-3B, ITC, e-way bills, e-invoices — see [gst-compliance-matrix.md](gst-compliance-matrix.md);
 - **Expense evidence**: Invoice receipt, bill reconciliation — see [expense-evidence-policy.md](expense-evidence-policy.md) and [accounting-contracts.md](accounting-contracts.md);
@@ -36,9 +36,9 @@ This document defines the contracted boundaries for statutory compliance workflo
 
 ### Effective Rule Pack
 
-- **Salary TDS**: Excluded; section 392, Form 130, and Form 138 are payroll-owned. See [payroll-compliance-matrix.md](payroll-compliance-matrix.md);
-- **Resident non-salary TDS**: Section 393 table-driven routing: 194M→Table 6(ii), rent→Table 2(i)/(ii), interest→Table 5(i)–(iii), goods purchase→Table 8(ii), 194LA→Table 3(iii), ordinary property transfer→Table 3(i). Forms 131/132 and 140/141 only where Rules 215/219 directly route them;
-- **TCS**: Section 394, Rules 215–219, Forms 133;
+- **Salary TDS**: Excluded; section 392 salary is payroll-owned. Forms 130/138 are payroll-owned outputs but are not salary-exclusive: s393(1) Table 8(iii) specified-senior-citizen payments use Form 130 under Rule 215 and Form 138 under Rule 219, with ordinary Rule 218 timing. See [payroll-compliance-matrix.md](payroll-compliance-matrix.md);
+- **Resident non-salary TDS**: Section 393 table-driven routing: 194M→Table 6(ii), rent→Table 2(i)/(ii), interest→Table 5(i)–(iii), goods purchase→Table 8(ii), 194LA→Table 3(iii), ordinary property transfer→Table 3(i), specified-senior-citizen bank payments→Table 8(iii). Forms 131/132/140/141/143/144 and the Table 8(iii) Form 130/138 branch are selected only where Rules 215/218/219 directly route them;
+- **TCS**: Section 394, Rule 218 payment, Rule 219 Form 143 statements, and Rule 215 Form 133 certificates;
 - **Historical law**: Income-tax Act 1961, old sections 192/194A/194H/194I/194LA/194Q (legacy aliases only for pre-1 April 2026 periods).
 
 ### Obligation Scope and Applicability Facts
@@ -57,13 +57,20 @@ This document defines the contracted boundaries for statutory compliance workflo
 
 ### Due-Event Calculation
 
+The due events below use [Rule 218](https://www.incometaxindia.gov.in/w/rule-218-1)
+for payment, [Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1) for
+statements, and [Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1) for
+certificates. The existing source/effective-snapshot gate remains mandatory.
+
 | Event | Trigger | Due Date | Rule | Deterministic Gate |
 |---|---|---|---|---|
 | **TDS/TCS action** | Payment/receipt event to payee, buyer, or collectee | At the applicable s393/s394 event; deduction/collection month recorded | Applicable s393/s394 table entry | Deduction/collection month and section frozen; do not retroactively change; salary s392 is payroll-owned |
-| **TDS deposit to Government** | Deduction recorded | Ordinary Rule 218 branch; special Tables 2(i), 3(i), 6(ii), 8(vi) within 30 days from end of deduction month with Form 141 | Rule 218 | Block if month, amount, deductor type, or source snapshot unresolved |
-| **Form 140 quarterly statement** | Quarter-end; general non-salary TDS | Rule 219 quarterly due date | Rule 219 | Block Form 140 filing if quarterly data incomplete or branch is special |
-| **Form 141 special statement** | Tables 2(i), 3(i), 6(ii), 8(vi) | Within 30 days from end of deduction month, not transaction date | Rule 219 | Form 141 → Form 132; never generic seven-day route |
-| **Form 131 certificate** | General non-salary branch | Within 15 days from due date for applicable Rule 219 statement | Rule 215 | Form 131 follows Form 140/144 path; it is not an annual aggregate of Forms 140/141 |
+| **TDS deposit to Government** | Deduction recorded | Ordinary Rule 218 branch; special Tables 2(i), 3(i), 6(ii), 8(vi) within 30 days from end of deduction month with Form 141 | [Rule 218](https://www.incometaxindia.gov.in/w/rule-218-1) | Block if month, amount, deductor type, or source snapshot unresolved |
+| **Form 140 quarterly statement** | Quarter-end; general non-salary TDS | 31 Jul, 31 Oct, 31 Jan, and 31 May following the tax year for quarters ending 30 Jun, 30 Sep, 31 Dec, and 31 Mar | [Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1) | Block Form 140 filing if quarterly data incomplete or branch is special |
+| **Form 143 quarterly statement** | Quarter-end; s394(1) TCS | 31 Jul, 31 Oct, 31 Jan, and 31 May following the tax year for quarters ending 30 Jun, 30 Sep, 31 Dec, and 31 Mar | [Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1) | Block Form 143 filing if quarterly data or s394 snapshot is incomplete |
+| **Form 144 quarterly statement** | Quarter-end; Rule 219 non-resident/non-ordinarily-resident branch | 31 Jul, 31 Oct, 31 Jan, and 31 May following the tax year for quarters ending 30 Jun, 30 Sep, 31 Dec, and 31 Mar | [Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1) | Block Form 144 filing if payee status, quarterly data, or branch snapshot is incomplete |
+| **Form 141 special statement** | Tables 2(i), 3(i), 6(ii), 8(vi) | Within 30 days from end of deduction month, not transaction date | [Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1) | Form 141 → Form 132; never generic seven-day route |
+| **Form 131 certificate** | General non-salary branch | Within 15 days from due date for applicable Rule 219 statement | [Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1) | Form 131 follows Form 140/144 path; it is not an annual aggregate of Forms 140/141 |
 
 ### Workflow States and No-False-Filing
 
@@ -74,6 +81,16 @@ This document defines the contracted boundaries for statutory compliance workflo
 | **Form 140 filed** | Quarter-end; general quarterly statement submitted to portal | Portal receipt; filing timestamp pending | No | Certificate issuance without filing |
 | **Form 140 accepted** | Portal processes; ARN issued | ARN and acceptance date recorded | No | Completion without acceptance |
 | **Form 131 certificate issued** | General Rule 215 branch after applicable Rule 219 statement path | Form 131 with payee evidence, issue date | **YES** | Invalid certificate (orphaned or incomplete) |
+
+Each non-payroll form branch below is its own state machine. A submission
+attempt, acknowledgement/ARN, and terminal outcome are branch-scoped evidence;
+an ARN or rejection from one form must never be reused for another form.
+
+| Branch transition | Due event | Submission attempt | Acknowledgement/ARN evidence | Accepted terminal | Rejected terminal | Unknown terminal |
+|---|---|---|---|---|---|---|
+| **Form 141 → Form 132** | Form 141 and payment due within 30 days from the end of the deduction month; Form 132 due within 15 days from the Form 141 due date | Record a dedicated Form 141 submission attempt, then a separate Form 132 issue/submission attempt | `form_141_ack_arn` and `form_132_ack_arn` are separate required evidence records | Close the Form 141 or Form 132 leg only with its own accepted status and ARN | Keep that leg rejected with its own reason; open correction/retry for that leg only | Hold that leg in REVIEW/BLOCK; do not infer acceptance or reuse Form 140/143/144 evidence |
+| **Form 143 → Form 133** | Form 143 due under the ordinary Rule 219 quarterly dates; Form 133 due within 15 days from the Form 143 due date | Record a dedicated Form 143 submission attempt, then a separate Form 133 issue/submission attempt | `form_143_ack_arn` and `form_133_ack_arn` are separate required evidence records | Close each leg only with its own accepted status and ARN | Keep the rejected leg open with its own reason and correction lineage | Hold the unknown leg in REVIEW/BLOCK; do not infer acceptance or reuse Form 140/141 evidence |
+| **Form 144 → Form 131** | Form 144 due under the ordinary Rule 219 quarterly dates; Form 131 due within 15 days from the Form 144 due date | Record a dedicated Form 144 submission attempt, then a separate Form 131 issue/submission attempt | `form_144_ack_arn` and `form_131_ack_arn` are separate required evidence records | Close each leg only with its own accepted status and ARN | Keep the rejected leg open with its own reason and correction lineage | Hold the unknown leg in REVIEW/BLOCK; do not infer acceptance or reuse Form 140/141 evidence |
 
 **GATE: Never mark "filed" or "accepted" without documented portal acknowledgement (ARN). Submission and acceptance are distinct events.**
 
@@ -197,18 +214,18 @@ This document defines the contracted boundaries for statutory compliance workflo
 | Component | Non-Payroll TDS (This Contract) | Payroll TDS (payroll-compliance-matrix.md) |
 |---|---|---|
 | **Governing section** | Section 393 (resident non-salary) | Section 392(1) (salary) |
-| **Certificates** | Form 131 (general), Form 132 (special), Form 133 (TCS) | Form 130 (annual salary) |
-| **Quarterly statement** | Form 140 (non-salary quarterly) | Form 138 (salary quarterly) |
-| **Payroll Form 138 quarterly and annual Form 130** | Separate domain (payroll) | Primary payroll documents; NOT in this contract |
-| **Interaction** | If same individual receives both salary (Form 130) and non-salary (Form 131), both TDS amounts must be reconciled and reported separately to payee | Form 130 and Form 131 are separate certificates to same payee; do not conflate |
+| **Certificates** | Form 131 (general), Form 132 (special), Form 133 (TCS) | Form 130 for s392 salary and s393(1) Table 8(iii); payroll-owned output, not salary-exclusive |
+| **Quarterly statement** | Form 140, Form 143, or Form 144 as directly routed by Rule 219; Form 141 is the special month-end statement | Form 138 for s392 salary and s393(1) Table 8(iii); payroll-owned output, not salary-exclusive |
+| **Payroll Form 138 quarterly and annual Form 130** | Separate domain (payroll); Table 8(iii) uses the shared payroll-owned forms but remains non-salary | Primary payroll documents and Table 8(iii) transport; general non-payroll forms remain in this contract |
+| **Interaction** | Reconcile s392 salary, Table 8(iii), and general non-salary TDS credits separately by governing branch; do not merge source records | Form 130/Form 138 and Forms 131/132/133/140/141/143/144 remain distinct outputs and evidence chains |
 
-**GATE**: Form 140/141/131 (non-payroll) must never include salary TDS amounts. Payroll domain owns salary TDS (Form 130, Form 138). Every TDS filing must identify deductor category (salary vs. non-salary) before execution.
+**GATE**: Form 140/141/131/143/144 (general non-payroll) must never include salary TDS amounts, and Table 8(iii) must not be treated as salary merely because it uses payroll-owned Forms 130/138. Every TDS filing must identify the governing s392 or s393/s394 branch before execution.
 
 ### Annual Return → Payroll Domain
 
 | Component | Annual Return (This Contract) | Payroll TDS (payroll-compliance-matrix.md) |
 |---|---|---|
-| **TDS credit from payroll** | Form 130 (annual salary TDS certificate) and Form 131 (non-payroll TDS) both credit against return-filing tax liability | Form 130 is annual certificate per payroll contract; payroll domain owns generation and issue |
+| **TDS credit from payroll** | Form 130 for s392 salary or s393(1) Table 8(iii), plus Form 131 for general non-payroll TDS, all credit against return-filing tax liability by branch | Form 130 is a Rule 215 certificate for either payroll-owned branch; payroll domain owns generation and issue |
 | **Integration** | Annual return imports TDS credit from Form 130 + Form 131 (if applicable); reconciles total TDS to net tax |
 
 **Data flow**: Payroll contract produces Form 130 by 15 June; annual return contract imports Form 130 TDS amount for return filing by applicable deadline (31 Oct/31 Aug/31 Jul per s263).
@@ -264,8 +281,8 @@ These are product rules for deterministic statutory workflows. They are not clai
 | **Gateway enforcement — MCA source snapshot** | Every MCA obligation must carry `source_verified=true`, an exact `effective_rule_snapshot`, and a verified MCA audit ID. OPEN/TENTATIVE applicability or field detail is REVIEW/BLOCK. | Silent execution from stale or invented section/form/date claims. |
 | **Gateway enforcement — OPC/member path** | An OPC has no AGM, but the member adopts required business through the signed, dated minutes/resolution path under s122; s137 financial statements are due within 180 days. | “Board only,” “no member approval,” or accidental reuse of 180 days for annual return. |
 | **Gateway enforcement — forms** | AOC-4 is standalone; AOC-4 CFS is conditional on s129(3) after Rule 6 exemptions; MGT-7/MGT-7A follow company profile; DPT-3 is deposits/money not treated as deposits; MSME-1 is applicable supplier-payment return. | Wrong form purpose, associate-implies-CFS, DPT-3 director/KMP data, or MSME classification misuse. |
-| **Form selection from official classification** | Select TDS forms from frozen s393 + Rules 215/219 classification: Form 141→132 for Tables 2(i), 3(i), 6(ii), 8(vi); general branches use Form 131 and Form 140/144. Do not derive rates/thresholds from form kits. | Wrong or obsolete form filed. |
-| **Payroll boundary maintenance** | Keep Form 130/138 (salary TDS) separate from Form 140/141/131 (non-salary TDS). Reconcile both TDS amounts at annual return, not before. | Salary TDS conflated with non-salary TDS; wrong total TDS credit applied to return. |
+| **Form selection from official classification** | Select TDS forms from frozen s393 classification, Rule 215 certificate routes, and Rule 219 statement routes: Form 141→132 for Tables 2(i), 3(i), 6(ii), 8(vi); general branches use Form 131 and Form 140/144; s393(1) Table 8(iii) uses Form 130/Form 138. Do not derive rates/thresholds from form kits. | Wrong or obsolete form filed. |
+| **Payroll boundary maintenance** | Keep s392 salary, s393(1) Table 8(iii), and general non-salary/TCS branches distinct even where payroll owns Form 130/138 transport. Reconcile credits at annual return only after preserving branch evidence. | Salary TDS conflated with Table 8(iii) or general non-salary TDS; wrong total TDS credit applied to return. |
 | **Portal evidence preservation** | Retain all portal receipts (ARN, Registrar reference, filing timestamp, acceptance date, signer method, DSC verification). Do not delete filing evidence. | Missing evidence; cannot verify filing or respond to Registrar/tax authority objection. |
 
 ---
@@ -287,13 +304,13 @@ No product gate, auto-decision, or default behavior must exist without explicit 
 
 All items below must remain visible and unimplemented until resolved with official sources:
 
-1. **Section 393 transaction-type rates and thresholds**: Exact rates, applicability tests, and exemption criteria for each s393 table entry (194M→6(ii), rent→2(i)/(ii), interest→5(i)–(iii), goods→8(ii), 194LA→3(iii), ordinary property→3(i)) must be verified from the official s393 source snapshot. **OPEN**. Blocks: all affected non-payroll TDS computations.
+1. **Section 393 transaction-type rates and thresholds**: Exact rates, applicability tests, and exemption criteria for each s393 table entry (194M→6(ii), rent→2(i)/(ii), interest→5(i)–(iii), goods→8(ii), 194LA→3(iii), ordinary property→3(i), specified-senior-citizen bank payments→8(iii)) must be verified from the official s393 source snapshot. **OPEN**. Blocks: all affected non-payroll TDS computations, including the Table 8(iii) Form 130/Form 138 branch.
 
 2. **Section 394 TCS rates and goods categories**: Exact TCS rate, applicable goods types, and turnover threshold must be verified. **OPEN**. Blocks: all TCS computations.
 
-3. **Form 140/141/131 quarterly and annual due dates and structure**: Rule 219 routing is verified; field/export structure and any tenant-specific transport remain **OPEN**. Blocks: export or filing until the current form snapshot is attached.
+3. **Form 140/141/131/143/144 due-date and structure details**: Rule 219 routing and ordinary quarterly dates are verified; field/export structure and any tenant-specific transport remain **OPEN**. Blocks: export or filing until the current form snapshot is attached.
 
-4. **Form 138 (payroll quarterly salary statement)**: Applicability and quarter dates are verified by the official Form 138 FAQ; detailed correction/transport semantics remain **OPEN**. Blocks only those unresolved payroll actions.
+4. **Form 138 (payroll-owned quarterly statement)**: Applicability and quarter dates for s392 salary and s393(1) Table 8(iii) are verified by the official Form 138 FAQ; detailed correction/transport semantics remain **OPEN**. Blocks only those unresolved payroll actions.
 
 5. **Section 63 thresholds and conditions**: Exact ₹1 crore business, ₹50 lakh profession, ₹10 crore with cash-payment tests must be verified. **OPEN**. Blocks: audit applicability determination for individual/HUF/partnership.
 

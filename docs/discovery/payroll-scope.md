@@ -69,10 +69,12 @@ The target includes the complete India payroll workflow:
 - payslips, wage/overtime/deduction reports, and requested employee outputs for
   secure delivery outside agent-bahi;
 - deterministic bank-import CSV export using versioned bank presets;
-- payroll TDS under section 392, declarations, investment proofs, a certificate
-  selected as Form 16 or Form 130 by governing period and rule version, and
-  Form 138 quarterly salary statements. Non-payroll Forms 131/132/140/141 are
-  excluded from this payroll contract;
+- payroll owns section 392 salary TDS, declarations, investment proofs, a
+  certificate selected as Form 16 or Form 130 by governing period and branch,
+  and Form 138 quarterly statements. Forms 130/138 are not salary-exclusive:
+  s393(1) Table 8(iii) specified-senior-citizen payments use them under Rules
+  215/219 with ordinary Rule 218 timing. General non-payroll Forms
+  131/132/140/141/143/144 are excluded from this payroll contract;
 - PF, ESI, professional tax (PT), and labour welfare fund (LWF) modules; and
 - full-and-final settlement based on approved inputs, including final payables,
   deductions, any approved leave-settlement amount, and statutory references;
@@ -104,28 +106,35 @@ payment, export, filing, advance-tax action, or certificate generation. See
 
 ### Transition and statutory implementation decisions
 
-The notified [Income-tax Rules, 2026](https://www.incometaxindia.gov.in/iec/foportal/sites/default/files/2026-03/En-Notified-IT-Rules-2026-20-03-2026.pdf)
-come into force on 1 April 2026. Salary paid through March 2026 remains under
-section 192 of the Income-tax Act, 1961. Salary paid from April 2026 for Tax
-Year 2026-27 is under section 392(1) of the Income-tax Act, 2025. The
-[TDS compliance guidance](https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/tds-compliance)
-states that salary TDS follows the date of payment: March 2026 salary uses
-the old Act and April 2026 salary uses the new Act. For the new-law period,
-the legal source set is [section 392](https://www.incometaxindia.gov.in/w/section-392-5),
+The notified [Income-tax Rules, 2026](https://www.incometaxindia.gov.in/documents/d/guest/en-notified-it-rules-2026-20-03-2026-pdf)
+come into force on 1 April 2026. The matrix preserves the requested period
+split: legacy salary periods through March 2026 remain a separately selected
+1961-law workflow, while salary paid from April 2026 for Tax Year 2026-27 is
+under section 392(1) of the Income-tax Act, 2025. Exact legacy transition,
+filing, and correction details remain OPEN+BLOCK until their period-specific
+official source is attached. The
+official [Rule 30](https://www.incometaxindia.gov.in/w/rule-30-7) source is
+retained for the applicable legacy payment timing. For the new-law period, the
+legal source set is [section 392](https://www.incometaxindia.gov.in/w/section-392-5),
 [Rule 215](https://www.incometaxindia.gov.in/w/rule-215-1),
 [Rule 218](https://www.incometaxindia.gov.in/w/rule-218-1),
 [Rule 219](https://www.incometaxindia.gov.in/w/rule-219-1), and the official
 [Form 138 FAQ](https://www.incometaxindia.gov.in/documents/d/guest/form-138-faqs).
+The s393(1) Table 8(iii) branch is sourced from [section 393](https://www.incometaxindia.gov.in/w/section-393-5),
+and form availability is checked against the official [Form Navigator](https://www.incometaxindia.gov.in/Documents/draft-income-tax-rules/navigator-Income-tax-Forms-2026.pdf).
 
 The engine must select the governing Act, rule version, forms, rates, and
 effective dates from the payroll period and salary payment event. The employee
-certificate is selected by that period: Form 16 is the old-law certificate for
-periods governed by the 1961 Act, while Form 130 is the certificate for salary
-TDS under the 2025 Act/2026 Rules. The new-law certificate is due on 15 June
-immediately following the tax year. New-law employee investment/evidence
-claims use Form 124 under Rule 205; no old-form mapping is assumed here.
+certificate is selected by that period and branch: Form 16 is the old-law
+certificate for periods governed by the 1961 Act, while Form 130 is the
+certificate for s392 salary or s393(1) Table 8(iii) under the 2025 Act/2026
+Rules. For either new-law branch, the Form 130 due event is 15 June immediately
+following the tax year under Rule 215. New-law employee investment/evidence
+claims use [Form 124 under Rule 205](https://www.incometaxindia.gov.in/documents/d/guest/fn-124);
+no old-form mapping is assumed here.
 
-Form 138, earlier Form 24Q, is the quarterly salary TDS statement for the new
+Form 138, earlier Form 24Q for salary periods, is the quarterly statement for
+s392 salary or s393(1) Table 8(iii) specified-senior-citizen TDS in the new
 framework. Its Q1/Q2/Q3/Q4 due dates are 31 July, 31 October, 31 January, and
 31 May respectively, as stated in the official Form 138 FAQ and Rule 219. It
 requires applicable TAN/profile facts and the current RPU/FVU workflow. TDS

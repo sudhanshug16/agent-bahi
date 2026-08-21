@@ -316,10 +316,10 @@ Baseline research and workflow requirements are documented in:
 Data model requirements for statutory compliance include:
 - effective-dated rule versioning (Acts, Rules, Notifications) with applicability facts;
 - obligation tracking with due dates, filing deadlines, and predecessor gates;
-- portal filing snapshots (preparation, submission, acceptance, ARN/reference tracking);
-- separate obligation states (deduction computed, payment due, filed, accepted, amended);
+- portal filing snapshots (preparation, submission, acceptance, ARN/reference tracking) keyed to the exact form branch;
+- separate obligation states (deduction computed, payment due, filed, accepted, rejected, unknown, amended) with no cross-branch evidence reuse;
 - evidence linkage for compliance decisions (audit reports, filing receipts, portal acknowledgements);
-- forms and schedules (Form 141, Form 140, Form 26, Registrar forms) with field mapping and evidence linkage; Form 26 is only the s63 audit report, never the annual tax computation or an attachment accompanying the return;
+- forms and schedules (Forms 130, 131, 132, 133, 138, 140, 141, 143, 144, Form 26, Registrar forms) with field mapping and branch-specific evidence linkage; Form 26 is only the s63 audit report, never the annual tax computation or an attachment accompanying the return;
 - a separate tax-computation artifact for total income, liability, reliefs,
   credits, and net tax, linked to Form 26 only as audit evidence where s63
   applies;

@@ -44,7 +44,7 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 - verify TDS/TCS rates and thresholds from the official s393/s394 sources and effective rule snapshots; use Form 140/Form 141 only for statement routing;
 - verify annual-return form code and structure from official Notification 22 and Form Navigator;
 - verify company classification and profile-driven MCA applicability from the cited Act/rules/orders; never infer a small-company or OPC audit exemption;
-- research payroll Form 130/Form 138 details and keep them separate from non-payroll Form 140/Form 141;
+- research payroll-owned Form 130/Form 138 details, including their s393(1) Table 8(iii) specified-senior-citizen use, and keep general non-payroll Forms 131/132/140/141/143/144 separate;
 - verify current form/instruction-kit snapshots (AOC-4, AOC-4 CFS, MGT-7, ADT-1, DPT-3, MSME-1) and gate implementation on `source_verified=true` plus an effective rule snapshot.
 
 ## Phase 1 Gate: Review and Approval
@@ -155,7 +155,7 @@ Before Phase 1 implementation begins:
 - Pay schedules, payroll periods, and approved summarized payroll inputs such as payable days, LOP days, and overtime amounts/hours; no attendance, leave, shift, HRMS, or attendance-import domain
 - Regular, bonus, arrears, correction, and off-cycle runs with draft, approval, posting, and locking
 - Reimbursements, perquisites, loans, advances, payslips, wage/overtime/deduction reports, and requested employee outputs for secure external delivery; no employee self-service portal
-- Payroll TDS under s392, declarations/proofs, Form 16/Form 130, payroll-only Form 138 quarterly statements, PF, ESI, PT, LWF, and statutory filing/remittance references; non-payroll Forms 140/141 remain in the statutory TDS contract
+- Payroll TDS under s392, declarations/proofs, Form 16/Form 130, and payroll-owned Form 138 quarterly statements (also used for s393(1) Table 8(iii)), PF, ESI, PT, LWF, and statutory filing/remittance references; general non-payroll Forms 131/132/140/141/143/144 remain in the statutory TDS contract
 - Deterministic bank-import CSV export using versioned bank presets; no bank transfer initiation or auto-pay
 - Full-and-final settlement and auditable reversal/correction lineage
 
