@@ -44,11 +44,12 @@ This document is the canonical discovery baseline for agent-bahi's expansion to 
 
 **Source**: [Official ITD Form Navigator and ITR Instructions](https://www.incometaxindia.gov.in/form-navigator), [ITR-1 (SAHAJ) Instructions](https://www.incometaxindia.gov.in/documents/d/guest/sahaj_itr-1_fy-2024-25-pdf), ITR-3 (business/professional income) instructions per filing year, [ITR-2 Instructions](https://www.incometaxindia.gov.in/documents/d/guest/itr-2_fy-2024-25-pdf).
 
-**Assessment Year (AY) vs. Tax Year (TY) and old-law vs. new-law versions**: 
-- **Old-law regime** (applicable FY 2024-25 and earlier): Assessment Year 2025-26 covers Financial Year 2024-25 (Apr 1, 2024 – Mar 31, 2025). Old-law form structures and schedules apply.
-- **New-law regime** (effective from FY 2025-26): Tax Year 2025 covers Calendar Year 2025 (Jan 1, 2025 – Dec 31, 2025). New-law form structures and schedules apply. Transition and dual-regime rules are being researched.
+**Assessment Year (AY) and Governing Act: FY 2025-26 and Binding**:
+- **FY 2025-26** (1 Apr 2025 – 31 Mar 2026): Governed by **Income-tax Act, 1961**. Assessment Year 2026-27.
+- **Income-tax Act, 2025**: Effective from **1 Apr 2026** onward. Governs Tax Year 2026-27 (1 Apr 2026 – 31 Mar 2027) and AY 2027-28. Transition between Act 1961 and Act 2025 is external research; agent-bahi binds the governing Act per TaxCase atomically (PT-007).
+- Every TaxCase immutably records governing Act, FY/TY period, and rule snapshot. Form structures, deduction limits, rates, and thresholds are rule-snapshot-dependent, not universal.
 
-**Source**: [Finance Act 2026 amendments to the Income-tax Act, 2025](https://www.incometaxindia.gov.in/documents/d/guest/finance_act_2026-pdf) (Clause 1 onwards), [Official ITD notifications on regime transition](https://www.incometaxindia.gov.in/) (research ongoing).
+**Source**: [CBDT Press Release: Income-tax Act 2025 Effective 1 Apr 2026](https://www.incometaxindia.gov.in/documents/d/guest/press-release-income-tax-act-2025-comes-into-force-from-01-april-2026-pdf), [Income-tax Act 1961 (for FY 2025-26)](https://www.incometaxindia.gov.in/), [Official ITR Form Navigator](https://www.incometaxindia.gov.in/iec/foportal/downloads/income-tax-returns).
 
 **Official ITR schemas and validation are year-version-specific**: Each ITR form (ITR-1, ITR-2, ITR-3, etc.) has an official schema: mandatory fields, optional fields, data types, allowed values, computed fields, and validation rules published by the ITD. These schemas and rules change between assessment years (AY 2026-27, AY 2027-28, etc.) and between old-law and new-law regimes. Agent-bahi must snapshot the applicable schema for each taxpayer/form/year/regime combination and use that snapshot for validation.
 
@@ -162,6 +163,7 @@ Each entry uses the following structure:
   - N proprietorship BookSets (one per business/professional register per ITD classification)
   - No company BookSets (company tenants are separate)
 - All BookSets within one PAN tenant contribute to one annual income-tax return filed under that PAN.
+- **BREAKING CHANGE from current model**: The current agent-bahi model is "one tenant = one legal entity." PT-001 changes this to "one tenant = one individual/PAN (for sole proprietors) OR one legal entity (for companies)." This requires data migration and canonical-contract update. Owner approval and coordinated canonical migration are required before implementation.
 
 **Concrete Example**: Sudhanshu (PAN: AAABX5055K) operates one sole proprietorship (Register of Business Income maintained for ITD) and holds personal investments. His tenant contains:
 - BookSet `personal` (personal bank accounts, investments, rental property, personal expenses)
@@ -193,7 +195,7 @@ Both roll into one ITR filed under PAN AAABX5055K in the same assessment year.
 - Every ledger account, posting, invoice, bill, payment, asset, and subledger record includes:
   - `tenant_id`: Identifies the tenant (sole proprietor PAN, company ID, etc.)
   - `book_set_id`: Identifies the BookSet within that tenant (personal, proprietorship-business-1, etc.)
-- Every unique constraint (account code, invoice number, etc.) is scoped to tenant + book_set_id, not tenant only.
+- **Uniqueness constraints remain tenant-wide**: Every existing tenant-wide uniqueness rule (account code, invoice number, document ID, etc.) is preserved and remains binding across all BookSets within the tenant until separately revised. New constraints may be BookSet-scoped; existing tenant-wide constraints are not auto-converted to BookSet-scoped.
 - Reports, balances, and trial balances default to one BookSet; cross-BookSet views require explicit aggregation.
 - Period locks are BookSet-scoped or tenant-wide; blocking is granular.
 
@@ -381,18 +383,7 @@ No universal mapping exists (e.g., all business proprietors file ITR-3; some fil
   - If no single form covers all heads, return `FORM_SELECTION_CONFLICT` and fail closed
 - Document form-selection reasoning in TaxCase metadata (which heads triggered which form).
 
-**Concrete Example**: Sudhanshu files for AY 2026-27. Effective rule pack specifies:
-- ITR-1: Only salary + other income (no business, no capital gains). Turnover < ₹50 lakh.
-- ITR-2: Salary + capital gains + other income (no business).
-- ITR-3: Any business/professional income. Turnover ≥ ₹0 (no exemption).
-- ITR-4 (Presumptive): Business/professional only. Turnover ≤ ₹75 lakh. Income ≤ ₹5 lakh (estimated).
-Sudhanshu's BookSets for FY 2025-26:
-- Personal: Salary ₹40 lakh, Investment capital gains ₹5 lakh, House property income ₹10 lakh
-- Proprietorship-consulting: Business income ₹30 lakh, Turnover ₹80 lakh
-Form selection:
-- Business income present → ITR-3 only (ITR-4 requires turnover ≤ ₹75 lakh; Sudhanshu's turnover is ₹80 lakh) → **Select ITR-3**.
-
-Next year, if turnover drops to ₹70 lakh and business income is computed to ₹5 lakh, ITR-4 becomes eligible; form selection re-runs.
+**Concrete Example**: Sudhanshu files for FY 2025-26 (AY 2026-27). He consults the effective rule pack for AY 2026-27 (under Income-tax Act 1961) and the applicable form eligibility criteria per that year's official rules. The rule pack specifies ITR eligibility branches (e.g., ITR-1, ITR-2, ITR-3, ITR-4, ITR-5 with conditions per s2 definitions and Chapter VI assessment rules). Sudhanshu's BookSets show salary + capital gains + business income + house property income. Agent-bahi matches scanned heads against rule pack criteria and selects the form with the narrowest scope covering all heads. If business income is present, ITR-3 is typically required (unless specific 44AD/44ADA/44AE conditions in the applicable year make ITR-4 eligible); form selection output includes the rule-pack reasoning. Turnover thresholds, presumptive-income limits, and form applicability are sourced from the effective rule pack per year, not hardcoded.
 
 **Credible Alternative**: Hard-code ITR-3 for all business proprietors, or ITR-4 for all presumptive. This loses compliance with annual form-eligibility rules and creates audit risk.
 
@@ -479,10 +470,11 @@ Later, in AY 2027-28, if Finance Act 2027 changes the ₹150,000 limit to ₹200
 
 **Status**: TENTATIVE - NOT OWNER-APPROVED
 
-**Definition**: Agent-bahi imports and preserves AIS and 26AS as primary artifacts (immutable, hashed records). AIS includes TIS (Tax Information Summary) values. 26AS is TDS/TCS-focused. Neither is exhaustive:
-- AIS omits self-assessed heads (business income, rental income, capital gains)
-- 26AS omits salary (covered in Form 16), business income, rental income
-Reconciliation validates consistency between external sources and BookSet ledgers without overwriting ledger data. Gaps or conflicts are marked explicitly.
+**Definition**: Agent-bahi imports and preserves AIS and 26AS as primary artifacts (immutable, hashed records). AIS includes TIS (Tax Information Summary) values as a component (not separate). 26AS is TDS/TCS-focused only. Neither is exhaustive:
+- **AIS**: Aggregates third-party-reported incomes (salary from Form 16, TDS/TCS from Form 16A, interest from Form 16C, etc.). Includes TIS pre-calculated tax values on those heads. **Omits** self-assessed heads: business income, rental income, capital gains, other personal income reported directly by taxpayer.
+- **26AS**: Shows only TDS (tax deducted at source) and TCS (tax collected at source) collected against PAN. **Omits** gross income heads, business income, rental income, capital gains, salary (except TDS withheld).
+- **TIS**: Is an AIS component, not a separate document. Pre-calculated tax values on AIS heads only; not exhaustive income-tax liability.
+Reconciliation validates consistency between external sources and BookSet ledgers without overwriting ledger data. Gaps or conflicts are marked explicitly. No external source overwrites canonical BookSet data.
 
 **Recommended Default**:
 - **AIS Import**:
@@ -573,14 +565,14 @@ Agent-bahi ingests and reconciles:
   - No browser automation or API scraping (future authorized adapters may add this)
   - No headless browser session maintenance
 - **Account Aggregator (AA) Future Model**:
-  - AA framework (RBI-regulated) allows one entity (AA) to aggregate data from multiple financial institutions (FIs) with customer consent
-  - V1 does NOT integrate AA; file-download model is the fallback
-  - Future Phase (Phase 8 or later) may add AA support if Sudhanshu registers as AA customer
-  - AA integration requires:
-    - Formal AA partner agreement
-    - Technical integration API (AA provides standard XML/JSON schema)
-    - Consent management (customer data access authorization)
-  - Until AA integration is approved and researched, file-first is the only supported method
+  - AA framework (RBI-regulated) allows one authorized aggregator (AA) to collect data from multiple financial institutions (FIs) with customer consent
+  - Agent-bahi does NOT register as an AA. Agent-bahi is an FIU (Financial Information User) or TSP (Trustee Service Provider) participant or partner.
+  - Future Phase may add AA integration as an optional data-ingest mechanism, but requires formal partner agreement with a registered AA, not Sudhanshu registration.
+  - AA integration (if pursued later) requires:
+    - Formal partner agreement with registered AA entity
+    - Technical integration API (AA provides standard XML/JSON schema per RBI directions)
+    - Consent/authorization management (customer data-access approval via AA portal)
+  - V1 file-first is the sole method. No OTP automation, scraping, or credential storage for direct AA access. Until partner agreement and AA research are complete, file-download remains the only supported method.
 
 **Concrete Example**: Sudhanshu downloads AIS from e-filing portal on June 20, 2026. Workflow:
 1. Portal generates AIS PDF with TIS values
@@ -693,20 +685,23 @@ Return filing is not blocked by CONFLICT/INGESTED/STALE states; return can be fi
   - Transfers and allocations similarly require explicit BookSet source/destination
   - Reports default to one BookSet or require `--aggregate-book-sets` for cross-BookSet views
 - **GST Output Boundary**:
-  - GSTR-1 (output tax): Generated only from business BookSet invoices with the applicable GSTIN
+  - GSTR-1 (output tax): Generated only from business BookSet records with the applicable GSTIN
   - GSTR-3B (return): Reconciles GSTR-1 and GSTR-2B (ITC) for the applicable GSTIN
-  - Personal BookSet invoices/receipts never appear in GSTR-1 or GSTR-3B (no GSTIN applicable to personal) 
-  - If a personal account is used for business payments (e.g., proprietor reimburses business expense from personal funds), the expense is routed to business BookSet/GSTIN via inter-BookSet transfer or correction journal; personal account posting is separate and final.
+  - GST output belongs to applicable business BookSet/GSTIN only. Personal BookSet does not have a GSTIN.
+  - **Source label does not determine GST treatment**: A transaction labeled "personal" may have business-use facts requiring business BookSet/GSTIN routing. Transaction nature (sale, supply, service, loan, investment, internal transfer, etc.) and applicable GSTIN determine treatment, not account label.
+  - **Business-use correction workflow**: If a business expense is initially posted to personal BookSet (e.g., proprietor pays from personal card) and later identified as business-use, (1) reverse the personal posting with documented reason, (2) post the linked business expense to the applicable business BookSet/GSTIN, (3) record the proprietor funding as a separate, balanced inter-BookSet transfer (PT-003). Never comingle the business expense and transfer; both are explicit and immutable.
 
-**Concrete Example**: Sudhanshu consults with Client A and bills ₹1,00,000 + ₹18,000 GST (18% IGST) for services. Invoice is issued from consulting business (proprietorship-consulting BookSet, GSTIN). Workflow:
-1. User invokes: `agent-bahi invoice create --book-set proprietorship-consulting --client "Client A" --amount 100000 --tax-rate 18 --tax-type IGST --gstin <GSTIN>`
-2. Invoice is posted to proprietorship-consulting BookSet; flows to GSTR-1 for the GSTIN
-3. Later, Sudhanshu uses a personal credit card to purchase stationery (₹5,000) for the business. Workflow:
-   - Expense is initially posted to personal BookSet (stationery expense ₹5,000, no GST; personal card payment)
-   - User notes: "This is business stationery; should be in consulting BookSet"
-   - User corrects via inter-BookSet transfer (PT-003) or correction journal: Transfer ₹5,000 stationery expense from personal → proprietorship-consulting
-   - proprietorship-consulting BookSet now owns the stationery; if GSTIN applies and vendor issued GST invoice, ITC is claimed in GSTR-3B for the GSTIN
-   - Personal BookSet now shows a ₹5,000 outflow (credit personal credit card payable; debit inter-BookSet transfer/advance)
+**Concrete Example**:
+1. **Business invoice (correct routing)**: Sudhanshu issues invoice to Client A for ₹1,00,000 (services, 18% IGST). Invoice is posted directly to proprietorship-consulting BookSet (GSTIN). Flows to GSTR-1 output tax for the GSTIN.
+
+2. **Personal expense misrouted, then corrected**: Sudhanshu purchases stationery for ₹5,000 + ₹900 GST on personal credit card. Initially, user posts to personal BookSet:
+   - **Personal BookSet (initial, incorrect)**: `Stationery Expense ₹5,000 / Personal Credit Card ₹5,000` (no GST; personal account treatment).
+   - Later, user realizes: "This is business stationery; should have GST ITC."
+   - **Correction workflow** (explicit, immutable):
+     - Step 1 (Reversal in personal BookSet): `Dr Personal Credit Card ₹5,000 / Cr Stationery Expense ₹5,000` with reason "Reversal: business stationery reclassified to proprietorship-consulting per review on 2026-08-21."
+     - Step 2 (Replacement in business BookSet): `Dr Stationery Expense ₹5,000 / Cr Stationery GST Payable ₹900 / Cr Proprietor Advance Payable ₹5,900` (proprietorship-consulting BookSet, linked to original reversal).
+     - Step 3 (Funding transfer, separate): `Dr Proprietor Advance Receivable ₹5,900 / Cr Personal Credit Card ₹5,900` (personal BookSet inter-BookSet transfer; links proprietorship advance payable and personal receivable).
+   - Result: Personal BookSet shows net zero (reversal + transfer cancel out); proprietorship-consulting owns stationery with GST ITC claimable. Funding is explicit and separate.
 
 **Credible Alternative**: Use account hierarchy/tagging (e.g., all "personal" accounts default to no-GST treatment regardless of transaction nature). This loses flexibility and auto-generates wrong GST treatment.
 
@@ -733,32 +728,25 @@ Return filing is not blocked by CONFLICT/INGESTED/STALE states; return can be fi
 **Definition**: TDS (tax deducted at source) and TCS (tax collected at source) obligations are determined by effective-dated rules indexed on role (as deductor, collector, or remitter), transaction facts (nature of payment, amount, vendor type, etc.), and applicable rules per financial year. No single universal TDS/TCS rule applies to all circumstances.
 
 **Recommended Default**:
-- Each potential TDS/TCS obligation has an applicable branch (s193 salary deduction, s194C contractor services, s194H cash sales for resale, etc.)
-- Rules vary annually (threshold amounts, rates, exemption criteria change per Finance Act amendments)
-- For each transaction, query effective-dated rule pack:
-  - Identify applicable TDS/TCS sections (s193, s194C, s194H, etc.)
-  - Match transaction facts (payment type, vendor category, role of taxpayer) against each section's criteria
-  - Compute applicability: Yes/No per section per financial year
-  - If applicable, extract: TDS rate, threshold, exemption criteria, due date for remittance
-- Reconcile collected/deducted TDS/TCS against remittance records (Form 24Q for salary, e-TDS for contractors, etc.)
-- 26AS records match TDS remitted; gaps or conflicts are flagged
+- TDS/TCS obligations are determined by effective-dated rule packs per financial year, taxpayer role (deductor, collector, remitter), and transaction facts.
+- Rules and applicability vary annually: Act 1961 rule packs apply to FY 2025-26; Act 2025 rule packs apply from FY 2026-27 onward. Each Act version has distinct sections, thresholds, rates, exemption criteria, and remittance forms.
+- For each transaction requiring TDS/TCS evaluation, query the applicable effective-dated rule pack:
+  - Match transaction facts (role, payment nature, payee/vendor classification, amount) against applicable branches in the rule pack
+  - Retrieve: Rule ID, TDS/TCS rate, threshold amount, exemption criteria, remittance form/mechanism from the rule pack (do not hardcode)
+  - Compute applicability: Yes/No per rule per financial year
+  - If applicable, extract rate, threshold, and remittance method from rule snapshot
+- Reconcile actual TDS/TCS deducted/collected against 26AS and remittance records.
+- **No embedded examples, hardcoded sections, or thresholds**: Agent-bahi does not assume universal rules (e.g., "s193 salary", "₹5 lakh vendor threshold") across years or Acts. Every TDS/TCS determination must reference the effective-dated rule snapshot.
+- **Unresolved mandatory TDS/TCS**: If a TDS/TCS section applies but rate, threshold, or remittance form is ambiguous or missing from rule snapshot, return REVIEW/BLOCK pending rule clarification.
+- **Reference**: See [tds-tcs-compliance-matrix.md](tds-tcs-compliance-matrix.md) for effective-dated rules per year and Act version.
 
-**Concrete Example**: Sudhanshu (as proprietor employer) pays salary to employee:
-- For FY 2025-26, s193 (deduction on salary) applies: 
-  - Rate: Progressive slabs (0% up to ₹2,50,000 for individual under new-law, e.g.)
-  - Threshold: No minimum (all salaries subject to TDS if rate > 0)
-  - Remittance: Monthly/quarterly via e-TDS/salary TDS return
-  - Sudhanshu's salary BookSet entry: `Salary Expense ₹50,000 / TDS Payable ₹5,000 / Bank ₹45,000` (assuming ₹5,000 TDS applicable per slab)
-  - Remittance: Monthly TDS return filed with ITD; Form 24Q submitted
-  - 26AS reconciliation: ITD shows TDS ₹5,000 deducted from employee's salary → Matches BookSet
-
-Similarly, as a consultant:
-- If Sudhanshu pays a vendor ₹50,000 for professional services (e.g., CA audit):
-  - For FY 2025-26, s194C may apply if vendor income is above threshold (e.g., professional income > ₹5,00,000)
-  - Sudhanshu confirms vendor details (PAN, type, income). If s194C applies: Rate 10% (for individual) → TDS ₹5,000 payable
-  - Posting: `Professional Expense ₹50,000 / TDS Payable ₹5,000 / Bank ₹45,000`
-  - If vendor is exempt or below threshold: No TDS. Posting: `Professional Expense ₹50,000 / Bank ₹50,000`
-  - Remittance: Quarterly TDS via e-TDS return (if applicable per rules)
+**Concrete Example**: Sudhanshu pays ₹50,000 for a business transaction in FY 2025-26.
+- Query effective-dated rule pack for FY 2025-26 (Act 1961): Is this transaction subject to TDS or TCS? If yes, retrieve applicable rule ID, rate, threshold, exemption criteria, and remittance form.
+- Match transaction facts (role, payee type, amount) against rule pack criteria.
+- If a rule applies: Compute TDS/TCS per rule pack rate and threshold. Post: `Expense ₹50,000 / TDS Payable <amount> / Bank <net>` (amount from rule snapshot, not assumed).
+- If rule does not apply or vendor is exempt: Post: `Expense ₹50,000 / Bank ₹50,000` (no TDS).
+- Remittance: File applicable form per rule pack (e.g., Form 24Q, e-TDS return, quarterly return). Form name and mechanism come from rule pack, not assumed.
+- Reconciliation: 26AS records TDS/TCS remitted. Match against BookSet postings. Unmatched or conflicting amounts are flagged CONFLICT; resolve before finalization.
 
 **Credible Alternative**: Hard-code one TDS rule per payment type (e.g., "all salary is 10% TDS"). This ignores annual threshold/rate changes and exemption criteria.
 
@@ -947,10 +935,11 @@ $ agent-bahi invoice create --amount 100000 --tax-rate 18 --client "Client A"
   - Development/staging: Telemetry disabled, reduced audit retention, local storage OK
   - Production: Telemetry strictly controlled, full audit retention, remote DB requires TLS, external services explicitly approved
 - **Compliance Claims**:
-  - No claim of "DPDP compliant" without ISO 27701 or equivalent audit
-  - No claim of "RBI approved" without explicit RBI circular/approval
-  - Disclaimers state: "Agent-bahi is a software tool for accounting and tax preparation. It does not replace professional tax advice or compliance services. Use with qualified CA/tax professional."
-  - ITD/ITD form references: "This tool prepares tax returns in ITR formats defined by the Income-tax Department. Portal filing and verification are the taxpayer's responsibility."
+  - No claim of "DPDP compliant", "ISO 27701 certified", or "RBI approved" without explicit audit/approval by the certifying body
+  - Personal-data duties are cited from the **MeitY Digital Personal Data Protection Act, 2023** and **DPDP Rules** (official sources) only. No fake or superseded frameworks (e.g., "CERT-In Data Protection Guidelines", "RBI cybersecurity framework" as universal mandate).
+  - Incident/breach/log reporting duties cite only **CERT-In Directions s70B (28 Apr 2022)** where applicable to covered entities and triggering incidents. Not a universal prerequisite; applicability is entity/incident-specific.
+  - Disclaimers state: "Agent-bahi is a software tool for accounting and tax preparation. It does not replace professional tax advice or compliance services. Use with a qualified Chartered Accountant or tax professional. Compliance with applicable tax laws, regulations, and data-protection rules remains the user's responsibility. Agent-bahi is not regulated by ITD, RBI, GSTN, or other government agency and does not guarantee compliance or filing acceptance."
+  - ITD form references: "This tool prepares income-tax returns in ITR formats published by the Income-tax Department. Portal filing and ITR-V verification are the taxpayer's responsibility. Filing acceptance, processing, and assessment are determined by ITD."
 
 **Concrete Example**: Sudhanshu's AIS is imported on 2026-06-20. Operations:
 1. User invokes: `agent-bahi import-ais --file ~/Downloads/AIS_FY25-26.pdf --tenant sudhanshu-pan`
@@ -1162,9 +1151,8 @@ Defined in **PT-015** above. Summary:
 - No false compliance claims (DPDP, RBI, SEBI disclaimers required)
 
 **Official Sources for Privacy/Security Policy**:
-- [MeitY Digital Personal Data Protection Act (DPDP), 2023](https://www.meity.gov.in/) — if agent-bahi processes personal data under DPDP scope
-- [CERT-In Data Protection Guidelines](https://www.cert-in.org.in/) — for operational security
-- [RBI Cybersecurity Framework](https://www.rbi.org.in/Scripts/PublicationReportDetails.aspx?ID=904) — if agent-bahi integrates with RBI Account Aggregator (future)
+- [MeitY Digital Personal Data Protection Act (DPDP), 2023 and DPDP Rules](https://www.meity.gov.in/) — applicable to personal-data processing
+- [CERT-In Directions s70B (28 Apr 2022)](https://www.cert-in.org.in/PDF/CERT-In_Directions_70B_28.04.2022.pdf) — applicable only for covered entities and triggering security incidents per s70B scope
 
 ---
 
@@ -1188,12 +1176,10 @@ Defined in **PT-015** above. Summary:
    - AA partner agreements and technical integration API
    - Depends on: RBI AA regulations finalization and partner vetting (ongoing)
 
-4. **TDS/TCS Branches and Rates** (AY 2026-27, 2027-28):
-   - s193 salary TDS rates and thresholds per regime and AY
-   - s194C contractor services TDS per professional income
-   - s194H cash sales TCS per resale threshold
-   - Other s194 sections rates and conditions
-   - Depends on: ITD rule packs and annual updates
+4. **Effective-Dated TDS/TCS Rule Packs** (per Act and AY):
+   - Income-tax Act 1961 rule pack (for FY 2025-26 and earlier): Applicable TDS/TCS branches, rates, thresholds, exemption criteria, remittance forms per section per AY
+   - Income-tax Act 2025 rule pack (for FY 2026-27 onward): Applicable TDS/TCS branches, rates, thresholds, exemption criteria, remittance forms per section per AY
+   - Depends on: CBDT/ITD official TDS/TCS rule pack documentation per Act version and AY
 
 5. **Property-Income Deduction Rules** (s24, s25, s36):
    - Home-loan interest deduction caps per regime
