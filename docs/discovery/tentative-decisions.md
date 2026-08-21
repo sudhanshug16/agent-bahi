@@ -747,7 +747,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 | PT-004 | Personal Bank, Investment/Tax-Lot, Property/Rent/Loan Subledgers | [personal-tax-scope.md § PT-004](personal-tax-scope.md#pt-004) |
 | PT-005 | ONE TaxCase/Return per Taxpayer/Year Covers ALL Applicable BookSets | [personal-tax-scope.md § PT-005](personal-tax-scope.md#pt-005) |
 | PT-006 | Form Selection is Year-Specific and Fact-Driven | [personal-tax-scope.md § PT-006](personal-tax-scope.md#pt-006) |
-| PT-007 | Bind Governing Act, Period, Trigger, Schema, and Rule Snapshot | [personal-tax-scope.md § PT-007](personal-tax-scope.md#pt-007) |
+| PT-007 | Bind Governing Act, Period, Trigger, and Four Official Bindings | [personal-tax-scope.md § PT-007](personal-tax-scope.md#pt-007) |
 | PT-008 | Preserve Primary Artifacts; AIS Including TIS; 26AS; Reconcile Without Overwrite | [personal-tax-scope.md § PT-008](personal-tax-scope.md#pt-008) |
 | PT-009 | Hashed File-First V1; No Credential Scraping/OTP/Browser Automation; AA Future | [personal-tax-scope.md § PT-009](personal-tax-scope.md#pt-009) |
 | PT-010 | Progressive Source Readiness Model | [personal-tax-scope.md § PT-010](personal-tax-scope.md#pt-010) |

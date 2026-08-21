@@ -23,7 +23,7 @@ The following is the complete contract for the entities in this RFC. A future im
 
 - **Fields:** `tenant_id`, immutable `pan`, `tenant_type`, `base_currency`, `status`, creation and actor metadata.
 - **Primary key:** `tenant_id`.
-- **Unique keys:** `(tenant_id, pan)` is a required matching key for tenant identity. A PAN may not be rebound to another tenant without an explicitly reviewed identity policy.
+- **Unique keys:** `pan` is globally unique across PAN tenants, and `(tenant_id, pan)` is the required matching key for TaxCase identity. Duplicate tenant creation for an existing PAN fails; this prevents one taxpayer from being split across tenants and returns.
 - **Foreign keys:** none.
 - **Immutability:** PAN and tenant identity are immutable after creation; lifecycle status changes are audited.
 - **Gate:** only a valid individual/PAN tenant can own personal-tax BookSets or TaxCases.
@@ -35,15 +35,15 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Unique keys:** tenant-local BookSet identity; any GSTIN uniqueness must include the owning tenant and follow the reviewed canonical contract.
 - **Foreign keys:** `(tenant_id)` to `tenants`; `(tenant_id, book_set_id, default_account_id)` to `accounts` when a default account is present.
 - **Immutability:** tenant ownership and BookSet type are immutable; status changes are audited.
-- **Gates:** at most one active personal BookSet per tenant; a default account must belong to the same tenant and BookSet; archived or suspended BookSets cannot receive new postings or transfer legs.
+- **Gates:** exactly one personal BookSet exists for a PAN tenant across its lifetime, including when that row is archived; a replacement or migration preserves the existing personal BookSet identity and cannot create a second one. A default account must belong to the same tenant and BookSet; archived or suspended BookSets cannot receive new postings or transfer legs.
 
 ### 2.3 `accounts`
 
-- **Fields:** `tenant_id`, `book_set_id`, `account_id`, name, account type, nullable `parent_account_id`, lifecycle status, creation metadata.
+- **Fields:** `tenant_id`, `book_set_id`, `account_id`, immutable `account_code`, name, account type, nullable `parent_account_id`, lifecycle status, creation metadata.
 - **Primary key:** `(tenant_id, book_set_id, account_id)`.
-- **Unique keys:** account identity within its BookSet.
+- **Unique keys:** immutable `(tenant_id, account_code)` across the tenant and account identity within its BookSet. An account code is never reused, including after archival.
 - **Foreign keys:** `(tenant_id, book_set_id)` to `book_sets`; nullable `(tenant_id, book_set_id, parent_account_id)` to `accounts` for the hierarchy.
-- **Immutability:** identity, ownership, and parent lineage are immutable once referenced by a posting; archival is append-only/audited.
+- **Immutability:** identity, ownership, account code, and parent lineage are immutable once referenced by a posting; archival is append-only/audited and never releases the code.
 - **Gates:** parent and default ownership are same-BookSet relationships; a parent from another tenant or BookSet is rejected.
 
 ### 2.4 `journal_entries`
@@ -118,8 +118,8 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Primary key:** `(tenant_id, tax_case_id, book_set_id)`.
 - **Unique keys:** one row per TaxCase and BookSet.
 - **Foreign keys:** TaxCase and BookSet composite keys in the same tenant.
-- **Immutability:** append-only membership snapshot; no in-place replacement or deletion.
-- **Gate:** this normalized relation is the one authoritative source for TaxCase BookSet membership. Adding, removing, or changing an applicable BookSet makes the existing case stale; a successor receives a new snapshot. No duplicate authoritative list is stored in JSON or arbitrary text.
+- **Immutability:** one membership snapshot is sealed at TaxCase creation; after creation, no insert, update, or delete is allowed on the old case's membership rows.
+- **Gate:** this normalized relation is the one authoritative source for TaxCase BookSet membership. A membership change marks the old case `STALE` and creates a successor with a new complete set in the same controlled workflow. No duplicate authoritative list is stored in JSON or arbitrary text.
 
 ### 2.12 `external_sources`
 
@@ -202,7 +202,7 @@ These gates are acceptance requirements, not implementation claims.
 1. **Identity and scope:** reject a TaxCase whose `(tenant_id, pan)` does not match the tenant key; reject every cross-tenant or cross-BookSet FK; reject a same-tenant mutation when BookSet scope is ambiguous.
 2. **Actual-postings balance:** within one transaction, create the journal and postings, verify debit and credit totals from the actual postings, verify tenant/BookSet/journal/account composite FKs, and post only on equality and valid currency. Caller totals, labels, or derived summaries cannot pass this gate.
 3. **Transfer atomicity:** create both transfer legs in one transaction; require both journals to be posted and actual postings to agree with the same amount, currency, purpose, and evidence; roll back all rows if either leg fails.
-4. **TaxCase membership:** enumerate applicable BookSets and sources into normalized rows atomically. A changed enumeration stales the old case and blocks validation/export until a new immutable case exists.
+4. **TaxCase membership:** enumerate the complete applicable BookSet set into one sealed normalized snapshot at creation. No membership insert, update, or delete is permitted on the old case afterward; a changed set marks the old case stale and creates a successor with a new complete snapshot before validation/export.
 5. **Authority compatibility:** derive Act from normalized period; bind a compatible rule snapshot and four independent hashed/effective-dated official artifacts. Any mismatch or missing binding fails closed.
 6. **Form eligibility:** evaluate and freeze official form predicates and taxpayer facts before `ready`, validation, or export. Unknown eligibility is `REVIEW/BLOCK`.
 7. **Correction sequence:** require verified `correction_metadata` for every filing sequence greater than one before any ready, validation, or export transition.
@@ -212,7 +212,10 @@ These gates are acceptance requirements, not implementation claims.
 ## 4. Fail-closed acceptance scenarios
 
 - A TaxCase with a mismatched PAN, period-incompatible Act, rule snapshot, or official artifact binding is rejected.
+- Creating a second PAN tenant with an existing PAN is rejected; the existing tenant and its `(tenant_id, pan)` TaxCase bindings remain the sole taxpayer identity.
+- Creating a second personal BookSet, including after archiving or during replacement/migration, is rejected; replacement preserves the original BookSet identity.
 - A TaxCase whose normalized membership omits an applicable BookSet, or whose required source catalog is empty, unknown, or stale, cannot become ready or export.
+- A membership change cannot mutate the old TaxCase snapshot; it marks that case stale and creates a successor with the complete new set.
 - A derived AIS/26AS/Form16A record pointing to an artifact in another tenant is rejected.
 - An account parent or BookSet default account from another BookSet is rejected.
 - A journal whose actual postings do not balance, use mixed currencies, or cross tenant/BookSet/journal scope remains unposted.
@@ -228,20 +231,20 @@ No proof is claimed here. These obligations must be directed, run, and evidenced
 ### SQLite
 
 - Demonstrate composite primary/unique/foreign-key enforcement with foreign keys enabled through the selected runtime boundary.
-- Prove the one-personal-BookSet rule, same-BookSet parent/default ownership, actual-postings balance gate, immutable membership, and atomic two-leg transfer behavior under SQLite transaction and concurrency semantics.
+- Prove exactly one personal BookSet across the tenant lifetime, including archived rows and replacement/migration identity preservation; prove same-BookSet parent/default ownership, the never-reused tenant account code, actual-postings balance gate, sealed membership, and atomic two-leg transfer behavior under SQLite transaction and concurrency semantics.
 - Prove that hash-indexed re-imports remain visible and that no cross-tenant derived evidence or portal status without evidence can be persisted.
 - Prove date, currency, non-zero amount, append-only, and rollback behavior with the chosen SQLite versions and storage settings.
 
 ### PostgreSQL
 
-- Demonstrate equivalent composite key/FK, partial uniqueness, same-BookSet hierarchy/default ownership, and immutable relationship behavior.
+- Demonstrate equivalent composite key/FK, global PAN uniqueness, lifetime personal-BookSet uniqueness including archived rows, never-reused tenant account codes, same-BookSet hierarchy/default ownership, and immutable relationship behavior.
 - Prove actual-postings balance and paired transfer atomicity under concurrent transactions, including constraint timing and rollback behavior.
 - Prove compatibility checks for period, Act, rule snapshot, and all four independently hashed/effective-dated artifact bindings.
 - Prove tenant isolation, evidence binding, status-label enforcement, and migration/upgrade behavior on the selected PostgreSQL versions.
 
 ### MySQL
 
-- Demonstrate equivalent semantics on the selected InnoDB and MySQL versions, including composite keys/FKs, one-personal-BookSet enforcement, and supported constraint timing.
+- Demonstrate equivalent semantics on the selected InnoDB and MySQL versions, including composite keys/FKs, global PAN uniqueness, exactly one lifetime personal BookSet including archived rows, never-reused tenant account codes, and supported constraint timing.
 - Prove actual-postings balance, paired transfer atomicity, rollback, and concurrency behavior without relying on unsupported or ignored constraints.
 - Prove same-BookSet parent/default ownership, period/Act/artifact compatibility, append-only evidence and corrections, and tenant isolation.
 - Prove that version gates are explicit where MySQL behavior differs, and that no fallback silently weakens a required invariant.

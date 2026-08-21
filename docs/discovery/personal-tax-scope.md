@@ -68,9 +68,9 @@ PT-001 and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
 **Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** One individual/PAN tenant may contain one personal BookSet and one or more sole-proprietorship BookSets. Companies stay in separate tenants.
+**Decision:** One individual/PAN tenant may contain exactly one personal BookSet for its entire lifetime and one or more sole-proprietorship BookSets. Companies stay in separate tenants.
 
-**Boundary:** The PAN identifies the individual taxpayer. A business name, GSTIN, bank account, or source label does not create a second personal return. Each BookSet keeps its own ledger and scope.
+**Boundary:** The PAN identifies the individual taxpayer and is globally unique across PAN tenants. Duplicate tenant creation for the same PAN fails, so one taxpayer cannot be split across tenants or returns. A business name, GSTIN, bank account, or source label does not create a second personal return. Each BookSet keeps its own ledger and scope.
 
 **Why:** Sole-proprietorship income is part of the proprietor's individual return. Separate personal and proprietorship returns would create an omission path.
 
@@ -102,7 +102,7 @@ Mandatory safeguards before A is implementation-ready:
 - Thread BookSet-level actor/resource authorization context from day one; a CA granted one business BookSet cannot read the personal BookSet by default.
 - Every BookSet-owned row carries `tenant_id` plus `book_set_id`, and each BookSet independently balances.
 - BookSet-scoped mutations fail with `AMBIGUOUS_BOOKSET` when not explicit; tenant-wide status/TaxCase aggregation is read-only and separately authorized.
-- The TaxCase source/BookSet catalog cannot be empty or `UNKNOWN`; a membership change makes the immutable case `STALE` and blocks it.
+- The TaxCase source/BookSet catalog cannot be empty or `UNKNOWN`; exactly one personal BookSet exists across the tenant lifetime, including archived state, and replacement/migration preserves that identity.
 - Gate-0 scenarios must prove personal-paid business expense, drawing/loan transfer, new BookSet mid-year staleness, and business-only CA access cannot read personal data.
 
 Reversal trigger: if Gate 0 cannot prove fail-closed BookSet authorization/isolation, or migration would require weakening canonical ledger invariants, reopen B with an explicit PAN registry and read-only snapshot authority.
@@ -120,6 +120,8 @@ It changes no other PT decision, legal rule, source, or index file.
 **Boundary:** Accounts, postings, invoices, bills, payments, assets, subledgers, evidence links, and reconciliations are BookSet-owned. Cross-BookSet views are explicit aggregations, not hidden shared balances.
 
 All existing tenant-wide identifier uniqueness remains in force until separately revised. Adding BookSets does not silently narrow uniqueness to a BookSet.
+
+Account codes remain tenant-wide unique, immutable, and never reused, while account ownership, parent references, and BookSet defaults remain bound to the same BookSet.
 
 **Failure mode:** A personal record is treated as business data because a report merged two books without an explicit scope.
 
@@ -168,7 +170,7 @@ No static tax rule is embedded here. A subledger can preserve facts and evidence
 
 **Control:** TaxCase creation stores the immutable taxpayer, period, filing sequence, BookSet set, external-source set, and snapshot bindings. A missing applicable source stays visible and blocks the affected action.
 
-The TaxCase membership snapshot never mutates. Before `validate`, `export`, `submit`, or `finalize`, applicability is deterministically re-enumerated from current taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. If an applicable BookSet or required external source was added, removed, or changed since the snapshot, the TaxCase is marked `STALE` and the affected action is blocked until an immutable successor or rebuilt case captures the new membership. The old snapshot remains unchanged.
+The TaxCase membership snapshot is one sealed normalized set created at case creation. No insert, update, or delete is allowed on the old case's membership after creation. Before `validate`, `export`, `submit`, or `finalize`, applicability is deterministically checked against current taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. If an applicable BookSet or required external source was added, removed, or changed since the snapshot, the old TaxCase is marked `STALE` and a successor with a new complete membership set is created; the old snapshot remains unchanged and all affected actions stay blocked until that successor is ready.
 
 **Open choice:** Exact TaxCase persistence and inclusion-query shape require the canonical contract migration.
 
@@ -188,23 +190,23 @@ There is no generic form priority order, threshold shortcut, business-assets sho
 **Control:** Selection records the evaluated facts, official predicate identifiers, source snapshot, and unresolved branches. Unresolved eligibility returns REVIEW/BLOCK.
 
 <a id="pt-007"></a>
-### PT-007: Bind five immutable TaxCase facts
+### PT-007: Bind period, trigger, and four independent official bindings
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** Every TaxCase binds all five facts atomically and immutably:
+**Decision:** Every TaxCase binds the period and trigger facts plus four independent official bindings atomically and immutably:
 
-1. governing Act;
+1. governing Act determined from the normalized income period;
 2. period;
-3. trigger;
-4. official schema or validator release;
-5. effective-dated rule snapshot.
+3. filing trigger;
+4. effective-dated compatible rule snapshot;
+5. four independent official bindings: schema, validation rules, utility, and instructions. Each binding is immutable, source-bound, hashed, effective-dated, and compatible with the period, Act, and selected form.
 
 The FY 2025-26 case binds the Income-tax Act 1961 and AY 2026-27 context. The Tax Year 2026-27 case binds the Income-tax Act 2025 from the 1 Apr 2026 boundary. The binding is exact; a rule from one period cannot leak into another.
 
-**Failure mode:** A form validates under a schema while the TaxCase silently uses a different Act or rule release.
+**Failure mode:** A form validates under one release while the TaxCase silently uses a different Act, rule, validator, utility, or instruction release.
 
-**Control:** Any missing, stale, conflicting, or unapproved binding returns REVIEW/BLOCK. Schema validation alone never marks a TaxCase legally correct.
+**Control:** All four official bindings and the compatible rule snapshot are mandatory before validation or export. Any missing, stale, conflicting, unapproved, source-unbound, or incompatible binding returns REVIEW/BLOCK. Schema validation alone never marks a TaxCase legally correct.
 
 <a id="pt-008"></a>
 ### PT-008: Preserve AIS, TIS, and 26AS artifacts
@@ -346,6 +348,7 @@ All sources are evidence inputs, not automatic postings. No source is exhaustive
 | Bank CSV/PDF | User-exported statement | account identity, source period, file hash, parser release | transactions and balances matched to the BookSet bank subledger; unresolved matches remain visible |
 | AIS JSON/CSV/PDF, including TIS data | Raw AIS artifact and parser output | taxpayer identity, source period, file hash, parser release | reported categories, securities/SFT information, and TIS categories reconciled without overwrite |
 | 26AS PDF/text/spreadsheet | Raw 26AS artifact | taxpayer identity, source period, file hash, parser release | TDS/TCS evidence reconciled to withholding and collection records |
+| Form 16A | Raw non-salary TDS certificate/artifact | taxpayer identity, deductor identity, relevant period, content hash, parser release | non-salary TDS evidence reconciled to the applicable TDS records; it never changes portal status |
 | Broker ledgers/contract notes | User-exported broker artifacts | account identity, instrument identity, source period, file hash | transactions and tax-lot facts reconciled to investment subledger |
 | CAS/e-CAS | Depository or broker statement | account identity, statement period, file hash | holdings and transaction evidence reconciled to investment records |
 | Property/rent/loan | User-supplied agreements, statements, and schedules | property or loan identity, relevant period, file hash | ownership, rent, financing, and payment facts linked to property or loan subledger |
