@@ -1,6 +1,6 @@
 # Personal Tax Discovery Packet
 
-**Status banner:** PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
+**Status banner:** PT-001, PT-002, PT-003, PT-004, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 remain **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This is discovery documentation only. It is not implementation authority.
 
 Sudhanshu's explicit owner approvals of PT-001, PT-002, PT-003, and PT-009 are recorded, but architect review, the documented Gate-0/readiness safeguards, and a coordinated canonical migration remain required. No implementation follows from any owner approval alone.
 
@@ -61,7 +61,7 @@ Existing ledger invariants remain in force unless a separately approved contract
 
 ## 4. Personal Tax decisions PT-001 through PT-016
 
-PT-001, PT-002, PT-003, and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
+PT-001, PT-002, PT-003, PT-004, and PT-009 have the exact status **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 each have the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The entries are discovery constraints, not implementation authority.
 
 <a id="pt-001"></a>
 ### PT-001: Individual/PAN tenant and BookSets
@@ -168,17 +168,24 @@ Account codes remain tenant-wide unique, immutable, and never reused, while acco
 <a id="pt-004"></a>
 ### PT-004: Personal bank, investment, property, rent, and loan subledgers
 
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+**Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** The personal BookSet supports bank, investment and tax-lot, property and rent, and loan subledgers with provenance and reconciliation.
+**Approved Decision:** The personal BookSet supports bank, investment and tax-lot, property and rent, and loan subledgers with structured factual records and reconciliation, preserving provenance and real-world facts. Tax treatment is derived later from versioned rule snapshots, not embedded in subledger structure.
 
-**Boundary:** Holding rules are asset-class and effective-date driven. Acquisition, disposal, income, financing, ownership, and evidence records remain distinct. Interest treatment follows the use of borrowed funds and the applicable rule snapshot, never the lender label.
+**Boundary:** Personal subledgers preserve structured factual records for real-world accounting facts:
+- **Bank:** account nature, ownership, and reconciliation/evidence provenance
+- **Investment:** instrument type, acquisition/disposal lots and dates, quantity/cost, broker/demat/source evidence
+- **Property:** identity, ownership, and effective-dated actual use (self-used, rented, or business-used; not treated as immutable lifetime category)
+- **Loan:** lender, secured/unsecured fact, stated purpose, linked collateral/property, rate/schedule, evidence
+- **Rent:** property/party linkage, agreement/effective dates, gross receipts/payments and source evidence
 
-No static tax rule is embedded here. A subledger can preserve facts and evidence without asserting deductibility or tax treatment.
+Holding rules are asset-class and effective-date driven. Acquisition, disposal, income, financing, ownership, and evidence records remain distinct. Interest treatment follows the use of borrowed funds and the applicable rule snapshot, never the lender label.
 
-**Failure mode:** A loan product name is used as a shortcut for tax treatment, or a broker statement overwrites the investment ledger.
+No static tax rule is embedded here. Subledgers preserve facts and evidence without asserting deductibility, exemption, section eligibility, long-term/short-term, or allowed/disallowed status. Tax treatment is derived for the relevant tax year from preserved facts plus versioned applicable rule snapshots. If required facts or evidence are missing, readiness fails closed or remains unresolved; the system must not guess.
 
-**Open choice:** Asset-class schema, evidence sufficiency, and reconciliation fixtures require official rule/schema research and owner approval.
+**Failure mode:** A loan product name is used as a shortcut for tax treatment, a broker statement overwrites the investment ledger, property use is treated as immutable, or tax classification is embedded in the subledger structure instead of derived from rule snapshots.
+
+**Implementation boundary:** Schema granularity is a product/data-model choice; the government does not mandate this hierarchy. Keep user-extensible labels/tags possible without allowing them to override canonical factual fields or statutory classification. Preserve effective-dated property/use and investment-lot facts to avoid silent historical overwrite. Preserve prior PT-001, PT-002, PT-003, and PT-009 semantics and all existing evidence/human-confirmation boundaries.
 
 <a id="pt-005"></a>
 ### PT-005: One non-posting TaxCase per taxpayer, period, and filing sequence

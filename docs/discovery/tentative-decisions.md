@@ -735,7 +735,7 @@ are complete.
 
 ## Personal Tax Decisions (PT-001 through PT-016)
 
-**Personal Tax status:** PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
+**Personal Tax status:** PT-001, PT-002, PT-003, PT-004, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. This index is documentation-only and authorizes no implementation.
 
 All Personal Tax decisions are documented in the canonical discovery packet: [Personal Tax Discovery Packet](personal-tax-scope.md). Cross-link index:
 
@@ -743,8 +743,8 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 |-------|-------|------|
 | PT-001 | Individual/PAN Tenant Model with Multiple BookSets | [personal-tax-scope.md § PT-001](personal-tax-scope.md#pt-001) |
 | PT-002 | BookSet-Owned Records with Tenant_ID + Book_Set_ID | [personal-tax-scope.md § PT-002](personal-tax-scope.md#pt-002) |
-| PT-003 | Atomic Same-Tenant Inter-BookSet Transfer with Balanced Linked Legs |  OWNER-APPROVED; NOT ARCHITECT-REVIEWED | [personal-tax-scope.md § PT-003](personal-tax-scope.md#pt-003) |
-| PT-004 | Personal Bank, Investment/Tax-Lot, Property/Rent/Loan Subledgers | [personal-tax-scope.md § PT-004](personal-tax-scope.md#pt-004) |
+| PT-003 | Atomic Same-Tenant Inter-BookSet Transfer with Balanced Linked Legs | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | [personal-tax-scope.md § PT-003](personal-tax-scope.md#pt-003) |
+| PT-004 | Personal Bank, Investment/Tax-Lot, Property/Rent/Loan Subledgers | OWNER-APPROVED; NOT ARCHITECT-REVIEWED | [personal-tax-scope.md § PT-004](personal-tax-scope.md#pt-004) |
 | PT-005 | ONE TaxCase/Return per Taxpayer/Year Covers ALL Applicable BookSets | [personal-tax-scope.md § PT-005](personal-tax-scope.md#pt-005) |
 | PT-006 | Form Selection is Year-Specific and Fact-Driven | [personal-tax-scope.md § PT-006](personal-tax-scope.md#pt-006) |
 | PT-007 | Bind Governing Act, Period, Trigger, and Four Official Bindings | [personal-tax-scope.md § PT-007](personal-tax-scope.md#pt-007) |
@@ -758,7 +758,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 | PT-015 | No Product Telemetry; Protected Evidence/Secrets; TLS; Redacted Logs; No False Compliance Claims | [personal-tax-scope.md § PT-015](personal-tax-scope.md#pt-015) |
 | PT-016 | Immutable Original + Linked Correction/Revised/Rectification Cases | [personal-tax-scope.md § PT-016](personal-tax-scope.md#pt-016) |
 
-**Status**: PT-001, PT-002, PT-003, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-004 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
+**Status**: PT-001, PT-002, PT-003, PT-004, and PT-009 are **OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. PT-005 through PT-008 and PT-010 through PT-016 retain the exact status **TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. Canonical definitions are in [Personal Tax Discovery Packet](personal-tax-scope.md); no duplicate prose here. See that packet's [§ 4](personal-tax-scope.md#4-personal-tax-decisions-pt-001-through-pt-016) for detailed rationale, alternatives, risks, and reversal paths per decision.
 
 ---
 
@@ -772,7 +772,7 @@ Entries T-001 through T-011 extend and clarify settled decisions from [decisions
 - **T-004** extends [Multi-currency](decisions.md#confirmed) and [Exchange-rate source](decisions.md#confirmed) with original currency and immutable purpose-specific snapshots; missing statutory evidence affects only its compliance lane.
 - **T-005** defines V1 no-registration and regular GST coverage, domestic/interstate/export, GST credit reconciliation, and e-invoice/e-way upload files. Direct transports remain research-gated; composition, specialized regimes, and inventory remain deferred.
 - **T-006** (new): Partial completion is a distinct nonzero signal with per-item outcomes; numeric code remains internal/TBD (not exit code 9 without separate decision). Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation).
-- **T-007** (new): Full individual income-tax scope for sole proprietor owner, accounting-separated from business/GST books. Detailed personal-tax decisions (PT-001 through PT-016) remain separately gated. Advance-tax behavior is NOT approved by this scope decision; preserve as tentative personal-tax research detail.
+- **T-007** (new): Full individual income-tax scope for sole proprietor owner, accounting-separated from business/GST books. Detailed personal-tax decisions (PT-001 through PT-016 with PT-004 now owner-approved) remain separately gated. Advance-tax behavior is NOT approved by this scope decision; preserve as tentative personal-tax research detail.
 - **T-008** (new): Allow controlled user corrections/deletions after FY/report/audit/filing via preview/reason/confirmation/unlock. Use reversal/replacement, version or tombstone lineage. Prior artifacts remain immutable. Affected derived reports/filing/audit cases marked STALE/DRIFTED. No destructive overwrite or automatic government action. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
 - **T-009** (migrated from statutory-workflow-contracts.md examples): Always allow text and CSV operator exports of prepared/validated data; do not invent arbitrary JSON as statutory artifact; government upload only after official current format/utility/schema/portal verification. Form 140/141 export is research-gated and deferred. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Preserve original filing, ARN/status/rejection/notices/evidence and explicit correction lineage; no unverified automatic revised/amended/defective-return submission. Return-amendment adapters are research-gated and deferred. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
