@@ -339,21 +339,21 @@ Owner-approved. V1 scope is locked to regular-GST small-business profile (annual
 
 **Question**: What numeric exit code should agent-bahi use to signal partial-success batches (some items succeeded, some did not)?
 
-**Recommended Numeric Proposal**:
+**Recommended Signal Strategy**:
 
-**Exit Code Convention** (numeric recommendation only; implementation contract in architecture-decisions.md):
+**Exit Code Principle** (behavior; numeric code remains internal):
 - **Exit code 0**: Reserved for "all selected items succeeded" (canonical in CLI-004/CLI-006).
-- **Exit code 9** (recommended if unused): Proposed for "at least one selected item succeeded AND at least one selected item was skipped, blocked, or failed" (partial success signal).
-- **Non-zero codes 1-8, 10+**: Total failure or error conditions (per CLI-004; canonical in architecture-decisions.md).
+- **A distinct nonzero code**: Used when at least one selected item succeeded AND at least one selected item was skipped, blocked, or failed (partial success signal). Exact numeric code is internal and TBD.
+- **Other non-zero codes**: Total failure or error conditions (per CLI-004; canonical in architecture-decisions.md).
 - **Principle**: Never exit 0 when partial failure occurs. JSON outcomes array must accompany non-zero exits to enable caller to distinguish recoverable (partial success) from terminal failures (no success).
 
-**Recommended JSON Schema** (structure proposal; implementation contract in CLI-006):
+**JSON Outcomes Schema** (structure; implementation contract in CLI-006):
 - Per-item outcomes array listing status (success, failure, blocked, skipped) per item.
 - Failure/blocked/skipped reasons included per item.
 - Success items include posted reference/digest if applicable.
 
-**Rationale for Numeric Choice**:
-Exit code 9 is typically unused in shell convention; using it avoids collision with settled codes (CLI-004). It is a distinct, documentable signal that can be checked without parsing output. Combined with per-item JSON outcomes, it enables callers to distinguish recoverable partial success (retry failed items) from total failure (no retry). This aligns with industry practice (rsync 23 for partial, kubectl apply non-zero on any failure with detailed outcomes).
+**Rationale**:
+Partial batch completion requires a distinct nonzero signal separate from total failure, allowing callers to distinguish recoverable partial success (retry failed items) from terminal failure (no retry). Exact numeric code selection is not determined by this decision and requires separate technical choice or architecture-driven assignment.
 
 **Reversal Path**:
 Owner may select a different unused numeric code (10, 11, or other) instead of 9. The principle (non-zero for any partial success, JSON outcomes per item) remains stable. Code choice is cosmetic; behavior definition is in architecture-decisions.md CLI-004/CLI-006.
@@ -363,93 +363,101 @@ Owner may select a different unused numeric code (10, 11, or other) instead of 9
 - [CLI-006: Batch atomicity declared per operation](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation) (canonical; this entry does not override).
 
 **Owner Review Status**:
-Owner-approved. Exit code 9 is adopted as the numeric signal for partial-success batches (at least one item succeeded AND at least one item was skipped, blocked, or failed). The actual implementation contract (when to exit 0, when to exit non-zero, atomicity declaration, JSON schema details) is canonical in [architecture-decisions.md § CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [§ CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those specifications.
+Owner-approved. Partial batch completion is a distinct nonzero result with per-item outcomes; the exact numeric code remains internal and TBD. Numeric code selection is not settled by this decision and does not promote exit code 9 without a separate technical decision. The implementation contract (when to exit 0, when to exit non-zero, atomicity declaration, JSON schema details) is canonical in [architecture-decisions.md § CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [§ CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those specifications.
 
 ---
 
 <a id="t-007"></a>
-### Entry T-007: Advance-Tax Estimated-Amount Input—Manual Entry or Auto-Projection
+### Entry T-007: Full Individual Income-Tax Scope—Sole Proprietor, Accounting-Separated from Business/GST
 
 **Status**: OWNER-APPROVED
 
-**Question**: How should agent-bahi handle advance-tax (s404/408) estimated-amount input? Should it auto-calculate from FY income projection, or require manual operator entry?
+**Question**: What is the scope of personal income-tax support for the sole-proprietor owner?
 
-**Recommended Working Default**:
-- Advance-tax deadlines (15 Jun, 15 Sep, 15 Dec, 15 Mar per s408) are calculated from s408 rule snapshot (external research gate).
-- Advance-tax **estimated amount is unverified operator/tenant input only**. Captured with provenance (operator identity, timestamp, source reference). The system stores this operator-declared estimate as an input artifact, not a binding computation.
-- **No auto-projection** from partial-year actuals; no heuristic calculation; no tax liability computation or labeling from this input alone.
-- **Annual-tax gates remain**: Official s408 installment thresholds, s87/89 relief eligibility, carryforward loss computation, and final-year reconciliation are gated by [Statutory Workflow Contract § Annual Income-Tax Return Workflow Contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract) and [payroll-compliance-matrix.md](payroll-compliance-matrix.md) rules, not T-007. Any computed installment-due, relief-amount, or tax-liability claim remains REVIEW/BLOCK until official rule snapshot applies.
-- System stores operator estimate input as provenance metadata; reconciliation is operator/CA responsibility at annual return (no automated validation or liability override).
+**Approved Scope**:
+- **Full individual income-tax scope**: Complete personal income-tax computation and filing for the sole proprietor owner (e.g., ITR-3 for self-employed, ITR-4 for business income).
+- **Accounting separation**: Personal income-tax is linked to but accounting-separated from business/GST books. Personal income sources and deductions are tracked and reported independently, with clear boundaries between personal and business financial records.
+- **Linked but distinct**: The sole proprietor's personal assets, income, and deductions are modeled separately within the same tenant as business/GST books, enabling consolidated compliance but preserving accounting clarity.
 
-**Alternatives**:
-- Auto-calculate from YTD actuals and project to FY end (high risk: early-year assumptions drift; reconciliation gaps compound).
-- Mandatory estimate every quarter (high friction; same estimate used repeatedly).
-- No advance-tax tracking (loses early warning of tax liability overage and underpayment penalty risk).
+**Detailed Personal-Tax Decisions**:
+Detailed technical decisions for personal-tax implementation (PT-001 through PT-016) remain separately gated and documented in [Personal Tax Discovery Packet](personal-tax-scope.md). PT-001 (tenant model) and PT-009 (file-first data handling) are owner-approved/not-architect-reviewed; PT-002 through PT-008 and PT-010 through PT-016 remain TENTATIVE - NOT OWNER-APPROVED and require separate review.
 
-**Rationale**:
-Advance-tax estimation is owner/tenant/CA responsibility; capturing operator input with provenance enables audit trail and prevents silent assumptions. The captured estimate is working memory, not a system-computed liability. Annual-tax contract and official s408 rules remain the gates for any installment-due computation. Operator input alone cannot bypass verified-rate, verified-profile, or verified-taxpayer-branch gates.
+**Advance-Tax Behavior—Not Owner-Approved by T-007**:
+The old advance-tax manual-vs-auto default choice is **NOT** owner-approved by this scope decision. Advance-tax behavior (s404/408 estimated-amount input, auto-projection, deadline tracking) remains a separate personal-tax research item and must be preserved as TENTATIVE detail within the personal-tax scope, not claimed as approved by T-007's scope decision.
 
 **Product Impact**:
-- **Audit trail**: Operator estimate captured with provenance; no silent assumptions.
-- **No liability override**: Input is metadata/input provenance; does not compute or assign installment-due or tax liability.
-- **Operator control**: Tenant controls their estimate; system does not overrule with heuristics.
-- **Annual-tax gate preservation**: Verified rates, reliefs, and credits remain subject to statutory-workflow contract, not this input.
+- **Compliance scope**: Full individual income-tax return generation and filing workflows are in scope.
+- **Accounting clarity**: Personal income/deductions/assets remain distinct from business/GST while staying within the same tenant.
+- **Detailed decisions gated**: Specific implementation details (data model, form selection, evidence reconciliation, post-filing corrections) are gated by PT research and separate owner approvals.
 
 **Reversal Path**:
-Owner may add optional auto-projection as an operator convenience (not a requirement). Once introduced, projection assumptions must be versioned and audit-trailed. Early override paths must be clear.
+Owner may adjust the scope or boundaries between personal and business accounting through future revisions. Personal income-tax support is a product-scope decision; detailed PT decisions follow their separate gates.
 
 **Dependencies**:
-- Annual return contract (s408 deadlines).
-- [Advance tax s404/408 OPEN RESEARCH](architecture-decisions.md#open-research--deferred-list).
+- [Personal Tax Discovery Packet](personal-tax-scope.md) for detailed PT-001 through PT-016 decisions.
+- Accounting-separation model (established in [decisions.md](decisions.md#confirmed): tenant independence and multi-entity support).
 
 **Evidence**:
-- Zoho Books: Advance tax requires manual operator entry of estimated amount.
-- Accounting practice: Estimates are owner/tenant responsibility, not auto-derived.
+- Sudhanshu operates three legal entities including sole proprietorship; personal income-tax is a business-critical compliance need.
+- India income-tax requires comprehensive personal returns even when sole proprietor has business income.
 
 **Owner Review Status**:
-Owner-approved. Advance-tax estimated amount is captured as operator/tenant input only, with provenance metadata and no auto-projection or tax-liability computation from input alone. Annual-tax contract and official s408 rules remain the canonical gates for installment-due, relief-amount, and tax-liability claims. Optional auto-projection may be added as a future convenience feature after annual-tax gate review.
+Owner-approved for full individual income-tax scope linked to but accounting-separated from business/GST books. Detailed personal-tax implementation decisions (PT-001 through PT-016) remain separately gated. Advance-tax behavior and other specific method choices are NOT approved by T-007 and remain tentative within personal-tax research.
 
 ---
 
 <a id="t-008"></a>
-### Entry T-008: Retroactive Depreciation Recalculation—Block or Auto-Recalculate
+### Entry T-008: Controlled User Corrections and Deletions—Immutable Artifacts with Reversal Lineage
 
 **Status**: OWNER-APPROVED
 
-**Question**: If an asset's acquisition date, cost, or depreciation rate changes retroactively (after prior-year depreciation has been calculated and posted), should agent-bahi auto-recalculate prior-year depreciation or block the change?
+**Question**: How should agent-bahi handle user corrections and deletions after FY/report/audit/filing?
 
-**Recommended Working Default**:
-- **Block retroactive changes to posted depreciation**. Once a depreciation run is finalized and posted, the asset's acquisition date, cost, and applicable rate are frozen for that period.
-- **Correction path**: Reopen/unlock the affected period, post a correction journal with documented reason (e.g., "asset cost adjustment per vendor invoice"), and re-run depreciation for the corrected period forward.
-- **No silent auto-recalculation** of prior-year depreciation; the audit trail must show the correction.
+**Approved Correction Model**:
+- **Allow controlled user corrections/deletions** even after FY close, report generation, audit, or filing, but **never destructive mutation**.
+- **Locked periods require explicit controls**: Locked periods (per-period or global) require:
+  1. **Preview** showing impact (what will change, affected reports/filings/audit cases).
+  2. **Documented reason** (e.g., "asset cost adjustment per vendor invoice", "expense correction").
+  3. **Explicit human confirmation** (actor, timestamp, cryptographic or deterministic binding to preview).
+  4. **Period unlock** (full or partial unlock preview/commit).
+- **Posted corrections use immutable lineage**: After period unlock:
+  1. **Reversal + replacement**: Original entry remains immutable; a reversal + new corrected entry forms a linked pair.
+  2. **Version/tombstone lineage**: Prior artifacts (original entry, prior versions, related schedules) remain immutable and linked by correction history.
+  3. **No destructive overwrite**: Original data is never deleted; correction lineage traces the full sequence of changes.
+- **Affected derived work becomes STALE/DRIFTED**:
+  1. Any trial balance, report, filing, audit case, or compliance output generated before the correction is marked **STALE** or **DRIFTED**.
+  2. These must be deliberately regenerated, reviewed, and re-closed; no automatic re-filing or amendment submission occurs.
+  3. Operator/CA is responsible for determining whether a new filing/amendment is needed.
 
 **Alternatives**:
-- Auto-recalculate all affected prior years (high risk: silent depreciation adjustments; unclear what was actually filed; audit complexity).
-- Allow unrestricted mutation (loses immutability and correction lineage).
-- Depreciation is read-only forever; no corrections allowed (operationally impractical).
+- Block all corrections after posting (loses audit trail clarity and operationally impractical).
+- Auto-recalculate all affected reports/filings (high risk: silent government amendments, audit trail chaos).
+- Allow destructive mutations (loses audit lineage).
 
 **Rationale**:
-India tax/audit compliance requires immutable depreciation schedules linked to filed returns. Silent auto-recalculation risks hidden tax errors and breaks audit trails. Explicit correction journals document the reason, amount, and timeline of changes, enabling CA and tax authority review. This aligns with [ARC-006: Optimistic concurrency with explicit locks for high-consequence mutations](architecture-decisions.md#arc-006-optimistic-concurrency-with-explicit-locks-for-high-consequence-mutations) for posted documents.
+India tax/audit compliance requires immutable transaction history and explicit correction control. Users must be able to fix errors discovered after filing, but changes must never be silent. Marking derived work STALE ensures nothing is auto-amended or auto-filed; the operator/CA explicitly chooses next steps. This aligns with period-lock and correction-lineage principles in [decisions.md](decisions.md#confirmed).
 
 **Product Impact**:
-- **Audit safety**: Depreciation history remains traceable; no hidden recalculations.
-- **Correction clarity**: Operator intent and timing are explicit.
-- **Compliance readiness**: Depreciation schedule matches filed return without manual reconciliation.
+- **Audit trail clarity**: Full correction history is visible; no mutations are hidden.
+- **Operator control**: User explicitly unlocks periods and confirms each correction.
+- **Compliance safety**: No automatic government amendments; operator decides re-filing need.
+- **Artifact immutability**: Original documents and versions remain for audit review.
 
 **Reversal Path**:
-Owner may add a post-correction reporting feature (e.g., "show depreciation impact if we had known the correct cost earlier"). This is a reporting feature, not a mutation feature, and would not alter posted entries.
+Owner may adjust unlock preview requirements or confirmation mechanisms. The core principle (immutable originals, reversal lineage, STALE derived work) remains stable.
 
 **Dependencies**:
-- [T-003: Fixed-Asset Depreciation](tentative-decisions.md#t-003).
 - Period-lock and correction-lineage model (settled in [decisions.md](decisions.md#confirmed)).
-- Fixed-asset module scope (Phase scope: ARC-012).
+- Fixed-asset module scope and depreciation (T-003); applies to all posted documents.
+- [ARC-006: Optimistic concurrency with explicit locks](architecture-decisions.md#arc-006-optimistic-concurrency-with-explicit-locks-for-high-consequence-mutations).
 
 **Evidence**:
-- Accounting standard (ASC 360, Indian accounting): Depreciation is an accrual once the asset is in service; retroactive rate changes are corrections, not adjustments.
-- Tax audit practice: Examiners scrutinize depreciation-schedule changes and require documented support.
+- Accounting standards (ASC 360, Indian CA): Corrections preserve prior versions and document change rationale.
+- Tax audit practice: Examiners review correction history and expect explicit linkage/lineage.
+- Compliance practice: No automatic amendments to filed returns; CA/operator deliberates each amendment.
 
 **Owner Review Status**:
-Owner-approved. Retroactive depreciation changes are blocked after posting; corrections use explicit period reopen with documented reason and correction journal. Immutable depreciation history remains linked to filed returns without silent recalculations. Owner may add after-the-fact reporting features (e.g., "show depreciation impact if we had known the correct cost earlier") but these remain read-only and do not alter posted entries.
+Owner-approved. Controlled user corrections and deletions are allowed even after FY/report/audit/filing, but never destructive. Locked periods require explicit preview/reason/confirmation/unlock. Posted corrections use reversal/replacement, version or tombstone lineage. Prior artifacts remain immutable. Affected derived reports/filing/audit cases become visibly STALE/DRIFTED and require deliberate regeneration/review/re-close. No automatic government action or amendment submission occurs.
 
 ---
 
@@ -546,18 +554,18 @@ Owner-approved for the policy: preserve original filing, ARN/status/rejection/no
 
 **Question**: What programming language and runtime should agent-bahi use for the initial implementation?
 
-**Exact Meaning and Binding Status**: T-011 is owner-approved as a reversible framework for evaluating the initial language/runtime candidate. It is not approval of TypeScript + Bun implementation, any specific library/tool choice, or Gate0 completion. Gate0 is authorized and will evaluate T-011 through proof spikes (STK-001 through STK-006); those spikes are not approvals but evidence-gathering gates. After Gate0 evidence is available, Sudhanshu approves, changes, or rejects the TypeScript + Bun candidate based on that evidence before Phase 1 begins. No language/runtime implementation is authorized until that decision is made.
+**Exact Meaning and Binding Status**: T-011 establishes TypeScript + Bun as the selected language/runtime for agent-bahi. This is not approval of implementation, any specific library/tool choice, or library preapproval. Gate0 proof spikes (STK-001 through STK-006) are a hard prerequisite for validation of dependency/platform/database/arithmetic correctness and must pass before implementation is authorized. Gate0 remains a mandatory validation gate, not approval of the stack selection; it is not authorized by this docs review. If Gate0 later reveals a blocker, work stops and returns to the owner for override decision.
 
-**Recommended Working Default**:
-- **Primary recommendation**: TypeScript + Bun as a candidate (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver). This does not pre-approve those libraries or any other dependency.
-- **Proof spikes (Gate0) validate all major dependencies before Phase 1 authorization**:
+**Selected Stack and Gate0 Prerequisite**:
+- **Selected**: TypeScript + Bun (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver). This does not pre-approve those libraries or any other dependency.
+- **Proof spikes (Gate0) validate all major dependencies before implementation authorization**:
   - STK-001: Bun runtime, workspaces, lockfile (macOS arm64, Linux x64/arm64).
   - STK-002: ORM (Drizzle/Kysely) on bun-sqlite, PostgreSQL, MySQL; schema equivalence verified.
   - STK-003: SQLite pragmas, WAL, foreign_keys=ON, SQLITE_BUSY handling, network-filesystem rejection.
   - STK-004: Schema migrations and upgrade paths on all three dialects.
   - STK-005: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
   - STK-006: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
-- **No language/runtime implementation authorization** exists in this entry. Gate0 is not authorized by the documentation; it requires the owner's explicit direction after docket review.
+- **Gate0 is a mandatory prerequisite, not authorized by this docs review**. Gate0 must pass on all platforms (macOS arm64, Linux x64/arm64) before implementation is authorized. If Gate0 reveals blockers, work stops and returns to the owner for override decision.
 
 **Alternatives**:
 - Node.js + TypeScript (mature ecosystem; slower cold startup, larger binaries; established JavaScript CI/CD tooling).
@@ -581,10 +589,10 @@ Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selec
 - All ORM, validation, CLI, migration, and build tooling must work identically across Bun, SQLite/PostgreSQL/MySQL, and all platforms.
 - If any spike reveals a blocker (e.g., Bun ORM incompatibility with PostgreSQL, missing decimal precision library), result is documented and owner makes override decision.
 
-**Affected Gate/Phase**:
-- **Before Gate0**: Docket review and Sudhanshu's explicit direction/authorization for reversible proof spikes are required. This direction is not approval of T-011.
-- **Gate0**: STK-001 through STK-006 evaluate T-011 and the candidate dependencies; their evidence is a hard predecessor to Phase 1, but does not itself approve the stack.
-- **Phase 1**: Requires the Gate0 evidence, Sudhanshu's approve/change/reject decision on T-011, a reviewed physical-schema RFC, and applicable Phase 1 decisions. Later-phase tentative IDs block only their affected phase/action.
+**Gate0 Prerequisite**:
+- **Gate0 is mandatory and not authorized by this docs review**: STK-001 through STK-006 must all pass on target platforms (macOS arm64, Linux x64/arm64) to validate dependency/platform/database/arithmetic correctness.
+- **Blocking discovery**: If Gate0 reveals any blocker (e.g., Bun ORM incompatibility, missing decimal precision, platform incompatibility), result is documented and work stops for owner override decision. Proceeding without Gate0 passing is not authorized.
+- **No implementation authorization**: T-011 selection and Gate0 passage are prerequisites, not approvals. Implementation authorization requires separate approval after Gate0 evidence is available and reviewed.
 
 **Dependencies**:
 - Proof spike results (STK-001 through STK-006) are prerequisites, not recommendations.
@@ -598,7 +606,7 @@ Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selec
 - TypeScript: Industry standard for type-safe JavaScript; proven in countless CLI and backend projects.
 
 **Owner Review Status**:
-Owner-approved as a reversible evaluation framework. Gate0 proof spikes (STK-001 through STK-006) are authorized and will produce evidence for the TypeScript + Bun candidate. Those spikes are not approvals but evidence-gathering gates. After evidence is available, Sudhanshu approves, changes, or rejects the TypeScript + Bun candidate before Phase 1 begins. No language/runtime implementation is authorized until that post-Gate0 decision is made and the other Phase 1 readiness conditions are satisfied.
+Owner-approved. TypeScript + Bun is selected as the language and runtime for agent-bahi. Gate0 proof spikes (STK-001 through STK-006) are a mandatory prerequisite for validating dependency/platform/database/arithmetic correctness; Gate0 is not authorized by this docs review and must pass before implementation. If Gate0 reveals blockers, work stops and returns to owner for override decision. No implementation is authorized until Gate0 passes and implementation readiness conditions are satisfied.
 
 ---
 
@@ -640,12 +648,12 @@ Entries T-001 through T-011 extend and clarify settled decisions from [decisions
 - **T-003** is the first detailed entry for [Fixed assets](decisions.md#confirmed) (RECOMMENDED in ARC-012).
 - **T-004** is the first detailed implementation entry for [Multi-currency](decisions.md#confirmed) and [Exchange-rate source](decisions.md#confirmed) (OPEN RESEARCH).
 - **T-005** clarifies V1 scope in support of settled [Engine ownership](decisions.md#confirmed), [Automation policy](decisions.md#confirmed), and [Multi-GSTIN tenant modeling](decisions.md#confirmed). E-invoice and e-way-bill adapters (CMP-006, CMP-007) are explicitly **RESEARCH-GATED and DEFERRED**, not V1-authorized; see [architecture-decisions.md](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [architecture-decisions.md](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for research gates.
-- **T-006** (new): Proposes exit code 9 as numeric signal for partial-success batches. Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those.
-- **T-007** (migrated from statutory-workflow-contracts.md examples): Advance-tax estimated-amount input. Tentative default: capture operator input with provenance; no auto-projection; no tax liability computation or gate bypass from input alone. Annual-tax contract gates remain canonical. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction via period reopen and correction journal. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
-- **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 statutory export—research-gated, fail-closed. Tentative default: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
-- **T-010** (migrated from statutory-workflow-contracts.md examples): Post-filing return case/evidence/correction. Tentative default: preserve case details and correction lineage; no return-amendment or defective-return submission adapter until s263(5)-(7) branches and official procedures researched and verified. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-011** (new): Initial language and runtime choice—TypeScript + Bun recommended, contingent on Gate0 proof spikes (STK-001 through STK-006) passing on all target platforms (macOS arm64, Linux x64/arm64). Alternatives: Node.js + TypeScript or Rust. Reversible before Phase 1 begins; hard dependency on proof-spike validation.
+- **T-006** (new): Partial completion is a distinct nonzero signal with per-item outcomes; numeric code remains internal/TBD (not exit code 9 without separate decision). Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation).
+- **T-007** (new): Full individual income-tax scope for sole proprietor owner, accounting-separated from business/GST books. Detailed personal-tax decisions (PT-001 through PT-016) remain separately gated. Advance-tax behavior is NOT approved by this scope decision; preserve as tentative personal-tax research detail.
+- **T-008** (new): Allow controlled user corrections/deletions after FY/report/audit/filing via preview/reason/confirmation/unlock. Use reversal/replacement, version or tombstone lineage. Prior artifacts remain immutable. Affected derived reports/filing/audit cases marked STALE/DRIFTED. No destructive overwrite or automatic government action. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
+- **T-009** (migrated from statutory-workflow-contracts.md examples): Always allow text and CSV operator exports of prepared/validated data; do not invent arbitrary JSON as statutory artifact; government upload only after official current format/utility/schema/portal verification. Form 140/141 export is research-gated and deferred. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
+- **T-010** (migrated from statutory-workflow-contracts.md examples): Preserve original filing, ARN/status/rejection/notices/evidence and explicit correction lineage; no unverified automatic revised/amended/defective-return submission. Return-amendment adapters are research-gated and deferred. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
+- **T-011** (new): TypeScript + Bun selected. Gate0 proof spikes (STK-001 through STK-006) are mandatory prerequisite (not authorized by docs review) to validate platform/database/arithmetic correctness on all target platforms (macOS arm64, Linux x64/arm64). If Gate0 reveals blockers, work stops for owner override decision. No implementation authorized until Gate0 passes.
 
 **None of these entries override settled decisions.** They provide implementation detail and working defaults for decisions that remain open or recommend future owner approval. Filing-specific settled decisions always override T-001.
 
