@@ -103,61 +103,82 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.10 `authority_packs`
 
-- **Fields:** `pack_id`, governing Act, applicable period, filing trigger, content hash, official source reference, retrieval metadata, effective dates, compatibility metadata.
+- **Fields:** `pack_id`, governing Act, applicable period, filing trigger, content hash (computed over ordered component role+artifact hashes), official source reference, retrieval metadata, effective dates, compatibility metadata.
 - **Primary key:** `pack_id`.
 - **Unique keys:** `(Act, period, filing_trigger, content_hash)`.
-- **Foreign keys:** period to `income_periods`.
+- **Foreign keys:** period to `income_periods`; four component bindings through `authority_pack_artifact_bindings`.
 - **Immutability:** pack ID, hash, source, and effective interval are immutable. A new official release creates a new row.
-- **Contents:** An AuthorityPack is an immutable bundle containing applicable period and filing trigger, governing Act, official schema, validation rules, utility reference and version, instructions and guidance, provenance and source evidence, effective dates and compatibility metadata.
-- **Gate:** every FilingSnapshot must bind exactly one compatible AuthorityPack by ID and hash. Missing or incompatible pack returns REVIEW/BLOCK.
+- **Contents:** An AuthorityPack is an immutable bundle containing applicable period and filing trigger, governing Act, and exactly four independently hashed effective-dated component bindings (schema, validation rules, utility reference/version, instructions). All four components are required before pack is ready.
+- **Gate:** every FilingSnapshot must bind exactly one compatible AuthorityPack by ID and hash. Missing or incompatible pack returns REVIEW/BLOCK. Pack is ready/sealed only when all four required artifact components are bound via `authority_pack_artifact_bindings`.
+
+### 2.10a `authority_pack_artifact_bindings`
+
+- **Fields:** `pack_id`, `artifact_id`, component_role (enum: SCHEMA, VALIDATION_RULES, UTILITY_REFERENCE, INSTRUCTIONS), artifact hash, provenance linkage.
+- **Primary key:** `(pack_id, component_role)`.
+- **Unique keys:** exactly one binding per pack per component role.
+- **Foreign keys:** `pack_id` to `authority_packs`; `artifact_id` to `evidence_artifacts` or global artifact storage.
+- **Immutability:** pack_id, component_role, artifact_id, and artifact hash are immutable.
+- **Gate:** pack readiness requires UNIQUE(pack_id, component_role) constraint permitting exactly one of each four roles. Pack content hash is computed over ordered component (role, artifact_hash) pairs. Every consumer of AuthorityPack implicitly requires all four components via this relation.
 
 ### 2.11 `tax_cases`
 
 - **Fields:** `tenant_id`, `tax_case_id`, `pan`, normalized `period_key`, assessment year, ordinal `filing_sequence`, filing trigger, governing Act, `rule_snapshot_id`, `authority_pack_id`, selected form, frozen eligibility facts/predicate references, internal filing lifecycle, case readiness state, staleness reason, and successor reference.
 - **Primary key:** `(tenant_id, tax_case_id)`.
 - **Unique keys:** `(tenant_id, period_key, filing_sequence)`; a TaxCase is one non-posting case per taxpayer, period, and sequence.
-- **Foreign keys:** `(tenant_id, pan)` to the matching unique tenant key; period to `income_periods`; rule snapshot and authority pack; all four artifact bindings through the pack; successor `(tenant_id, successor_tax_case_id)` to another TaxCase in the same tenant.
-- **Immutability:** PAN, period, sequence, trigger, Act, authority pack, selected form facts, and membership snapshot are immutable. Internal state transitions and staleness are audited; an original case is never edited into a successor.
+- **Foreign keys:** `(tenant_id, pan)` to the matching unique tenant key; period to `income_periods`; rule snapshot `rule_snapshot_id`; authority pack `authority_pack_id` (which implicitly requires all four component bindings via `authority_pack_artifact_bindings`); successor `(tenant_id, successor_tax_case_id)` to another TaxCase in the same tenant.
+- **Immutability:** PAN, period, sequence, trigger, Act, authority pack ID, selected form facts, and membership snapshot are immutable. Internal state transitions and staleness are audited; an original case is never edited into a successor.
 - **Internal states:** preparation/readiness state is separate from external portal status. Internal filing lifecycle is exactly `prepared`, `exported`, or `unknown`; case readiness remains an internal product state.
 - **Portal status:** only these five normalized portal labels are allowed: `submitted`, `verified`, `processed`, `defective`, and `case_transferred_to_assessing_officer`, corresponding to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq). Each non-null portal label requires a bound `portal_status_evidence` row retaining the exact raw label and evidence. An invalid return is a separate derived legal consequence/internal condition only when supported by bound defect or notice evidence; it is never a portal label. Form 16A is never a portal status.
-- **Gates:** TaxCase creation binds the matching tenant PAN, period-derived Act, compatible rule snapshot, compatible authority pack, normalized membership, and non-empty source catalog atomically. Form eligibility must be evaluated from the frozen facts and official predicates before `ready`, validation, or export. A changed membership/source catalog marks the case stale and blocks the affected action.
+- **Gates:** TaxCase creation binds the matching tenant PAN, period-derived Act, compatible rule snapshot, compatible authority pack (all four components via `authority_pack_artifact_bindings`), normalized membership, and non-empty source catalog atomically. Form eligibility must be evaluated from the frozen facts and official predicates before `ready`, validation, or export. A changed membership/source catalog marks the case stale and blocks the affected action.
 
 ### 2.12 `filing_snapshots`
 
-- **Fields:** `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, exact BookSet ledger version/event cursor references (immutable), source artifact IDs/hashes, parser versions, frozen eligibility facts, `tax_computation_id`, as_of_instant timestamp, content hash.
+- **Fields:** `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, exact BookSet ledger version/event cursor references (immutable), source artifact IDs/hashes, parser versions, frozen eligibility facts, declared `tax_computation_version`, declared `tax_computation_hash` (expected hash for canonical computation), as_of_instant timestamp, snapshot_content_hash (computed over inputs: ledger versions, source artifacts, eligibility facts, declared computation version/hash).
 - **Primary key:** `snapshot_id`.
-- **Unique keys:** `(tax_case_id, as_of_instant, content_hash)`.
+- **Unique keys:** `(tax_case_id, as_of_instant, snapshot_content_hash)`.
 - **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `authority_pack_id` to AuthorityPack; BookSet and evidence artifact references are tenant-scoped.
-- **Immutability:** snapshot ID, ledger versions, source artifacts, parser versions, computation ID, timestamp, and content hash are immutable. A new snapshot is created when books or sources change before submission.
-- **Gate:** FilingSnapshot must bind exactly one AuthorityPack and reference exact BookSet ledger event cursors (not just as-of date). Every ExportRun is tied to exactly one FilingSnapshot.
+- **Immutability:** snapshot ID, ledger versions, source artifacts, parser versions, declared computation version/hash, timestamp, and snapshot_content_hash are immutable. A new snapshot is created when books or sources change before submission.
+- **No computation FK:** FilingSnapshot does NOT store `tax_computation_id`; this breaks circular dependency. Declared computation version/hash is an input to snapshot content hash and must match the canonical TaxComputation created atomically with this snapshot.
+- **Gate:** FilingSnapshot must bind exactly one AuthorityPack and reference exact BookSet ledger event cursors (not just as-of date). Every ExportRun is tied to exactly one FilingSnapshot. Snapshot and its canonical TaxComputation are created atomically; their version/hash must match or integrity is violated.
 
 ### 2.13 `tax_computations`
 
-- **Fields:** `computation_id`, `snapshot_id`, version, content hash, tax computation state.
+- **Fields:** `computation_id`, `snapshot_id`, version, result_hash (computed over tax computation payload/result), tax computation state.
 - **Primary key:** `computation_id`.
-- **Unique keys:** `(snapshot_id, version, content_hash)`.
-- **Foreign keys:** `snapshot_id` to FilingSnapshot.
-- **Immutability:** computation ID, snapshot binding, and hash are immutable. A computation never posts to the books.
-- **Gate:** exactly one TaxComputation derives from one FilingSnapshot. Multiple ExportRuns may use the same computation if snapshot has not changed.
+- **Unique keys:** `UNIQUE(snapshot_id)` — exactly one canonical computation per snapshot.
+- **Foreign keys:** `snapshot_id` to FilingSnapshot (tenant-scoped via TaxCase).
+- **Immutability:** computation ID, snapshot binding, version, and result_hash are immutable. A computation never posts to the books.
+- **Atomicity and Match:** Snapshot and TaxComputation are created in one atomic transaction. TaxComputation repeats the `version` field and computes result_hash. At creation, snapshot's declared `tax_computation_version` and `tax_computation_hash` must match the computation's version and result_hash, or the transaction rolls back.
+- **Gate:** exactly one TaxComputation derives from one FilingSnapshot via UNIQUE(snapshot_id). Multiple ExportRuns may use the same computation if snapshot has not changed. No mutable post-seal update to either entity.
 
 ### 2.14 `export_runs`
 
-- **Fields:** `export_id`, `snapshot_id`, export format, export timestamp, content hash, selected-for-submission flag, creation metadata.
+- **Fields:** `export_id`, `snapshot_id`, export format, export timestamp, content hash, creation metadata.
 - **Primary key:** `export_id`.
 - **Unique keys:** `(snapshot_id, export_format, export_timestamp, content_hash)`.
-- **Foreign keys:** `snapshot_id` to FilingSnapshot.
+- **Foreign keys:** `snapshot_id` to FilingSnapshot (tenant-scoped via TaxCase).
 - **Immutability:** export ID, snapshot binding, and content hash are immutable. A new export is created for a snapshot when format or generation parameters change.
-- **Selected submission:** exactly one export per FilingSnapshot may be marked selected-for-submission; a SubmissionAttempt binds that selected export.
-- **Gate:** multiple ExportRuns may exist per snapshot; only the explicitly selected export is submission-bound.
+- **No selection flag:** ExportRun does NOT store a selected-for-submission boolean. Selection is managed through the separate `submission_bindings` entity, which enforces concurrency gates and immutability post-attempt.
+- **Gate:** multiple ExportRuns may exist per snapshot. Selection is recorded separately via `submission_bindings`.
+
+### 2.14a `submission_bindings`
+
+- **Fields:** `binding_id`, `tenant_id`, `tax_case_id`, `filing_sequence`, `selected_export_id`, selected_at timestamp, selected_by actor, binding state (SELECTED or SUPERSEDED).
+- **Primary key:** `binding_id`.
+- **Unique keys:** `UNIQUE(tenant_id, tax_case_id, filing_sequence)` – at most one active selection per TaxCase/filing sequence.
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `selected_export_id` to ExportRun (which references FilingSnapshot in same TaxCase).
+- **Immutability:** tenant_id, tax_case_id, filing_sequence, and selected_export_id are immutable once any SubmissionAttempt exists for this binding. Before first attempt, selection may be replaced (state transitions from SELECTED to SUPERSEDED, new binding created with same (tenant, tax_case, filing_sequence)).
+- **Concurrency gate:** UNIQUE(tenant_id, tax_case_id, filing_sequence) constraint prevents two concurrent selections for the same TaxCase/sequence. SubmissionAttempt may only reference a binding in SELECTED state with no prior attempts.
+- **Gate:** Selection may be changed only before first SubmissionAttempt. Once first attempt/evidence exists, this binding becomes immutable and subsequent corrections use a successor TaxCase (PT-016) with its own new selection binding.
 
 ### 2.15 `submission_attempts`
 
-- **Fields:** `attempt_id`, `tax_case_id`, `export_id`, portal receipt/acknowledgement, raw portal status/response, capture timestamp, actor.
+- **Fields:** `attempt_id`, `tenant_id`, `tax_case_id`, `binding_id`, portal receipt/acknowledgement, raw portal status/response, capture timestamp, actor.
 - **Primary key:** `attempt_id`.
-- **Unique keys:** one per selected ExportRun.
-- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `export_id` to ExportRun.
-- **Immutability:** attempt ID, export binding, receipt/status, and response are immutable.
-- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase. Post-submission, correction work uses a linked successor TaxCase (PT-016).
+- **Unique keys:** one per submission_binding (first attempt locks the binding immutable).
+- **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; `binding_id` to SubmissionBinding (which ensures selected export belongs to same tenant/case).
+- **Immutability:** attempt ID, tax_case_id, binding_id, receipt/status, and response are immutable.
+- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase. Post-submission (once attempt exists), correction work uses a linked successor TaxCase (PT-016) with independent FilingSnapshot, ExportRun, and new SubmissionBinding.
 
 ### 2.16 `tax_case_bookset_membership`
 
