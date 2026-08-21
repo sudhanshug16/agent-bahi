@@ -10,7 +10,7 @@ Complete personal and sole-proprietor individual income-tax workflow is in produ
 
 No implementation may begin until the owner and architect review this packet, the affected canonical contracts, and the migration plan. This packet does not approve a data-model change, a legal interpretation, a filing route, or a portal integration.
 
-**Related RFC**: The physical-schema RFC for personal-tax support is documented separately in [personal-tax-physical-schema.md](personal-tax-physical-schema.md). That RFC specifies implementation-ready tables, constraints, indexes, ownership rules, and migration proof obligations. It is also TENTATIVE and requires architect review.
+**Related RFC**: The physical-schema RFC for personal-tax support is documented separately in [personal-tax-physical-schema.md](personal-tax-physical-schema.md). That RFC records a tentative dialect-neutral relational contract, ownership rules, transaction gates, and Gate0 proof obligations. It is also TENTATIVE and requires architect review.
 
 The packet covers an individual taxpayer and one or more sole proprietorships. Company entities remain separate. Other legal forms require their own reviewed scope.
 
@@ -141,22 +141,11 @@ All existing tenant-wide identifier uniqueness remains in force until separately
 **Open choice:** Exact account vocabulary and UI/CLI shape await the canonical migration and architecture review.
 
 <a id="pt-004"></a>
-### PT-004 (RESERVED): Year-Specific Correction Trigger/Mechanism/Deadline (Issue #4)
+### PT-004: Personal bank, investment, property, rent, and loan subledgers
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Issue #4 Clarification:** filing_sequence is ordinal only (1 = original, 2+ = amended). Year-specific correction metadata (trigger type, legal mechanism, deadline, evidence) must be persisted separately per year and mechanism (e.g., section 139(5) revised return, section 263 assessment, section 264 defective return). A TaxCase with filing_sequence > 1 must have complete correction metadata or block the filing action with REVIEW/BLOCK.
-
-**Failure mode:** A taxpayer attempts to file an amended return without storing which mechanism applies for that year, or deadline information is lost after filing.
-
-**Open choice:** Schema tables for year-specific correction metadata await owner-approved mechanism research (PT-016 successor cases).
-
-<a id="pt-004b"></a>
-### PT-004b: Personal bank, investment, property, rent, and loan subledgers
-
-**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
-
-**Decision (PT-004b):** The personal BookSet supports bank, investment and tax-lot, property and rent, and loan subledgers with provenance and reconciliation.
+**Decision:** The personal BookSet supports bank, investment and tax-lot, property and rent, and loan subledgers with provenance and reconciliation.
 
 **Boundary:** Holding rules are asset-class and effective-date driven. Acquisition, disposal, income, financing, ownership, and evidence records remain distinct. Interest treatment follows the use of borrowed funds and the applicable rule snapshot, never the lender label.
 
@@ -297,7 +286,7 @@ Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor 
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision (Issue #1):** Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status: `submitted`, `verified`, `processed`, `defective`, `invalid`, `assessing-officer-transferred` (only when filing-specific evidence exists).
+**Decision (Issue #1):** Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status is exactly the five current official ITD labels: `submitted`, `verified`, `processed`, `defective`, `invalid`; each requires filing-specific bound evidence.
 
 Record filing-specific acknowledgement, verification or ITR-V evidence, portal status, intimation, and defect evidence where present. There is no universal ARN. An e-TDS delay is not a product state. Form 16A is not return-processing evidence (only TDS evidence, never portal status). Do not claim a physical ITR-V upload route without source evidence.
 
