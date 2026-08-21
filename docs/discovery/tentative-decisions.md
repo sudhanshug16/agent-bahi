@@ -74,69 +74,59 @@ Owner-approved as the fallback default for external statutory submissions where 
 ---
 
 <a id="t-002"></a>
-### Entry T-002: Frappe Books as Behavior/Concept Reference Only
+### Entry T-002: MIT License and Frappe Books Study/Reference Only
 
 **Status**: OWNER-APPROVED
 
-**Question**: To what extent should agent-bahi reference, adapt, or reuse Frappe Books concepts, code, or documentation?
+**Question**: To what extent should agent-bahi study Frappe Books concepts and documented behavior?
 
 **Recommended Working Default**:
-- Frappe Books is a **behavior and concept reference only**. Agent-bahi does not copy source code, database schemas, UI patterns, prose, or assets from Frappe Books.
-- Concepts from Frappe Books (e.g., India accounting principles, GST workflows) may inform design and research but are documented in agent-bahi's own words with proper attribution.
-- No Frappe code or substantial prose is used; all documentation is agent-bahi's own discovery and design.
-- **License implication**: Frappe Books is AGPL-3.0. Agent-bahi is recommended for Apache-2.0 to remain permissive for commercial use and agents/integrations.
-- **License decision**: Do NOT add, change, or select a LICENSE file in this commit. Owner review and explicit approval are required before any license is finalized, given the AGPL history of Frappe.
+- Agent-bahi is licensed under **MIT**.
+- Frappe Books is a **study and behavior/concept reference only**. Agent-bahi does not copy or adapt Frappe source code, database schemas, UI patterns, prose, or assets.
+- Frappe Books concepts may inform independent design and research, but all agent-bahi implementation and documentation is original and written in agent-bahi's own words.
 
 **Alternatives**:
-- Deep adaptation: Use Frappe Books schema, formulas, and patterns with AGPL-3.0 license (maintains legal compliance but restricts agent-bahi distribution and commercial agent use).
-- No reference: Ignore Frappe Books entirely (loses valuable India compliance concepts and leaves design decisions ungrounded).
-- Selective code reuse: Copy specific algorithms or rule packs (requires AGPL compliance and explicit license propagation).
+- No reference: Ignore Frappe Books entirely (loses a bounded source of study material for India accounting concepts).
+- Independent research only: Use primary statutory and product sources without studying Frappe Books (increases discovery effort).
 
 **Rationale**:
-Frappe Books is a mature accounting system with officially documented accounting
-and GST behavior. Referencing only those documented Books behaviors helps
-agent-bahi cover comparable accounting and GST requirements without treating
-unsupported capabilities as vendor evidence. Copying code or prose creates
-license obligations and makes it harder to evolve independently. Treating
-Frappe Books as a reference for documented accounting and GST behavior allows
-clean, independent design while preserving the distinction between vendor
-evidence and agent-bahi's product choices. Apache-2.0 preserves agent-bahi's
-freedom and enables unrestricted agent/integration ecosystems; AGPL-3.0 would
-restrict these use cases.
+Frappe Books is a useful source of documented accounting and GST behavior for
+study, but it is not an implementation source. An independent MIT-licensed
+agent-bahi implementation keeps product decisions, source, schema, prose, and
+assets separate from the study material and avoids silent dependency on vendor
+behavior that is not independently verified.
 
 **Product Impact**:
 - Design quality: Documented Frappe Books accounting/GST behavior provides a bounded reference without attributing unsupported capabilities.
-- Legal clarity: Reference-only approach + Apache-2.0 avoids GPL compliance obligations and enables commercial agents/integrations.
-- Operational simplicity: No license attribution required for code/prose; attribution occurs only for conceptual inspiration.
+- License clarity: Agent-bahi uses MIT; Frappe Books remains study/reference material only.
+- Operational simplicity: No Frappe source, schema, prose, or assets enter the repository.
 - Future flexibility: Independent implementation allows divergence from Frappe if Indian compliance rules or agent-bahi requirements change.
 
 **Reversal Path**:
-Owner may approve AGPL-3.0 license after explicit business/legal review if compliance with GPL terms is acceptable. This would require:
-1. Legal review and formal approval.
-2. Update README and LICENSE file.
-3. Update contribution guidelines.
-4. Audit code and documentation for AGPL-compliant attribution.
-
-Or, owner may request deeper Frappe integration (e.g., schema adoption) after similar review. The reference-only default allows owner to make this choice later without architectural lock-in.
+Any change to the MIT license or to the Frappe study/reference boundary requires
+a new explicit owner decision. It does not authorize copying or adapting Frappe
+source, schema, prose, or assets.
 
 **Dependencies**:
 - No dependencies on other settled decisions. This is independent of filing workflows, compliance rules, or architecture.
-- Affects only documentation tone and license choice, not functional design.
+- Affects only the independent implementation's license and study boundary, not functional design.
 
 **Evidence**:
-- Frappe Books is AGPL-3.0; verifiable at https://github.com/frappe/books.
-- Apache-2.0 is used by other accounting projects (Wave, Invoice Ninja OSS distributions) and enables unrestricted commercial agent use.
 - Frappe Books accounting and GST behavior is documented publicly; this entry
   relies only on those documented Books capabilities.
-- [Zoho Books and Frappe Books Feature Parity Matrix](zoho-frappe-parity.md) documents Frappe Books AGPL-3.0 license and compares feature parity with Zoho Books, confirming Frappe as concept/behavior reference only.
+- [Zoho Books and Frappe Books Feature Parity Matrix](zoho-frappe-parity.md) is
+  a study aid and does not authorize reuse of Frappe material.
 
 **Owner Review Status**:
-Owner-approved. Frappe Books is reference-only for behavior and concepts; no source code, schema, prose, or assets are copied or adapted from it. Agent-bahi's documentation is independent and cites external references appropriately. Apache-2.0 license recommendation remains subject to explicit approval; this entry establishes the reference-only policy and rationale for Apache-2.0 to enable commercial agent/integration use.
+Owner-approved. Agent-bahi is MIT-licensed. Frappe Books is study/reference-only
+for behavior and concepts; no Frappe source code, schema, prose, or assets are
+copied or adapted. Agent-bahi's implementation and documentation remain
+independent.
 
 ---
 
 <a id="t-003"></a>
-### Entry T-003: Fixed-Asset Depreciation Schedules—Book vs. Tax with Tentative SLM Default
+### Entry T-003: Fixed-Asset Depreciation Schedules—Book vs. Tax
 
 **Status**: OWNER-APPROVED
 
@@ -148,11 +138,13 @@ lock tax rates or method specifics.
 
 **Question**: How should book and tax depreciation be modeled and calculated in the fixed-asset module?
 
-**Recommended Working Default**:
-- Separate book-depreciation and tax-depreciation schedules per asset (a
-  reversible product design recommendation, **TENTATIVE - NOT OWNER-APPROVED**).
-- **Book method**: Configurable per asset or tenant-wide. **Tentative default**: Straight-line (SLM) with user-specified useful life and salvage value.
-- **Tax method**: Follows effective statutory rule packs indexed by financial year, jurisdiction, and asset class (e.g., block assets, plant, buildings). User selects applicable tax rule pack (or defaults to current year); depreciation is computed deterministically from the rule pack.
+**Approved Decision**:
+- Separate book-depreciation and tax-depreciation schedules per asset.
+- **Book method**: Configurable per asset or tenant-wide, with Straight-line (SLM)
+  as the default using user-specified useful life and salvage value.
+- **Tax method**: Follows effective statutory rule packs indexed by financial
+  year, jurisdiction, and asset class (e.g., block assets, plant, buildings).
+  Depreciation is computed deterministically from the applicable rule pack.
 - **Depreciation runs**: Monthly pro-rata SLM for book; deterministic statutory monthly/quarterly accrual for tax based on rule pack.
 - **Reconciliation**: Separate book/tax schedules enable period-end variance analysis (book vs. tax differences).
 - **Storage**: Asset master records book method (SLM params) and active tax rule-pack reference; monthly depreciation/accrual lines link to both schedules. This storage/model choice is reversible and does not claim vendor parity.
@@ -163,53 +155,84 @@ lock tax rates or method specifics.
 - Separate asset tables (book assets vs. tax assets): Couples data model and adds complexity; reconciliation is harder.
 
 **Rationale**:
-India accounting and tax compliance require separate book and tax depreciation (Companies Act vs. Income-tax Act). Book method is typically SLM (simpler, predictable); tax method is statutory (block assets, WDV, or specific asset class rules). Separating schedules allows clean, auditable reconciliation. Tentative SLM default for book is a working recommendation (NOT CONFIRMED as Zoho Books feature); tax rules are deterministic and must be maintained in a compliance-rules package (separate OPEN_RESEARCH item). Monthly pro-rata SLM is realistic for India reporting cycles (monthly trials, quarterly compliance). Zoho's separate book/tax depreciation capability is NOT CONFIRMED from official documentation; this remains a product design choice, not vendor evidence.
+India accounting and tax compliance require separate book and tax depreciation
+(Companies Act vs. Income-tax Act). Book SLM is predictable and configurable;
+the tax schedule is statutory and must be maintained in an effective-dated
+compliance-rules package. The separate schedules make reconciliation auditable.
+Only the exact statutory tax method and rates for each applicable year,
+jurisdiction, and asset class remain OPEN_RESEARCH. Monthly pro-rata SLM is
+the approved book calculation approach for reporting cycles.
 
 **Product Impact**:
 - Compliance readiness: Separate book/tax schedules support India's dual-reporting requirements.
 - Audit clarity: Book/tax variance is transparent and reconcilable.
 - Operational complexity: Monthly depreciation runs add overhead vs. annual runs. However, monthly pro-rata is more accurate for mid-year additions and disposals.
-- Tax research dependency: Exact tax rule packs remain open research; implementation cannot proceed without statutory rates and asset-class rules.
+- Tax research dependency: Exact statutory tax methods and rates remain open
+  research; the affected tax depreciation lane cannot run until its rule pack is
+  verified.
 
 **Reversal Path**:
-The separate book/tax schedule model and its working default are reversible.
-Owner may replace a method or rule-pack choice through a new version and
-superseding schedule; posted history and prior schedules remain immutable and
-linked by correction lineage. Any tax method change still requires tax
-research closure and rule-pack updates before use. If a book method changes,
-existing asset schedules must be audited for impact on prior-year reporting.
+The separate book/tax schedule model and SLM book default remain versioned and
+reversible. Owner may replace a method or rule-pack choice through a new version
+and superseding schedule; posted history and prior schedules remain immutable
+and linked by correction lineage. Any statutory tax method or rate change still
+requires research closure and a verified rule-pack snapshot before use. If the
+book method changes, existing asset schedules must be audited for prior-year
+reporting impact.
 
 **Dependencies**:
 - Fixed-asset module (Phase scope: ARC-012 in architecture-decisions.md).
-- Open research: "Fixed-asset depreciation methods" in [architecture-decisions.md](architecture-decisions.md#open-research--deferred-list).
+- Open research: exact statutory tax methods and rates in [architecture-decisions.md](architecture-decisions.md#open-research--deferred-list).
 - Effective-dated compliance rules engine (required for tax rule packs per year/class).
 
 **Evidence**:
 - India Companies Act (2013) Schedule II: SLM is standard for book depreciation.
 - Income-tax Act schedules and old/new regime rates: WDV, block assets, specific class rules (e.g., buildings 40 years SLM, plant 15 years WDV).
-- Zoho Books officially documents depreciation methods, but separate book/tax
-  schedules and configurable SLM/tax-rule selection are **NOT CONFIRMED**.
+- Zoho Books is not the authority for this product decision; statutory sources
+  govern the tax rule-pack contents.
 
 **Owner Review Status**:
-Owner-approved. Separate book/tax schedules and SLM as the default book method are settled. Tax rule-pack selection remains OPEN_RESEARCH; implementation is gated by research closure and statutory rule snapshot. If owner has specific depreciation method requirements (e.g., accelerated depreciation for certain asset classes), those are documented in tax rule-pack research and applied via effective-dated rules.
+Owner-approved. Separate book/tax schedules and SLM as the default book method
+are settled. Only exact statutory tax methods and rates remain OPEN_RESEARCH;
+the affected tax depreciation lane is gated by research closure and a verified
+statutory rule snapshot. Those rules are applied through effective-dated packs.
 
 ---
 
 <a id="t-004"></a>
-### Entry T-004: Exchange-Rate Provider and FX Workflow—Tentative/Open Pending Source Audit
+### Entry T-004: Exchange-Rate Provider and Purpose-Specific FX Workflow
 
 **Status**: OWNER-APPROVED (with significant OPEN_RESEARCH component)
 
 **Question**: Which exchange-rate source (RBI, bank rates, market rates, third-party API) should agent-bahi use for multi-currency transactions, and how should rates be selected and recorded?
 
 **Recommended Working Default**:
-- **Rate capture**: Every foreign-currency invoice, bill, payment, and FX transaction records an immutable **document-rate snapshot** at transaction time (already settled in [decisions.md](decisions.md#confirmed)).
-- **Rate source**: Document-rate snapshot includes `rate_source` (e.g., "RBI EOD 2026-08-20", "Bank Statement", "Manual Override") and `rate_source_timestamp`.
-- **Configurable default source**: Tenant configuration specifies a default rate source (e.g., "RBI EOD"). When user does not specify a rate, the default source is queried; if unavailable (e.g., holiday, API outage), an explicit fallback source (e.g., bank rate, manual input) is required.
-- **Fallback chain**: Default → secondary source (e.g., bank rate) → manual override. Each fallback step is explicit and recorded.
-- **No auto-selection of multiple rates**: Do not silently use today's rate if the document is dated yesterday. Use document date rate or require explicit user/operator selection.
-- **Rate lock at posting**: Once a document is posted, the recorded rate is immutable; period-end revaluation creates an explicit adjustment entry (not a rate mutation).
-- **Exact rate source/provider remains tentative**: Which specific provider (RBI.org ICP API, RBI bulletin, Bank Statement, third-party aggregator, spot market) is authoritative is **OPEN_RESEARCH** pending a dedicated source audit.
+- **Original currency**: Every foreign-currency document and settlement preserves
+  its original currency and amount alongside the tenant base-currency amount.
+- **Purpose-specific snapshots**: When applicable, each transaction records a
+  separate immutable rate snapshot for **book recognition**, **settlement**,
+  **GST**, and **income-tax/TDS**. Each snapshot records its purpose, rate,
+  source, effective date, timestamp, and evidence.
+- **Purpose-specific source selection**: Tenant configuration may specify a
+  default source for each purpose. A fallback is allowed only among sources
+  approved for that same purpose, and every fallback step is explicit and
+  recorded.
+- **No cross-purpose substitution**: A rate selected for book recognition or
+  settlement must never be reused as a GST or income-tax/TDS rate, and a tax
+  rate must never be reused for book recognition or settlement.
+- **Missing statutory source/rate**: Missing statutory source or rate blocks or
+  marks **REVIEW** only the affected GST or income-tax/TDS compliance lane. It
+  must not block unrelated bookkeeping or settlement when their own valid
+  snapshots exist, and no other purpose's rate may substitute for it.
+- **No silent date substitution**: Do not silently use today's rate for a
+  document dated yesterday; use the applicable date or require explicit
+  user/operator selection.
+- **Rate lock at posting**: Once a purpose-specific snapshot is recorded, it is
+  immutable; period-end revaluation creates an explicit adjustment entry and
+  never mutates the original snapshot.
+- **Exact statutory sources/providers remain OPEN_RESEARCH**: Which source is
+  authoritative for each purpose (RBI bulletin, bank statement, or another
+  verified statutory source) requires a dedicated source audit.
 
 **Alternatives**:
 - Single mandatory source (e.g., RBI only): Brittle if source is unavailable; no fallback.
@@ -218,17 +241,29 @@ Owner-approved. Separate book/tax schedules and SLM as the default book method a
 - Market-based spot rates (e.g., Reuters): High cost, external dependency, not standard for accounting (books typically use official rates).
 
 **Rationale**:
-Immutable document-rate snapshots (settled) prevent rate restatement and enable audit. A configurable default source with explicit fallback provides automation while retaining control. India accounting typically uses RBI EOD rates (official source), but businesses also use bank statement rates (actual settlement rate) or manual rates (for inter-company or non-standard currencies). Separate rate-source audit is required to determine which source(s) are authoritative and how to handle source unavailability. Without this research, a tentative multi-source approach with fallback is safest.
+Immutable original-currency amounts and purpose-specific rate snapshots prevent
+rate restatement and enable audit. A configurable source per purpose, with
+same-purpose fallback only, provides automation while retaining control. A
+source audit is required to identify the authoritative statutory source and rate
+for GST and income-tax/TDS. If that source or rate is unavailable, only the
+affected compliance lane is blocked or marked REVIEW; unrelated book and
+settlement work never silently borrows a different purpose's rate.
 
 **Product Impact**:
 - Audit clarity: Immutable rate snapshots with source provenance are auditable.
-- Automation opportunity: Default source auto-selection reduces operator friction if source is stable and available.
+- Automation opportunity: Purpose-specific source selection reduces operator
+  friction if each source is stable and available.
 - Operational risk: If chosen rate source becomes unavailable (API outage, portal down), explicit fallback is required.
-- Compliance risk: Some tax authorities may prescribe specific rate sources (e.g., RBI EOD); this is part of OPEN_RESEARCH.
+- Compliance risk: Tax authorities may prescribe different sources or rates by
+  purpose and period; this is part of OPEN_RESEARCH.
 - FX reporting: Separate realized (posting-time) and unrealized (period-end revaluation) exchange gain/loss is deterministic and auditable.
 
 **Reversal Path**:
-Owner may settle a specific rate source (e.g., "RBI EOD only", "Bank Statement only", or "Lowest of RBI and Bank") after dedicated source audit. This changes the default source and fallback chain but does not affect the immutable-snapshot structure. Existing transactions retain their recorded rates; rate-source changes affect new transactions going forward.
+Owner may settle the source and fallback policy for each purpose after the
+dedicated source audit. This changes only future purpose-specific snapshots and
+does not affect the immutable snapshot structure. Existing transactions retain
+their recorded original amounts and rates. Any stack or policy override based on
+a research blocker must be a new explicit owner decision.
 
 **Dependencies**:
 - Immutable document-rate snapshots (settled in [decisions.md](decisions.md#confirmed)).
@@ -243,66 +278,90 @@ Owner may settle a specific rate source (e.g., "RBI EOD only", "Bank Statement o
 - India tax authority (CBDT): May have prescribed rate source per statute/year (research required).
 
 **Owner Review Status**:
-Owner-approved for the immutable document-rate snapshot architecture and configurable default-source pattern with explicit fallback chain. No specific rate provider is locked; the multi-source fallback pattern is approved and stable. Once research determines authoritative source(s) (OPEN_RESEARCH), owner may refine the default configuration. Existing transactions' recorded rates remain immutable regardless of future default changes.
+Owner-approved for preserving original currency and for immutable,
+purpose-specific snapshots covering book recognition, settlement, GST, and
+income-tax/TDS. Exact statutory sources and rates remain OPEN_RESEARCH. Missing
+statutory evidence blocks or marks REVIEW only the affected compliance lane and
+never permits substitution of another purpose's rate. Existing transactions'
+recorded amounts and snapshots remain immutable.
 
 ---
 
 <a id="t-005"></a>
-<a id="entry-t-005-v1-scope-focus-regular-small-business-gst-accounting-profiles"></a>
-<a id="entry-t-005-v1-scope-focus—regular-small-business-gst-accounting-profiles"></a>
-### Entry T-005: V1 Scope Focus—Regular Small-Business GST/Accounting Profiles
+<a id="entry-t-005-v1-scope-no-registration-and-regular-gst-accounting-profiles"></a>
+<a id="entry-t-005-v1-scope—no-registration-and-regular-gst-accounting-profiles"></a>
+### Entry T-005: V1 Scope—No-Registration and Regular GST/Accounting Profiles
 
 **Status**: OWNER-APPROVED
 
 **Question**: Which business profile and tax regimes should V1 prioritize in its coverage roadmap and testing?
 
 **Recommended Working Default**:
-- **V1 Primary Target**: Regular (non-composition) small-business GST taxpayers in India with annual turnover below ₹50 crore (rough guidance; not a strict gate).
-  - Regular GST registration (GST/registered supplier).
+- **V1 Primary Target**: No-registration and regular (non-composition) GST
+  business profiles in India.
+  - No-registration workflows and regular GST registration (GST/registered supplier).
   - GSTR-1 filing (B2B/B2C, service, goods).
-  - GSTR-3B reconciliation and manual portal filing.
+  - GSTR-3B reconciliation, including GST credit reconciliation, and manual portal filing.
   - Invoicing, billing, payment, expense, and basic payroll workflows.
-  - E-invoice adapters (CMP-006) and e-way-bill adapters (CMP-007): **RESEARCH-GATED and DEFERRED**. Until applicability/transport/state research is complete and Sudhanshu approves, these remain non-V1 and must not be invoked or assumed in V1 operations. See [architecture-decisions.md](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [architecture-decisions.md](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research).
-  - No composition scheme, no simplified scheme.
-  - No inter-state supply complexity in V1 focus (but multi-GSTIN model supports it).
+  - Domestic, interstate, and export supply workflows.
+  - E-invoice and e-way-bill **upload-file workflows**. Direct API/portal
+    submission, applicability, and state-specific research remain gated; V1
+    does not claim automatic submission. See [architecture-decisions.md](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [architecture-decisions.md](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research).
+  - Composition schemes, specialized regimes/industry compliance, and inventory
+    accounting remain deferred.
 
 - **Out of V1 Scope** (documented as deferred/future research):
   - Composition taxpayers (CMP-08, GSTR-4, deemed ITC rules).
-  - Simplified scheme (turnover-based exemption, limited GSTR-1).
-  - Unregistered suppliers (nil GSTR, cash accounting).
-  - E-invoice mandatory applicability and exemptions (OPEN_RESEARCH; CMP-006 adapter deferred).
-  - E-way bill (OPEN_RESEARCH; CMP-007 adapter deferred).
-  - Multi-state inventory/supply chains (model supports it; workflows may be deferred).
-  - Specific industry compliance (finance, insurance, import/export, customs, etc.).
+  - Composition-adjacent or other specialized tax regimes.
+  - Direct e-invoice/e-way-bill API or portal submission and applicability-specific
+    adapters (upload-file workflows remain in V1).
+  - Inventory accounting, stock movements, warehouses, and supply-chain workflows.
+  - Specialized industry compliance (finance, insurance, customs, and similar
+    regimes); export upload-file workflows remain in V1.
 
 - **Unverified Transports** (gated as explicit deferred/open, not silently assumed):
   - Portal APIs (except GSTR-1 manual filing evidence recording, which is settled).
-  - IRP credentials and e-invoice submission (CMP-006 research-gated).
-  - E-way-bill API and state-specific rules (CMP-007 research-gated).
+  - IRP credentials and direct e-invoice submission (CMP-006 research-gated;
+    upload-file workflow remains in V1).
+  - E-way-bill API and state-specific rules (CMP-007 research-gated;
+    upload-file workflow remains in V1).
   - Bank auto-sync or auto-import.
   - Employee self-service portals, leave/attendance, HRMS.
-  - Inventory, stock movements, manufacturing.
+  - Inventory, stock movements, manufacturing, and other specialized modules.
 
 **Alternatives**:
-- Broad scope from day one: Composition, simplified, unregistered, multi-state, e-invoice, e-way bill all in V1 (scope explosion, incomplete research, delayed delivery).
-- Narrow scope (micro-businesses only, no multi-GSTIN, no payroll): Misses Sudhanshu's scale and compliance requirements.
+- Broad scope from day one: Composition, specialized regimes, inventory, direct
+  multi-state transports, e-invoice, and e-way bill submission all in V1 (scope
+  explosion, incomplete research, delayed delivery).
+- Narrow scope (only one registration or only domestic supplies, no payroll):
+  Misses the required GST and business profile coverage.
 - Marketplace/SaaS focus (multi-tenant, API-first): Defers CLI-first determinism and agent integration.
 
 **Rationale**:
-Sudhanshu operates three legal entities (two private limited companies, one sole proprietorship), likely in the ₹5-50 crore range (estimate from domain context). Regular GST, GSTR-1, and GSTR-3B are the core compliance obligations; these are well-documented and achieve high business value. Deferring composition, simplified, and unregistered schemes focuses V1 on a cohesive, auditable baseline. Unverified transports (e-invoice, e-way bill, portal APIs) are explicitly gated as open research, so they remain DEFERRED, not silently assumed. This prevents scope creep and ensures V1 delivers a complete, testable accounting system for the primary use case.
+The V1 baseline covers no-registration and regular GST profiles, domestic,
+interstate, and export supplies, GSTR-1, GSTR-3B and credit reconciliation, and
+the upload-file workflows needed for e-invoice and e-way-bill operations. Direct
+portal/API submission and specialized applicability rules remain research-gated.
+Composition and other specialized regimes, plus inventory, are deferred so the
+baseline remains cohesive and auditable without silently claiming unsupported
+coverage.
 
 **Product Impact**:
 - Faster V1 delivery: Focused scope enables earlier production use.
 - Clearer testing: Primary business profile is well-defined; golden test scenarios are grounded.
 - Completeness: V1 covers invoicing, billing, GST, payroll, and expense workflows end-to-end for the target profile.
-- Future extensibility: Multi-GSTIN, effective-dated rules, and modular architecture support composition/simplified/etc. as future phases.
-- Research parallelization: E-invoice, e-way bill, composition, and other deferred items can be researched in parallel without blocking V1 delivery.
+- Future extensibility: Multi-GSTIN, effective-dated rules, and modular
+  architecture support composition, specialized regimes, and inventory as future
+  phases.
+- Research parallelization: Direct e-invoice/e-way submission, composition,
+  specialized regimes, and inventory can be researched in parallel without
+  blocking the V1 upload-file and accounting workflows.
 
 **Reversal Path**:
-Owner may expand V1 scope to composition or simplified schemes by:
+Owner may expand V1 scope to composition, specialized regimes, or inventory by:
 1. Closing research items (CMP-08 rules, GSTR-4 requirements).
 2. Extending effective-dated rule packs.
-3. Testing composition/simplified workflows against golden fixtures.
+3. Testing the expanded workflows against golden fixtures.
 This is not a breaking change; the architecture supports multiple tax regimes. Scope expansion extends V1 delivery timeline.
 
 Or, owner may narrow V1 further (e.g., single-entity only, no payroll) to accelerate delivery. This is a tradeoff between coverage and timeline.
@@ -326,7 +385,12 @@ Or, owner may narrow V1 further (e.g., single-entity only, no payroll) to accele
 - Open research: "Composition scheme (CMP-08, GSTR-4)", "E-invoice applicability", "E-way bill state-specific rules" in [architecture-decisions.md](architecture-decisions.md#open-research--deferred-list).
 
 **Owner Review Status**:
-Owner-approved. V1 scope is locked to regular-GST small-business profile (annual turnover below ₹50 crore guidance): regular GST registration, GSTR-1 output, GSTR-3B reconciliation, invoicing, billing, payment, expense, and basic payroll workflows. Composition scheme, simplified scheme, unregistered suppliers, and multi-state complexity are explicitly out of V1 scope. E-invoice and e-way-bill adapters remain **RESEARCH-GATED and DEFERRED** (not V1-approved); see [architecture-decisions.md § CMP-006](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [§ CMP-007](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for their research gates.
+Owner-approved. V1 includes no-registration and regular GST profiles; domestic,
+interstate, and export supplies; GSTR-1; GSTR-3B and GST credit reconciliation;
+invoicing, billing, payment, expense, and basic payroll; and e-invoice/e-way-bill
+upload-file workflows. Direct API/portal submission and applicability research
+remain gated. Composition, specialized regimes, and inventory remain deferred;
+see [architecture-decisions.md § CMP-006](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [§ CMP-007](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for the direct-transport research gates.
 
 ---
 
@@ -548,32 +612,56 @@ Owner-approved for the policy: preserve original filing, ARN/status/rejection/no
 ---
 
 <a id="t-011"></a>
-### Entry T-011: Initial Language and Runtime—TypeScript + Bun (Recommended; Gate0 Proof Spikes Required)
+### Entry T-011: Initial Language and Runtime—TypeScript + Bun (Gate0 Required)
 
 **Status**: OWNER-APPROVED
 
 **Question**: What programming language and runtime should agent-bahi use for the initial implementation?
 
-**Exact Meaning and Binding Status**: T-011 establishes TypeScript + Bun as the selected language/runtime for agent-bahi. This is not approval of implementation, any specific library/tool choice, or library preapproval. Gate0 proof spikes (STK-001 through STK-006) are a hard prerequisite for validation of dependency/platform/database/arithmetic correctness and must pass before implementation is authorized. Gate0 remains a mandatory validation gate, not approval of the stack selection; it is not authorized by this docs review. If Gate0 later reveals a blocker, work stops and returns to the owner for override decision.
+**Exact Meaning and Binding Status**: T-011 establishes TypeScript + Bun as the
+selected language/runtime for agent-bahi. Bun-native APIs are used first. The
+release contains no separate Node runtime, Node subprocess, or Node hook. This
+is not approval of implementation or any specific library/tool choice; every
+third-party package remains individually gated. Gate0 proof spikes (STK-001
+through STK-006) are a hard prerequisite for validation and must pass before
+implementation is authorized. Gate0 remains mandatory but is not authorized by
+this docs review. If Gate0 reveals a blocker, work stops; any stack override
+after that blocker is a new explicit owner decision.
 
 **Selected Stack and Gate0 Prerequisite**:
-- **Selected**: TypeScript + Bun (modern, fast, ESM-native, built-in package/workspace management, native SQLite support via `better-sqlite3` or Bun's own driver). This does not pre-approve those libraries or any other dependency.
-- **Proof spikes (Gate0) validate all major dependencies before implementation authorization**:
+- **Selected**: TypeScript + Bun, with Bun-native runtime, package, test, and
+  SQLite APIs used first. No third-party package is pre-approved.
+- **Gate0 records exact dependencies before implementation authorization**:
+  Gate0 must select and record the exact stable Bun version, every exact
+  approved dependency version, each dependency checksum, and the lockfile.
+  Third-party packages are individually approved; an unrecorded or unverified
+  package is not approved.
+- **Proof spikes (Gate0) validate the selected stack before implementation authorization**:
   - STK-001: Bun runtime, workspaces, lockfile (macOS arm64, Linux x64/arm64).
-  - STK-002: ORM (Drizzle/Kysely) on bun-sqlite, PostgreSQL, MySQL; schema equivalence verified.
+  - STK-002: Bun-native SQLite first, plus any individually approved ORM or
+    adapter on PostgreSQL/MySQL; schema equivalence verified.
   - STK-003: SQLite pragmas, WAL, foreign_keys=ON, SQLITE_BUSY handling, network-filesystem rejection.
   - STK-004: Schema migrations and upgrade paths on all three dialects.
   - STK-005: Zod validation, JSON schema generation, Clipanion parser, decimal.js precision (INR/paise, FX, tax).
   - STK-006: ESM build, platform binaries, database drivers (MySQL/PostgreSQL optional).
-- **Gate0 is a mandatory prerequisite, not authorized by this docs review**. Gate0 must pass on all platforms (macOS arm64, Linux x64/arm64) before implementation is authorized. If Gate0 reveals blockers, work stops and returns to the owner for override decision.
+- **Gate0 is a mandatory prerequisite, not authorized by this docs review**.
+  Gate0 must pass on all platforms (macOS arm64, Linux x64/arm64) and its exact
+  Bun/dependency/version/checksum/lockfile record must be complete before
+  implementation is authorized. If Gate0 reveals blockers, work stops; any
+  stack override is a new owner decision.
 
 **Alternatives**:
-- Node.js + TypeScript (mature ecosystem; slower cold startup, larger binaries; established JavaScript CI/CD tooling).
-- Rust (performance, static typing; steeper learning curve; different module/CLI ecosystem; slower compile times during development).
-- Other JVM languages (Java, Kotlin, Scala): Heavy runtime; not recommended for CLI tool distribution.
+- No ordinary alternative is selected. A different language or runtime is
+  considered only through a new explicit owner decision after a documented
+  Gate0 blocker.
 
 **Rationale**:
-Bun is a modern JavaScript runtime designed for tooling (CLI, scripts, backend services) with native TypeScript support, integrated package management, and optimized SQLite integration. TypeScript provides type safety and reduces runtime errors in domain logic and compliance calculations. Gate0 proof spikes validate whether the candidate ecosystem and dependencies work reliably on all target platforms and with all supported databases (SQLite, PostgreSQL, MySQL). This is a working default for documentation and Phase 1 planning only; it is not a binding technology lock or library preapproval.
+Bun provides the selected runtime and Bun-native APIs for the CLI, scripts, and
+backend services, while TypeScript provides type safety for domain and
+compliance calculations. Gate0 validates the selected stack on all target
+platforms and records the exact stable Bun version plus individually approved
+dependency versions, checksums, and lockfile. The selected stack is binding;
+Gate0 and implementation authorization are separate decisions.
 
 **Product Impact**:
 - **Development velocity**: Bun's built-in features (TypeScript, package management, testing) reduce toolchain complexity.
@@ -582,17 +670,30 @@ Bun is a modern JavaScript runtime designed for tooling (CLI, scripts, backend s
 - **Multi-database support**: Proof spikes validate ORM cross-dialect equivalence (SQLite default, PostgreSQL/MySQL optional).
 
 **Reversal Path**:
-Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selection keeps TypeScript and changes only the runtime (mature ecosystem, larger cold-start footprint). Rust selection requires different language, module system, and CLI design. The owner decision must be made before Phase 1 implementation begins; mid-implementation language switches are prohibitively expensive.
+If Gate0 reveals a blocker, work stops and the blocker is recorded. Any stack
+override after that blocker requires a new explicit owner decision; no alternate
+runtime or language is authorized by this entry.
 
 **Proof Spike Gates**:
 - STK-001 through STK-006 must all pass on target platforms (macOS arm64, Linux x64/arm64).
-- All ORM, validation, CLI, migration, and build tooling must work identically across Bun, SQLite/PostgreSQL/MySQL, and all platforms.
-- If any spike reveals a blocker (e.g., Bun ORM incompatibility with PostgreSQL, missing decimal precision library), result is documented and owner makes override decision.
+- Bun-native runtime and database APIs must work on all target platforms.
+- Every third-party ORM, validation, CLI, migration, build, or arithmetic package
+  must have an exact approved version, checksum, and lockfile entry.
+- If any spike reveals a blocker (e.g., Bun database incompatibility or missing
+  decimal precision), the result is documented and any stack override is a new
+  owner decision.
 
 **Gate0 Prerequisite**:
-- **Gate0 is mandatory and not authorized by this docs review**: STK-001 through STK-006 must all pass on target platforms (macOS arm64, Linux x64/arm64) to validate dependency/platform/database/arithmetic correctness.
-- **Blocking discovery**: If Gate0 reveals any blocker (e.g., Bun ORM incompatibility, missing decimal precision, platform incompatibility), result is documented and work stops for owner override decision. Proceeding without Gate0 passing is not authorized.
-- **No implementation authorization**: T-011 selection and Gate0 passage are prerequisites, not approvals. Implementation authorization requires separate approval after Gate0 evidence is available and reviewed.
+- **Gate0 is mandatory and not authorized by this docs review**: STK-001
+  through STK-006 must pass on target platforms (macOS arm64, Linux x64/arm64),
+  and Gate0 must select and record the exact stable Bun version plus exact
+  approved dependency versions, checksums, and lockfile.
+- **Blocking discovery**: If Gate0 reveals any blocker, the result is documented
+  and work stops for a new owner decision. Proceeding without Gate0 passing and
+  without the complete exact-version record is not authorized.
+- **No implementation authorization**: T-011 selection and Gate0 passage are
+  prerequisites, not approvals. Implementation authorization requires separate
+  approval after Gate0 evidence is available and reviewed.
 
 **Dependencies**:
 - Proof spike results (STK-001 through STK-006) are prerequisites, not recommendations.
@@ -601,12 +702,17 @@ Owner may select Node.js + TypeScript or Rust after Gate0 results. Node.js selec
 
 **Evidence**:
 - Bun documentation and ecosystem: https://bun.sh/ (type definitions, SQLite integration, ESM, Clipanion parser support).
-- Drizzle ORM: Supports Bun + SQLite/PostgreSQL/MySQL; multi-dialect spike (STK-002) validates before commitment.
-- Kysely: Fallback ORM; also supports all three databases.
 - TypeScript: Industry standard for type-safe JavaScript; proven in countless CLI and backend projects.
 
 **Owner Review Status**:
-Owner-approved. TypeScript + Bun is selected as the language and runtime for agent-bahi. Gate0 proof spikes (STK-001 through STK-006) are a mandatory prerequisite for validating dependency/platform/database/arithmetic correctness; Gate0 is not authorized by this docs review and must pass before implementation. If Gate0 reveals blockers, work stops and returns to owner for override decision. No implementation is authorized until Gate0 passes and implementation readiness conditions are satisfied.
+Owner-approved. TypeScript + Bun is selected as the language and runtime, with
+Bun-native APIs first and no separate Node runtime, Node subprocess, or Node
+hook in the release. Gate0 remains mandatory but is not authorized by this docs
+review; it must pass with the exact stable Bun version and exact individually
+approved dependency versions, checksums, and lockfile recorded. Gate0 does not
+authorize implementation. If Gate0 reveals a blocker, work stops and any stack
+override is a new explicit owner decision. No implementation is authorized
+until Gate0 and the separate implementation approval are complete.
 
 ---
 
@@ -644,16 +750,16 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 Entries T-001 through T-011 extend and clarify settled decisions from [decisions.md](decisions.md#confirmed) and [architecture-decisions.md](architecture-decisions.md):
 
 - **T-001** (now clarified): Establishes a fallback default for filing submission only where no filing-specific boundary exists. Does not override GSTR-1 or any filing-specific settled decision. Extends [GSTR-1-specific output boundary](decisions.md#confirmed) and [Government filing boundary](decisions.md#confirmed) as a generic template for undefined filings only.
-- **T-002** clarifies the open-source/license context not yet formalized in settled decisions.
-- **T-003** is the first detailed entry for [Fixed assets](decisions.md#confirmed) (RECOMMENDED in ARC-012).
-- **T-004** is the first detailed implementation entry for [Multi-currency](decisions.md#confirmed) and [Exchange-rate source](decisions.md#confirmed) (OPEN RESEARCH).
-- **T-005** clarifies V1 scope in support of settled [Engine ownership](decisions.md#confirmed), [Automation policy](decisions.md#confirmed), and [Multi-GSTIN tenant modeling](decisions.md#confirmed). E-invoice and e-way-bill adapters (CMP-006, CMP-007) are explicitly **RESEARCH-GATED and DEFERRED**, not V1-authorized; see [architecture-decisions.md](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [architecture-decisions.md](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for research gates.
+- **T-002** settles MIT licensing and the Frappe Books study/reference-only boundary; no Frappe source, schema, prose, or assets are copied or adapted.
+- **T-003** establishes the approved separate book/tax schedules and SLM book default for [Fixed assets](decisions.md#confirmed); only exact statutory tax methods and rates remain OPEN_RESEARCH.
+- **T-004** extends [Multi-currency](decisions.md#confirmed) and [Exchange-rate source](decisions.md#confirmed) with original currency and immutable purpose-specific snapshots; missing statutory evidence affects only its compliance lane.
+- **T-005** defines V1 no-registration and regular GST coverage, domestic/interstate/export, GST credit reconciliation, and e-invoice/e-way upload files. Direct transports remain research-gated; composition, specialized regimes, and inventory remain deferred.
 - **T-006** (new): Partial completion is a distinct nonzero signal with per-item outcomes; numeric code remains internal/TBD (not exit code 9 without separate decision). Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation).
 - **T-007** (new): Full individual income-tax scope for sole proprietor owner, accounting-separated from business/GST books. Detailed personal-tax decisions (PT-001 through PT-016) remain separately gated. Advance-tax behavior is NOT approved by this scope decision; preserve as tentative personal-tax research detail.
 - **T-008** (new): Allow controlled user corrections/deletions after FY/report/audit/filing via preview/reason/confirmation/unlock. Use reversal/replacement, version or tombstone lineage. Prior artifacts remain immutable. Affected derived reports/filing/audit cases marked STALE/DRIFTED. No destructive overwrite or automatic government action. Supports [T-003](tentative-decisions.md#t-003) and fixed-asset module scope.
 - **T-009** (migrated from statutory-workflow-contracts.md examples): Always allow text and CSV operator exports of prepared/validated data; do not invent arbitrary JSON as statutory artifact; government upload only after official current format/utility/schema/portal verification. Form 140/141 export is research-gated and deferred. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393394).
 - **T-010** (migrated from statutory-workflow-contracts.md examples): Preserve original filing, ARN/status/rejection/notices/evidence and explicit correction lineage; no unverified automatic revised/amended/defective-return submission. Return-amendment adapters are research-gated and deferred. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-011** (new): TypeScript + Bun selected. Gate0 proof spikes (STK-001 through STK-006) are mandatory prerequisite (not authorized by docs review) to validate platform/database/arithmetic correctness on all target platforms (macOS arm64, Linux x64/arm64). If Gate0 reveals blockers, work stops for owner override decision. No implementation authorized until Gate0 passes.
+- **T-011** (new): TypeScript + Bun selected with Bun-native APIs first and no separate Node runtime, subprocess, or hooks in release. Gate0 is mandatory but not authorized; it must record the exact stable Bun version and exact individually approved dependency versions, checksums, and lockfile. Any post-blocker stack override is a new owner decision, and no implementation is authorized until separate approval.
 
 **None of these entries override settled decisions.** They provide implementation detail and working defaults for decisions that remain open or recommend future owner approval. Filing-specific settled decisions always override T-001.
 

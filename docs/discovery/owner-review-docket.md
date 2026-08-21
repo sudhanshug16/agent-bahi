@@ -13,16 +13,16 @@ T-001 through T-011 are owner-approved as settled decision frameworks, while rem
 | T-ID | Title | Recommended Option | First Affected Gate/Phase | Link |
 |------|-------|-------------------|--------------------------|------|
 | T-001 | External Statutory Submissions—Fallback Default | Prepare/Validate/Export + Manual Portal + Evidence Recording (for filings without filing-specific decision) | Phase 7 (Compliance) | [Tentative Decisions § T-001](tentative-decisions.md#t-001) |
-| T-002 | Frappe Books Reference Policy + License Recommendation | Reference-only (behavior/concept, no code reuse) + Apache-2.0 license | Phase 1 (Setup) | [Tentative Decisions § T-002](tentative-decisions.md#t-002) |
-| T-003 | Fixed-Asset Depreciation—Book vs. Tax | Separate schedules; SLM for book (configurable), statutory rules for tax (reversible method, immutable posted history) | Phase 5 (Assets) | [Tentative Decisions § T-003](tentative-decisions.md#t-003) |
-| T-004 | Exchange-Rate Provider and FX Workflow | Immutable document-rate snapshots + configurable default source with fallback chain | Phase 5 (FX/Multi-Currency) | [Tentative Decisions § T-004](tentative-decisions.md#t-004) |
-| T-005 | V1 Scope Focus—Business Profile and Tax Regimes | Regular-GST V1: GSTR-1 output plus GSTR-3B reconciliation/manual filing; payroll baseline; e-invoice/e-way bill deferred and research-gated | Phase 1 (Scope Definition) | [Tentative Decisions § T-005](tentative-decisions.md#t-005) |
+| T-002 | MIT License + Frappe Books Study/Reference Policy | MIT; study/reference-only behavior and concepts; no copying or adapting source, schema, prose, or assets | Phase 1 (Setup) | [Tentative Decisions § T-002](tentative-decisions.md#t-002) |
+| T-003 | Fixed-Asset Depreciation—Book vs. Tax | Approved separate schedules; SLM book default; only exact statutory tax methods/rates research-gated | Phase 5 (Assets) | [Tentative Decisions § T-003](tentative-decisions.md#t-003) |
+| T-004 | Exchange-Rate Provider and Purpose-Specific FX Workflow | Original currency plus immutable snapshots for book, settlement, GST, and income-tax/TDS; affected compliance lane only blocks/reviews | Phase 5 (FX/Multi-Currency) | [Tentative Decisions § T-004](tentative-decisions.md#t-004) |
+| T-005 | V1 Scope—No-Registration and Regular GST/Accounting Profiles | No-registration and regular GST; domestic/interstate/export; GST credit reconciliation; e-invoice/e-way upload files; composition/specialized/inventory deferred | Phase 1 (Scope Definition) | [Tentative Decisions § T-005](tentative-decisions.md#t-005) |
 | T-006 | Batch Partial-Success Exit Code Signal | Distinct nonzero signal for partial completion with per-item outcomes; numeric code remains internal/TBD (implementation contract in architecture-decisions.md CLI-004/CLI-006) | Phase 3 (Posting Engine) | [Tentative Decisions § T-006](tentative-decisions.md#t-006) |
 | T-007 | Full Individual Income-Tax Scope | Complete personal income-tax for sole proprietor, accounting-separated from business/GST books; detailed PT decisions remain separately gated | Phase 7 (Compliance) | [Tentative Decisions § T-007](tentative-decisions.md#t-007) |
 | T-008 | Controlled User Corrections and Deletions | Allow corrections/deletions after FY/report/audit/filing via preview/reason/unlock; reversal/replacement lineage; affected reports marked STALE/DRIFTED | Phase 5 (Assets) | [Tentative Decisions § T-008](tentative-decisions.md#t-008) |
 | T-009 | Form 140/141 Statutory Export | Fail-closed: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified | Phase 7 (TDS Compliance) | [Tentative Decisions § T-009](tentative-decisions.md#t-009) |
 | T-010 | Post-Filing Return Case/Evidence/Correction | Preserve case details and correction lineage; no return-amendment or defective-return submission adapter until s263(5)–(7) branches researched | Phase 7 (Income-Tax Compliance) | [Tentative Decisions § T-010](tentative-decisions.md#t-010) |
-| T-011 | Initial Language and Runtime | TypeScript + Bun selected; Gate0 proof spikes (STK-001–STK-006) are mandatory prerequisite (not authorized by docs review); no library preapproval; if Gate0 blockers arise, work stops for owner decision | Gate0 prerequisite → Implementation | [Tentative Decisions § T-011](tentative-decisions.md#t-011) |
+| T-011 | Initial Language and Runtime | TypeScript + Bun selected; Bun-native APIs first; no separate Node runtime/subprocess/hooks in release; Gate0 records exact Bun/dependency versions, checksums, and lockfile; no implementation authorization | Gate0 prerequisite → Implementation | [Tentative Decisions § T-011](tentative-decisions.md#t-011) |
 
 ---
 
@@ -65,7 +65,7 @@ A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope
 
 ## Next Steps
 
-1. **Gate0 proof spikes (STK-001–STK-006) are a mandatory prerequisite** (not authorized by this docs review) to validate TypeScript + Bun on all target platforms (macOS arm64, Linux x64/arm64). If Gate0 reveals blockers, work stops and returns to owner for override decision.
+1. **Gate0 proof spikes (STK-001–STK-006) are a mandatory prerequisite** (not authorized by this docs review) to validate TypeScript + Bun on all target platforms (macOS arm64, Linux x64/arm64) and to select and record the exact stable Bun version plus exact individually approved dependency versions, checksums, and lockfile. If Gate0 reveals blockers, work stops and any stack override is a new owner decision.
 2. **Gate0 must pass before implementation** begins. Passing Gate0 is prerequisite for implementation authorization, not a post-implementation review.
 3. **Implementation readiness** additionally requires a reviewed physical-schema RFC and approval of applicable implementation decisions. Later-phase tentative IDs (not yet owner-approved; currently awaiting review) remain scoped to their affected phase/action.
 
