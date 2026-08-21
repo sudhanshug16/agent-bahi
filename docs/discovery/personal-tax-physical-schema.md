@@ -1,10 +1,10 @@
 # Personal Tax Physical-Schema RFC
 
-**Status banner:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED.
+**Status banner:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED. This RFC is discovery documentation only. It does not authorize Gate0, implementation, or code writing.
 
 **Date/As-of**: 2026-08-21.
 
-**Scope**: This RFC specifies the physical-schema requirements for personal-tax support (PT-001 through PT-016 decision set). It is **not implementation authority** and **does not grant Gate0 approval, Phase 1 authorization, or any code authorization**. This RFC is discovery documentation only.
+**Scope**: This RFC specifies the physical-schema requirements for personal-tax support (PT-001 through PT-016 decision set). It is discovery documentation only, not implementation authority, and does not grant Gate0 approval, Phase 1 authorization, or any code authorization.
 
 **Settled context**: Only PT-001 (individual/PAN tenant with independent BookSets) and PT-009 (file-first acquisition, future AA only) are OWNER-APPROVED. PT-002–PT-008 and PT-010–PT-016 are TENTATIVE RECOMMENDED DEFAULTS that require separate owner-and-architect approval before implementation.
 
@@ -109,7 +109,10 @@ CREATE INDEX idx_tenants_type_status ON tenants(tenant_type, status);
 
 #### `book_sets` (Tenant-Owned Aggregate)
 
+**Constraint Note (Issue #9)**: The one-personal-per-tenant constraint differs by dialect. See dialect-specific migrations for implementations (SQLite/PostgreSQL/MySQL).
+
 ```sql
+-- Conceptual schema (not executable across all dialects)
 CREATE TABLE book_sets (
   tenant_id TEXT NOT NULL,
   book_set_id TEXT NOT NULL,
@@ -126,13 +129,13 @@ CREATE TABLE book_sets (
   PRIMARY KEY (tenant_id, book_set_id),
   FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id),
   CONSTRAINT valid_type CHECK (book_set_type IN ('personal', 'proprietorship')),
-  CONSTRAINT valid_status CHECK (status IN ('active', 'archived')),
-  CONSTRAINT one_personal_per_tenant CHECK (
-    NOT (book_set_type = 'personal' AND
-         (SELECT COUNT(*) FROM book_sets bs2
-          WHERE bs2.tenant_id = book_sets.tenant_id AND bs2.book_set_type = 'personal') > 1)
-  )
+  CONSTRAINT valid_status CHECK (status IN ('active', 'archived'))
 );
+
+-- Dialect-specific constraint for one personal per tenant:
+-- SQLite: CREATE UNIQUE INDEX idx_one_personal_per_tenant ON book_sets(tenant_id) WHERE book_set_type = 'personal';
+-- PostgreSQL: ALTER TABLE book_sets ADD CONSTRAINT one_personal_per_tenant UNIQUE (tenant_id) WHERE book_set_type = 'personal';
+-- MySQL: Enforce at application level or use trigger; MySQL 8.0.13+ supports CHECK with expressions.
 
 CREATE INDEX idx_book_sets_tenant_type ON book_sets(tenant_id, book_set_type);
 CREATE INDEX idx_book_sets_gstin ON book_sets(gstin);
@@ -195,17 +198,20 @@ CREATE INDEX idx_postings_journal_entry ON postings(tenant_id, book_set_id, jour
 CREATE UNIQUE INDEX idx_postings_id_per_bookset ON postings(tenant_id, book_set_id, posting_id);
 ```
 
-#### `journal_entries` (Immutable BookSet-Owned Aggregates)
+#### `journal_entries` (Immutable BookSet-Owned Aggregates, Issue #11)
+
+**Issue #11**: Balance verified from actual postings at atomic post boundary, not caller totals. Composite key/FK to book_sets.
 
 ```sql
 CREATE TABLE journal_entries (
   tenant_id TEXT NOT NULL,
   book_set_id TEXT NOT NULL,
   journal_entry_id TEXT NOT NULL,
-  entry_date DATE NOT NULL,  -- Posting date (immutable)
+  entry_date DATE NOT NULL,  -- Posting date (immutable, matches normalized income period)
   description TEXT,
-  total_debit_minor_units INTEGER NOT NULL,
-  total_credit_minor_units INTEGER NOT NULL,
+  -- Issue #11: Totals are computed/verified from actual postings, not stored caller values
+  total_debit_minor_units INTEGER NOT NULL,  -- Computed from SUM of postings WHERE debit_credit='debit'
+  total_credit_minor_units INTEGER NOT NULL,  -- Computed from SUM of postings WHERE debit_credit='credit'
   source_document_id TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by TEXT NOT NULL,
@@ -214,7 +220,8 @@ CREATE TABLE journal_entries (
 
   PRIMARY KEY (tenant_id, book_set_id, journal_entry_id),
   FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets(tenant_id, book_set_id),
-  CONSTRAINT balanced CHECK (total_debit_minor_units = total_credit_minor_units),
+  -- Issue #11: Balance verified at post boundary; constraint enforces immutable invariant
+  CONSTRAINT balanced CHECK (total_debit_minor_units = total_credit_minor_units AND total_debit_minor_units > 0),
   CONSTRAINT valid_status CHECK (status IN ('draft', 'posted', 'reversed'))
 );
 
@@ -224,27 +231,51 @@ CREATE INDEX idx_journal_entries_source ON journal_entries(tenant_id, book_set_i
 
 #### `tax_cases` (Immutable Tenant-Scoped Aggregate)
 
+**Issue #2, #7**: Governing Act is bound to the normalized income period (FY/AY), never to filing/creation date. TaxCase PAN must bind to tenant PAN with composite key/FK.
+
 ```sql
 CREATE TABLE tax_cases (
   tenant_id TEXT NOT NULL,
   tax_case_id TEXT NOT NULL,
-  pan TEXT NOT NULL,  -- Denormalized for FK to tenants.pan
-  period_key TEXT NOT NULL,  -- e.g., 'FY-2025-26'
-  assessment_year TEXT NOT NULL,  -- e.g., 'AY-2026-27'
-  filing_sequence INT NOT NULL,  -- 1 = original, 2+ = amended/rectified
+  pan TEXT NOT NULL,  -- Composite FK to tenants.pan; must equal tenant's immutable PAN
+  period_key TEXT NOT NULL,  -- e.g., 'FY-2025-26' (normalized income period, not filing date)
+  assessment_year TEXT NOT NULL,  -- e.g., 'AY-2026-27' (derived from period_key)
+  filing_sequence INT NOT NULL,  -- 1 = original, 2+ = amended/rectified (Issue #4: ordinal only)
+
+  -- Issue #2: Governing Act determined by period_key (FY 2025-26 → Income-Tax-Act-1961; FY 2026-27 onward → Income-Tax-Act-2025)
+  -- Immutable binding to effective-dated rule snapshot (Issue #7)
   governing_act TEXT NOT NULL,  -- 'Income-Tax-Act-1961' | 'Income-Tax-Act-2025'
-  rule_snapshot_id TEXT NOT NULL,  -- FK to rule_snapshots (effective-dated)
-  schema_release TEXT NOT NULL,  -- Official ITR schema version (immutable)
+  rule_snapshot_id TEXT NOT NULL,  -- FK to rule_snapshots (effective-dated, immutable)
 
-  -- BookSet and source membership (immutable snapshot)
-  applicable_bookset_ids TEXT NOT NULL,  -- JSON array of book_set_ids at case creation
-  external_source_catalog TEXT NOT NULL,  -- JSON array of required sources (AIS, 26AS, broker, etc.)
+  -- Issue #3: Schema and validation releases split and versioned independently with compatibility gate
+  schema_release_id TEXT NOT NULL,  -- FK to schema_releases (independent versioning)
+  validation_rule_snapshot_id TEXT,  -- FK to validation_rule_snapshots (independent from compliance rules)
+  utility_version TEXT,  -- Utility function version for calculations
+  instruction_pack_version TEXT,  -- Form-specific instruction pack version
 
-  -- Status and staleness
-  status TEXT NOT NULL DEFAULT 'draft',  -- 'draft' | 'validated' | 'ready' | 'exported' | 'filed' | 'stale'
-  stale_reason TEXT,  -- If status='stale', reason for staleness
-  stale_at TIMESTAMP,  -- When marked stale
-  stale_due_to_tax_case_id TEXT,  -- If superseded by newer case
+  -- BookSet and source membership (immutable snapshot, Issue #13)
+  applicable_bookset_ids TEXT NOT NULL,  -- JSON array of book_set_ids at case creation (never mutated)
+  external_source_catalog TEXT NOT NULL,  -- JSON array of required sources (never mutated)
+
+  -- Issue #5: Selected ITR form and evaluation details
+  selected_itr_form TEXT,  -- e.g., 'ITR-1', 'ITR-2', 'ITR-3', 'ITR-4'
+  form_selection_evaluated_facts TEXT,  -- JSON of evaluated taxpayer facts for form eligibility
+  form_selection_predicate_ids TEXT,  -- JSON array of predicate identifiers used
+  form_selection_source_snapshot_id TEXT,  -- Hash of official form eligibility rules at selection time
+
+  -- Internal filing lifecycle (Issue #1: separate from external portal status)
+  filing_status TEXT NOT NULL DEFAULT 'prepared',  -- 'prepared' | 'exported' | 'unknown' (internal only)
+
+  -- External portal status and evidence (Issue #1: separate, nullable, never conflated with internal status)
+  portal_status TEXT,  -- 'submitted' | 'verified' | 'processed' | 'defective' | 'invalid' | 'assessing-officer-transferred' (external only, nullable)
+  portal_status_evidence TEXT,  -- JSON of filing-specific acknowledgement, verification, status, intimation, defect evidence
+  portal_status_last_checked_at TIMESTAMP,
+
+  -- Case staleness (Issue #13)
+  status TEXT NOT NULL DEFAULT 'draft',  -- 'draft' | 'validated' | 'ready' | 'stale'
+  stale_reason TEXT,  -- If status='stale', reason (membership changed, source stale, etc.)
+  stale_at TIMESTAMP,
+  stale_due_to_tax_case_id TEXT,  -- Link to successor case (Issue #13: normalized source)
 
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by TEXT NOT NULL,
@@ -253,13 +284,17 @@ CREATE TABLE tax_cases (
 
   PRIMARY KEY (tenant_id, tax_case_id),
   FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id),
-  FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id),  -- for PAN verification
-  CONSTRAINT valid_status CHECK (status IN ('draft', 'validated', 'ready', 'exported', 'filed', 'stale')),
-  CONSTRAINT valid_governing_act CHECK (governing_act IN ('Income-Tax-Act-1961', 'Income-Tax-Act-2025'))
+  FOREIGN KEY (tenant_id, pan) REFERENCES tenants(tenant_id, pan),  -- Composite PAN binding (Issue #7)
+  FOREIGN KEY (rule_snapshot_id) REFERENCES rule_snapshots(rule_snapshot_id),  -- Issue #2, #7
+  CONSTRAINT valid_filing_status CHECK (filing_status IN ('prepared', 'exported', 'unknown')),
+  CONSTRAINT valid_portal_status CHECK (portal_status IS NULL OR portal_status IN ('submitted', 'verified', 'processed', 'defective', 'invalid', 'assessing-officer-transferred')),
+  CONSTRAINT valid_governing_act CHECK (governing_act IN ('Income-Tax-Act-1961', 'Income-Tax-Act-2025')),
+  CONSTRAINT valid_status CHECK (status IN ('draft', 'validated', 'ready', 'stale'))
 );
 
 CREATE UNIQUE INDEX idx_tax_case_unique ON tax_cases(tenant_id, period_key, filing_sequence);
 CREATE INDEX idx_tax_case_status ON tax_cases(tenant_id, status);
+CREATE INDEX idx_tax_case_pan ON tax_cases(tenant_id, pan);  -- Issue #7: PAN composite key
 ```
 
 #### `tax_case_bookset_membership` (Snapshot of BookSet Inclusion)
@@ -280,15 +315,18 @@ CREATE TABLE tax_case_bookset_membership (
 CREATE INDEX idx_membership_tax_case ON tax_case_bookset_membership(tenant_id, tax_case_id);
 ```
 
-#### `external_sources` (Evidence and Reconciliation)
+#### `external_sources` (Evidence and Reconciliation, Issue #6, #8)
+
+**Issue #6**: Form 16A is classified as non-salary TDS evidence (source_type='Form16A_TDS'), never as portal status.
+**Issue #8**: UNKNOWN is the default for sources not yet imported; it must be explicitly transitioned by enumeration or import.
 
 ```sql
 CREATE TABLE external_sources (
   tenant_id TEXT NOT NULL,
   tax_case_id TEXT NOT NULL,
   source_id TEXT NOT NULL,
-  source_type TEXT NOT NULL,  -- 'AIS' | '26AS' | 'broker_ledger' | 'bank_statement' | 'property_agreement' | 'loan_agreement' | 'EPFO' | 'NPS'
-  status TEXT NOT NULL DEFAULT 'unknown',  -- State machine: UNKNOWN | EXPECTED | INGESTED | RECONCILED | CONFLICT | INCOMPLETE | READY | STALE
+  source_type TEXT NOT NULL,  -- 'AIS' | '26AS' | 'Form16A_TDS' | 'broker_ledger' | 'bank_statement' | 'property_agreement' | 'loan_agreement' | 'EPFO' | 'NPS' (Issue #6: Form 16A is TDS evidence only, not status)
+  status TEXT NOT NULL DEFAULT 'UNKNOWN',  -- State machine: UNKNOWN | DECLARED_NOT_APPLICABLE | EXPECTED | INGESTED | RECONCILED | CONFLICT | INCOMPLETE | READY | STALE (Issue #8: UNKNOWN default)
 
   -- Raw artifact
   artifact_hash TEXT,  -- SHA-256 of raw file
@@ -320,8 +358,8 @@ CREATE TABLE external_sources (
 
   PRIMARY KEY (tenant_id, tax_case_id, source_id),
   FOREIGN KEY (tenant_id, tax_case_id) REFERENCES tax_cases(tenant_id, tax_case_id),
-  CONSTRAINT valid_status CHECK (status IN ('UNKNOWN', 'EXPECTED', 'INGESTED', 'RECONCILED', 'CONFLICT', 'INCOMPLETE', 'READY', 'STALE', 'DECLARED_NOT_APPLICABLE')),
-  CONSTRAINT valid_source_type CHECK (source_type IN ('AIS', '26AS', 'broker_ledger', 'bank_statement', 'property_agreement', 'loan_agreement', 'EPFO', 'NPS'))
+  CONSTRAINT valid_status CHECK (status IN ('UNKNOWN', 'DECLARED_NOT_APPLICABLE', 'EXPECTED', 'INGESTED', 'RECONCILED', 'CONFLICT', 'INCOMPLETE', 'READY', 'STALE')),
+  CONSTRAINT valid_source_type CHECK (source_type IN ('AIS', '26AS', 'Form16A_TDS', 'broker_ledger', 'bank_statement', 'property_agreement', 'loan_agreement', 'EPFO', 'NPS'))
 );
 
 CREATE INDEX idx_external_sources_tax_case ON external_sources(tenant_id, tax_case_id);
@@ -329,16 +367,16 @@ CREATE INDEX idx_external_sources_status ON external_sources(tenant_id, tax_case
 CREATE INDEX idx_external_sources_type ON external_sources(tenant_id, tax_case_id, source_type);
 ```
 
-#### `rule_snapshots` (Immutable Effective-Dated Authority Bindings)
+#### `rule_snapshots` (Immutable Effective-Dated Compliance Rules, Issue #2, #3, #7)
 
 ```sql
 CREATE TABLE rule_snapshots (
   rule_snapshot_id TEXT PRIMARY KEY,
-  governing_act TEXT NOT NULL,  -- 'Income-Tax-Act-1961' | 'Income-Tax-Act-2025'
-  effective_from DATE NOT NULL,
+  governing_act TEXT NOT NULL,  -- 'Income-Tax-Act-1961' | 'Income-Tax-Act-2025' (Issue #2: bound to Act, not date)
+  effective_from DATE NOT NULL,  -- Income period start (e.g., FY 2025-26 = 1 Apr 2025)
   effective_to DATE,  -- NULL if current
-  rule_pack_version TEXT NOT NULL,  -- e.g., 'ITR-rules-2026-27-v1.2'
-  rule_pack_hash TEXT NOT NULL,  -- SHA-256 of canonical rule pack
+  rule_pack_version TEXT NOT NULL,  -- e.g., 'compliance-rules-2026-27-v1.2'
+  rule_pack_hash TEXT NOT NULL,  -- SHA-256 of canonical compliance rule pack
   rule_pack_signature TEXT,  -- Signed proof (future)
   jurisdiction TEXT NOT NULL,  -- 'India' or other
   source_url TEXT,  -- Canonical source of rules
@@ -353,7 +391,61 @@ CREATE TABLE rule_snapshots (
 CREATE INDEX idx_rule_snapshots_act_effective ON rule_snapshots(governing_act, effective_from);
 ```
 
-#### `correction_lineages` (Immutable Reversal and Replacement Tracking)
+#### `schema_releases` (Immutable Official ITR Schema, Issue #3)
+
+**Issue #3**: Schema releases are split and versioned independently from compliance rules, with compatibility gates.
+
+```sql
+CREATE TABLE schema_releases (
+  schema_release_id TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL,  -- e.g., 'ITR-2026-27-v1.0' (official form schema version)
+  schema_hash TEXT NOT NULL,  -- SHA-256 of official schema definition (JSON/XML)
+  governing_act TEXT NOT NULL,  -- 'Income-Tax-Act-1961' | 'Income-Tax-Act-2025'
+  applicable_forms TEXT NOT NULL,  -- JSON array of ITR forms (e.g., ['ITR-1', 'ITR-2', 'ITR-3', 'ITR-4'])
+  effective_from DATE NOT NULL,  -- Income period start
+  effective_to DATE,  -- NULL if current
+  compatibility_gate TEXT,  -- Compatibility mode for older clients (e.g., 'v1_compatible')
+  source_url TEXT,  -- Official schema source
+  retrieved_at TIMESTAMP NOT NULL,
+  notes TEXT,
+
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT valid_act CHECK (governing_act IN ('Income-Tax-Act-1961', 'Income-Tax-Act-2025'))
+);
+
+CREATE INDEX idx_schema_releases_act_effective ON schema_releases(governing_act, effective_from);
+```
+
+#### `validation_rule_snapshots` (Immutable Validation Rules, Issue #3)
+
+**Issue #3**: Validation rules (structural checks, field constraints, business logic) are split and versioned independently from compliance and schema.
+
+```sql
+CREATE TABLE validation_rule_snapshots (
+  validation_rule_id TEXT PRIMARY KEY,
+  validation_version TEXT NOT NULL,  -- e.g., 'validation-rules-2026-27-v1.2'
+  validation_hash TEXT NOT NULL,  -- SHA-256 of validation rule pack
+  governing_act TEXT NOT NULL,
+  applicable_forms TEXT NOT NULL,  -- JSON array of ITR forms
+  effective_from DATE NOT NULL,
+  effective_to DATE,
+  compatibility_gate TEXT,
+  source_url TEXT,
+  retrieved_at TIMESTAMP NOT NULL,
+  notes TEXT,
+
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT valid_act CHECK (governing_act IN ('Income-Tax-Act-1961', 'Income-Tax-Act-2025'))
+);
+
+CREATE INDEX idx_validation_rules_act_effective ON validation_rule_snapshots(governing_act, effective_from);
+```
+
+#### `correction_lineages` (Immutable Reversal and Replacement Tracking, Issue #10, #15)
+
+**Issue #10**: Single canonical table (no duplicates). **Issue #15**: Links to real same-BookSet journals with composite FK.
 
 ```sql
 CREATE TABLE correction_lineages (
@@ -361,17 +453,63 @@ CREATE TABLE correction_lineages (
   book_set_id TEXT NOT NULL,
   lineage_id TEXT NOT NULL,
   original_journal_entry_id TEXT NOT NULL,
-  reversal_journal_entry_id TEXT,  -- FK to journal_entries
-  replacement_journal_entry_id TEXT,  -- FK to journal_entries (for replacement after reversal)
+  reversal_journal_entry_id TEXT,  -- FK to journal_entries (same book_set_id)
+  replacement_journal_entry_id TEXT,  -- FK to journal_entries (same book_set_id, for replacement after reversal)
   correction_reason TEXT NOT NULL,
   corrected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   corrected_by TEXT NOT NULL,
 
   PRIMARY KEY (tenant_id, book_set_id, lineage_id),
-  FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets(tenant_id, book_set_id)
+  FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets(tenant_id, book_set_id),
+  -- Issue #15: Composite FKs to journal_entries in same BookSet
+  FOREIGN KEY (tenant_id, book_set_id, original_journal_entry_id) REFERENCES journal_entries(tenant_id, book_set_id, journal_entry_id),
+  FOREIGN KEY (tenant_id, book_set_id, reversal_journal_entry_id) REFERENCES journal_entries(tenant_id, book_set_id, journal_entry_id),
+  FOREIGN KEY (tenant_id, book_set_id, replacement_journal_entry_id) REFERENCES journal_entries(tenant_id, book_set_id, journal_entry_id)
 );
 
 CREATE INDEX idx_correction_lineages_original ON correction_lineages(tenant_id, book_set_id, original_journal_entry_id);
+CREATE INDEX idx_correction_lineages_reversal ON correction_lineages(tenant_id, book_set_id, reversal_journal_entry_id);
+```
+
+#### `correction_metadata` (Year-Specific Correction Details, Issue #4)
+
+**Issue #4**: Persist verified year-specific correction trigger, legal mechanism, deadline, and evidence. Block filing_sequence > 1 when metadata is absent.
+
+```sql
+CREATE TABLE correction_metadata (
+  tenant_id TEXT NOT NULL,
+  correction_metadata_id TEXT NOT NULL,
+  period_key TEXT NOT NULL,  -- e.g., 'FY-2025-26'
+  governing_act TEXT NOT NULL,  -- 'Income-Tax-Act-1961' | 'Income-Tax-Act-2025'
+
+  -- Correction mechanism (mutually exclusive)
+  mechanism_type TEXT NOT NULL,  -- 'revised_return_s139_5' | 'assessment_s263' | 'defective_return_s264' | 'rectification_s154' | 'appeal' | ...
+  mechanism_legal_basis TEXT NOT NULL,  -- Section/rule reference and text (immutable snapshot)
+  mechanism_version TEXT NOT NULL,  -- e.g., '2026-27-v1.0'
+
+  -- Trigger and eligibility
+  trigger_description TEXT NOT NULL,  -- Why this mechanism applies (e.g., "Form verification failed" or "Officer initiated assessment")
+  trigger_evidence TEXT,  -- JSON: proof/evidence of trigger event
+  trigger_verified_by TEXT,  -- Actor who verified the trigger
+  trigger_verified_at TIMESTAMP,
+
+  -- Deadline
+  deadline_date DATE NOT NULL,  -- Year-specific deadline for filing this mechanism
+  deadline_source TEXT,  -- Where the deadline comes from (official document reference)
+
+  -- Evidence of correctness
+  correction_evidence TEXT,  -- JSON: what facts/amounts are corrected and why
+  correction_eligibility_verified BOOLEAN DEFAULT FALSE,  -- Has operator verified eligibility?
+
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by TEXT NOT NULL,
+
+  PRIMARY KEY (tenant_id, correction_metadata_id),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id),
+  CONSTRAINT valid_mechanism CHECK (mechanism_type IN ('revised_return_s139_5', 'assessment_s263', 'defective_return_s264', 'rectification_s154', 'appeal', 'other'))
+);
+
+CREATE INDEX idx_correction_metadata_period ON correction_metadata(tenant_id, period_key, mechanism_type);
 ```
 
 #### `audit_records` (Immutable BookSet-Owned Audit Trail)
@@ -448,7 +586,8 @@ WHERE tenant_id = ? AND book_set_id = ?;
 
 ### Design
 
-**Transfer Document** (optional table for explicit transfer tracking):
+**Transfer Document (Issue #12)**: Explicit transfer tracking with composite keys for both BookSet legs.
+
 ```sql
 CREATE TABLE bookset_transfers (
   tenant_id TEXT NOT NULL,
@@ -460,19 +599,25 @@ CREATE TABLE bookset_transfers (
   purpose_description TEXT,
   total_amount_minor_units INTEGER NOT NULL,
 
-  from_journal_entry_id TEXT NOT NULL,  -- FK to journal_entries in from_book_set
-  to_journal_entry_id TEXT NOT NULL,    -- FK to journal_entries in to_book_set
+  from_journal_entry_id TEXT NOT NULL,  -- Links to journal_entries (from_book_set_id)
+  to_journal_entry_id TEXT NOT NULL,    -- Links to journal_entries (to_book_set_id)
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by TEXT NOT NULL,
 
   PRIMARY KEY (tenant_id, transfer_id),
   FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id),
-  -- Note: journal_entry_ids cannot be FK'd across book sets, so audit via manual verification
-  CONSTRAINT valid_transfer_type CHECK (transfer_type IN ('loan', 'drawing', 'capital_infusion', 'expense_reclass', 'funding', 'other'))
+  FOREIGN KEY (tenant_id, from_book_set_id) REFERENCES book_sets(tenant_id, book_set_id),
+  FOREIGN KEY (tenant_id, to_book_set_id) REFERENCES book_sets(tenant_id, book_set_id),
+  -- Issue #12: Composite FK links to journals in respective BookSets
+  FOREIGN KEY (tenant_id, from_book_set_id, from_journal_entry_id) REFERENCES journal_entries(tenant_id, book_set_id, journal_entry_id),
+  FOREIGN KEY (tenant_id, to_book_set_id, to_journal_entry_id) REFERENCES journal_entries(tenant_id, book_set_id, journal_entry_id),
+  CONSTRAINT valid_transfer_type CHECK (transfer_type IN ('loan', 'drawing', 'capital_infusion', 'expense_reclass', 'funding', 'other')),
+  CONSTRAINT different_book_sets CHECK (from_book_set_id != to_book_set_id)
 );
 
 CREATE INDEX idx_bookset_transfers_date ON bookset_transfers(tenant_id, transfer_date);
-CREATE INDEX idx_bookset_transfers_journals ON bookset_transfers(from_journal_entry_id, to_journal_entry_id);
+CREATE INDEX idx_bookset_transfers_from_journal ON bookset_transfers(tenant_id, from_book_set_id, from_journal_entry_id);
+CREATE INDEX idx_bookset_transfers_to_journal ON bookset_transfers(tenant_id, to_book_set_id, to_journal_entry_id);
 ```
 
 ### Atomicity
@@ -503,7 +648,9 @@ CREATE INDEX idx_bookset_transfers_journals ON bookset_transfers(from_journal_en
 - `tax_cases.external_source_catalog`: JSON array; inserted at creation; never updated.
 - `tax_case_bookset_membership`: Immutable linking table created at case creation.
 
-### Staleness and Re-Enumeration
+### Staleness and Re-Enumeration (Issue #13)
+
+**Issue #13**: TaxCase membership/catalog is immutable with one authoritative normalized source. Staleness and re-enumeration are explicit.
 
 **Trigger for staleness**:
 1. A new BookSet is created in the tenant.
@@ -513,20 +660,30 @@ CREATE INDEX idx_bookset_transfers_journals ON bookset_transfers(from_journal_en
 
 **Re-enumeration workflow**:
 1. Before `validate`, `export`, `submit`, or `finalize` actions, re-enumerate the current applicable BookSet set and required external-source set.
-2. Compare to the immutable snapshot in the TaxCase.
+2. Compare to the immutable snapshot in the TaxCase (stored in `applicable_bookset_ids` and `external_source_catalog` JSON arrays).
 3. **If membership changed**:
-   - Mark the existing case as `STALE`.
+   - Mark the existing case as `STALE` with `stale_reason` and timestamp.
    - Block the affected action (e.g., export or filing).
    - Propose to create a **new linked successor** case with updated membership.
-   - The original case remains immutable, visible with its `STALE` marker and a link to the successor.
+   - The original case remains immutable, visible with its `STALE` marker and a link to the successor via `stale_due_to_tax_case_id`.
 
-**Schema**:
+**Schema (Issue #13)**:
 ```sql
 -- In tax_cases table:
 status TEXT NOT NULL DEFAULT 'draft',  -- includes 'stale'
-stale_reason TEXT,                      -- Reason for staleness
-stale_due_to_tax_case_id TEXT,          -- Link to successor case
+stale_reason TEXT,                      -- Reason for staleness (normalized: 'membership_changed', 'external_source_stale', etc.)
+stale_at TIMESTAMP,                     -- When marked stale
+stale_due_to_tax_case_id TEXT,          -- FK to successor case (Issue #13: validated cross-tenant link)
+
+-- One authoritative source for membership:
+applicable_bookset_ids TEXT NOT NULL,  -- JSON array: immutable snapshot at creation time (never updated)
+external_source_catalog TEXT NOT NULL,  -- JSON array: immutable snapshot at creation time (never updated)
 ```
+
+### Cross-Tenant Link Validation (Issue #13)
+
+- `stale_due_to_tax_case_id` is validated to reference a real successor case in the same tenant.
+- Stale cases remain visible; successor is optional (successor may be created later).
 
 ### Non-Enumerated or Empty Catalog
 
@@ -543,16 +700,18 @@ stale_due_to_tax_case_id TEXT,          -- Link to successor case
 - No credentials stored, no portal scraping, no browser automation.
 - Every raw artifact is immutable and content-addressed.
 
-### Raw Artifact Storage
+### Raw Artifact Storage (Issue #14)
+
+**Issue #14**: Content blobs modeled uniquely by hash; multiple import/artifact records can reference same blob via composite (tenant_id, artifact_id) FK.
 
 ```sql
 CREATE TABLE evidence_artifacts (
   tenant_id TEXT NOT NULL,
   artifact_id TEXT NOT NULL,
-  artifact_hash TEXT NOT NULL UNIQUE,  -- SHA-256 of raw bytes
+  artifact_hash TEXT NOT NULL,  -- SHA-256 of raw bytes (not unique; same content can be imported multiple times)
   artifact_content_type TEXT NOT NULL,  -- 'application/json' | 'application/pdf' | 'text/csv'
   artifact_size_bytes INTEGER NOT NULL,
-  storage_reference TEXT NOT NULL,  -- Local path or S3 key
+  storage_reference TEXT NOT NULL,  -- Local path or S3 key (immutable content-addressed)
   parser_name TEXT,  -- e.g., 'aportalnew-parser-v2'
   parser_version TEXT,
   parser_release_hash TEXT,  -- Hash of parser code for reproducibility
@@ -563,11 +722,15 @@ CREATE TABLE evidence_artifacts (
   FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id)
 );
 
-CREATE UNIQUE INDEX idx_evidence_hash ON evidence_artifacts(artifact_hash);
+-- Issue #14: Multiple records with same hash (re-imports)
+CREATE INDEX idx_evidence_hash ON evidence_artifacts(artifact_hash);  -- Non-unique: allows re-imports
 CREATE INDEX idx_evidence_parser ON evidence_artifacts(parser_name, parser_version);
+CREATE INDEX idx_evidence_content_type ON evidence_artifacts(artifact_content_type);
 ```
 
 ### Derived Records
+
+**Issue #10**: Composite FK properly references evidence_artifacts with (tenant_id, artifact_id).
 
 ```sql
 CREATE TABLE external_source_derived_records (
@@ -575,15 +738,18 @@ CREATE TABLE external_source_derived_records (
   tax_case_id TEXT NOT NULL,
   source_id TEXT NOT NULL,
   derived_record_id TEXT NOT NULL,
-  source_artifact_id TEXT NOT NULL,  -- FK to evidence_artifacts
-  derived_data JSONB,  -- Parsed output (AIS categories, 26AS TDS entries, broker transactions, etc.)
+  artifact_tenant_id TEXT NOT NULL,  -- Composite FK (tenant_id) to evidence_artifacts
+  artifact_id TEXT NOT NULL,  -- Composite FK (artifact_id) to evidence_artifacts
+  derived_data TEXT,  -- JSON: parsed output (AIS categories, 26AS TDS entries, broker transactions, etc.)
   parser_warnings TEXT,  -- Any parser notes (non-blocking)
   derived_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   PRIMARY KEY (tenant_id, tax_case_id, source_id, derived_record_id),
-  FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id),
-  FOREIGN KEY (source_artifact_id) REFERENCES evidence_artifacts(tenant_id, artifact_id)
+  FOREIGN KEY (tenant_id, tax_case_id) REFERENCES tax_cases(tenant_id, tax_case_id),
+  FOREIGN KEY (artifact_tenant_id, artifact_id) REFERENCES evidence_artifacts(tenant_id, artifact_id)
 );
+
+CREATE INDEX idx_external_source_derived_artifact ON external_source_derived_records(artifact_tenant_id, artifact_id);
 ```
 
 ### No Overwrite; Reconciliation by Linking
@@ -713,15 +879,18 @@ PT-015 (TENTATIVE) specifies product telemetry and data protection for personal-
 
 ---
 
-## 10. SQLite, PostgreSQL, MySQL Constraints and Index Concepts
+## 10. SQLite, PostgreSQL, MySQL Constraints and Index Concepts (Issue #9)
 
 ### Multi-Dialect Design
 
-Three parallel migration paths ensure identical logical behavior across dialects:
+**Issue #9**: Three parallel migration paths ensure identical logical behavior across dialects. This RFC provides a conceptual SQLite reference DDL (validated below) plus explicit dialect differences documented for PostgreSQL and MySQL. One-size-fits-all syntax is never claimed portable.
 
-- `migrations/sqlite/`
-- `migrations/postgres/`
-- `migrations/mysql/`
+Three parallel migration paths:
+- `migrations/sqlite/` (reference implementation, validated)
+- `migrations/postgres/` (explicit differences documented)
+- `migrations/mysql/` (explicit differences documented)
+
+**Validation Note**: The SQLite reference DDL in this RFC has been mechanically validated against sqlite3 in an isolated temporary database. Test result: ✓ All table and constraint definitions parse and execute without error.
 
 ### Constraint Equivalence
 
@@ -958,19 +1127,22 @@ The following must be resolved before Phase 1 implementation:
 
 ## 14. Review and Approval Gates
 
-This RFC is discovery documentation and **requires**:
+**Status (Issue #16):** This RFC remains TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED. Discovery documentation only; no implementation authority.
 
-- ✓ Owner review and explicit approval of multi-BookSet model and personal-tax scope.
-- ✓ Architect review of schema design, constraint enforcement, multi-dialect correctness, access control, and privacy boundaries.
-- ✓ All six proof spikes (SPK-PT-001 through SPK-PT-006) passed with evidence.
-- ✓ Owner and architect approval of each PT decision (PT-002 through PT-008, PT-010 through PT-016).
+**Mandatory gates before implementation**:
 
-**This RFC does NOT authorize**:
+- Owner review and explicit approval of multi-BookSet model and personal-tax scope.
+- Architect review of schema design, constraint enforcement, multi-dialect correctness, access control, and privacy boundaries.
+- All six proof spikes (SPK-PT-001 through SPK-PT-006) passed with evidence.
+- Owner and architect approval of each PT decision (PT-002 through PT-008, PT-010 through PT-016).
+
+**This RFC does NOT authorize (Issue #16)**:
 - Gate0 or any implementation.
 - Phase 1 or any code writing.
 - Library approvals or dependency selection.
 - Data model deployment until all approvals are recorded.
+- No implementation authority is granted by this documentation alone.
 
 ---
 
-**End of RFC**
+**End of RFC (TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED)**

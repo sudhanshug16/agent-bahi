@@ -141,11 +141,22 @@ All existing tenant-wide identifier uniqueness remains in force until separately
 **Open choice:** Exact account vocabulary and UI/CLI shape await the canonical migration and architecture review.
 
 <a id="pt-004"></a>
-### PT-004: Personal bank, investment, property, rent, and loan subledgers
+### PT-004 (RESERVED): Year-Specific Correction Trigger/Mechanism/Deadline (Issue #4)
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** The personal BookSet supports bank, investment and tax-lot, property and rent, and loan subledgers with provenance and reconciliation.
+**Issue #4 Clarification:** filing_sequence is ordinal only (1 = original, 2+ = amended). Year-specific correction metadata (trigger type, legal mechanism, deadline, evidence) must be persisted separately per year and mechanism (e.g., section 139(5) revised return, section 263 assessment, section 264 defective return). A TaxCase with filing_sequence > 1 must have complete correction metadata or block the filing action with REVIEW/BLOCK.
+
+**Failure mode:** A taxpayer attempts to file an amended return without storing which mechanism applies for that year, or deadline information is lost after filing.
+
+**Open choice:** Schema tables for year-specific correction metadata await owner-approved mechanism research (PT-016 successor cases).
+
+<a id="pt-004b"></a>
+### PT-004b: Personal bank, investment, property, rent, and loan subledgers
+
+**Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
+
+**Decision (PT-004b):** The personal BookSet supports bank, investment and tax-lot, property and rent, and loan subledgers with provenance and reconciliation.
 
 **Boundary:** Holding rules are asset-class and effective-date driven. Acquisition, disposal, income, financing, ownership, and evidence records remain distinct. Interest treatment follows the use of borrowed funds and the applicable rule snapshot, never the lender label.
 
@@ -282,17 +293,17 @@ No branch example, form example, section, rate, threshold, or due date is embedd
 Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor label, or BookSet label cannot substitute for the role and transaction facts.
 
 <a id="pt-013"></a>
-### PT-013: Filing-specific states and evidence
+### PT-013: Filing-specific states and evidence (Issue #1)
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision:** The filing lifecycle records exactly these states: `prepared`, `exported`, `submitted-pending-verification`, `verified`, `processed`, `defective`, `invalid`, `assessing-officer-transferred`, `unknown`.
+**Decision (Issue #1):** Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status: `submitted`, `verified`, `processed`, `defective`, `invalid`, `assessing-officer-transferred` (only when filing-specific evidence exists).
 
-Record filing-specific acknowledgement, verification or ITR-V evidence, portal status, intimation, and defect evidence where present. There is no universal ARN. An e-TDS delay is not a product state. Form 16A is not return-processing evidence. Do not claim a physical ITR-V upload route without source evidence.
+Record filing-specific acknowledgement, verification or ITR-V evidence, portal status, intimation, and defect evidence where present. There is no universal ARN. An e-TDS delay is not a product state. Form 16A is not return-processing evidence (only TDS evidence, never portal status). Do not claim a physical ITR-V upload route without source evidence.
 
-The product records evidence supplied by the taxpayer or CA; it does not infer a later portal state from elapsed time or from a local export.
+The product records evidence supplied by the taxpayer or CA; it does not infer a later portal state from elapsed time or from a local export. Internal states (prepared, exported) are never mistaken for external government status.
 
-**Failure mode:** A prepared export is reported as filed, or an acknowledgement is reported as processed without filing-specific status evidence.
+**Failure mode:** A prepared export is reported as filed, or an acknowledgement is reported as processed without filing-specific status evidence. Or: Form 16A is classified as portal status instead of TDS evidence.
 
 <a id="pt-014"></a>
 ### PT-014: Tenant-wide read-only status and explicit mutation scope
