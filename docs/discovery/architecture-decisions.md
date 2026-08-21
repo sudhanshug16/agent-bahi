@@ -144,7 +144,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
 
 **ARC-012: Fixed assets as separate module**
 
-- **Recommendation**: Fixed assets are a separate module (future Phase) with asset lifecycle, configurable book/tax depreciation schedules, depreciation runs, and traceable journals. The separate schedule model is **T-003 TENTATIVE - NOT OWNER-APPROVED** and reversible; exact statutory methods (WDV, SLM, etc.) and book-vs-tax differences remain **OPEN RESEARCH**.
+- **Recommendation**: Fixed assets are a separate module (future Phase) with asset lifecycle, configurable book/tax depreciation schedules, depreciation runs, and traceable journals. The separate schedule model and SLM as default book method are **T-003 OWNER-APPROVED**; exact statutory methods and tax rule-pack contents remain **OPEN RESEARCH**.
 - **Alternative**: Defer fixed assets entirely; model as expense only.
 - **Rationale**: India compliance requires asset register and depreciation. Separate module prevents ledger coupling. Statutory method research is genuinely external; do not guess.
 - **Silent failure prevented**: Incomplete asset tracking, depreciation method audit failures, inability to support book vs. tax schedules.

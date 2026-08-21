@@ -6,20 +6,20 @@
 
 ---
 
-## Tentative Decisions (All NOT OWNER-APPROVED; Phase-Scoped Gates)
+## Tentative Decisions (T-001 through T-010 OWNER-APPROVED; Phase-Scoped Gates)
 
-See [Tentative Decisions](tentative-decisions.md) for full details. All entries below are provisional and await owner review. They do not authorize implementation; only the decision applicable to a phase or action gates that work.
+See [Tentative Decisions](tentative-decisions.md) for full details. Entries T-001 through T-010 are owner-approved and binding. T-011 remains provisional and awaits owner review. They do not authorize implementation; only the decision applicable to a phase or action gates that work.
 
 - **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#t-001).
-- **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; Apache-2.0 recommended; no code reuse). See [Tentative Decisions](tentative-decisions.md#t-002).
+- **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; MIT license; no code reuse). See [Tentative Decisions](tentative-decisions.md#t-002).
 - **T-003**: Fixed-asset depreciation policy (separate book/tax schedules; SLM method parameterized and reversible; not implementation authorization).
-- **T-004**: FX provider and fallback selection (provisional; gates Phase 5 spike).
-- **T-005**: Regular-GST V1 profile baseline (AATO applicability, effective-dated rules, GSTR-1 output plus GSTR-3B reconciliation/manual filing; e-invoice/e-way bill deferred and research-gated; composition scheme deferred).
-- **T-006**: Batch partial-success numeric proposal (exit code for partially-committed multi-item operations; tests must not assume specific numeric value).
-- **T-007**: Provenance-only operator-entered advance-tax estimate under s404/s408; no auto-projection, computed tax/liability, installment calculation, sufficiency validation, or payment advice. Any derived amount is REVIEW/BLOCK pending verified rules and full computation inputs.
-- **T-008**: Retroactive depreciation correction policy (immutability and reversal pattern).
-- **T-009**: Form140/141 statutory export research only (non-payroll TDS s393 routing forms; not s392 salary withholding and not Form143/TCS). Form140/141 export/transport remains blocked pending research.
-- **T-010**: Post-filing correction and revised-return boundary (amended returns, form corrections after filing).
+- **T-004**: FX provider and fallback selection (purpose-specific immutable snapshots; no cross-purpose rate substitution; missing statutory source blocks affected lane only).
+- **T-005**: Regular-GST V1 profile baseline (no-registration + regular GST domestic/interstate/export; GSTR-1; GSTR-3B and GST credit reconciliation; e-invoice/e-way-bill upload-file workflows; composition/inventory/specialized regimes deferred).
+- **T-006**: Batch partial-success distinct nonzero exit code (per-item outcomes; numeric code internal/TBD, not fixed in advance).
+- **T-007**: Full individual income-tax scope (sole proprietor, accounting-separated from business/GST; detailed PT implementation gated).
+- **T-008**: Controlled user corrections and deletions (allow even after FY/report/audit/filing via explicit unlock preview/reason/confirmation; reversal/replacement lineage; affected work marked STALE).
+- **T-009**: Form 140/141 statutory export (fail-closed pending official current format/utility/schema/portal verification; internal neutral data allowed; no statutory export adapter without verified schema).
+- **T-010**: Post-filing return case/evidence/correction (preserve ARN/status/rejection/notices/correction lineage; no unverified automatic revised/amended/defective-return submission).
 - **T-011**: Initial language/runtime candidate only: TypeScript + Bun is a provisional recommendation evaluated by reversible Gate0 proof spikes. It is not approval of TypeScript + Bun, any library/tool (including ORM, parser, validator, decimal package, database driver, migration tool, or build tool), or implementation. Owner direction after docket review is required before spikes; owner approves, changes, or rejects T-011 after evidence before Phase 1.
 
 ---

@@ -673,11 +673,8 @@ Each module owns and must never own the listed state:
 
 **Canonical ledger principle**: Ledger/Posting is authoritative. Reports never write. Tax/Compliance never infer filing status from portal assumption; records explicit evidence.
 
-**Fixed-asset method status**: Separate book and tax schedules are the stable
-model seam, but the exact methods/defaults remain **T-003 TENTATIVE -
-NOT OWNER-APPROVED**. See [Tentative Decision T-003](discovery/tentative-decisions.md#t-003).
-The choice is reversible; no SLM, WDV, rate, or tax schedule behavior is an
-implementation authorization.
+**Fixed-asset method status**: Separate book and tax schedules and SLM as the default book method are **T-003 OWNER-APPROVED**. See [Owner Decision T-003](discovery/tentative-decisions.md#t-003).
+Exact statutory tax methods and rule-pack contents remain OPEN RESEARCH; the separate schedule model is reversible and settled.
 
 **Capitalization ownership**: When an AP bill line carries asset-capitalization
 metadata, that bill posting is the sole owner: `Dr Fixed Asset | Cr AP` and the
