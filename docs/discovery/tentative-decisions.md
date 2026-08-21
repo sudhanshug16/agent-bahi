@@ -450,7 +450,7 @@ Awaiting owner review. This entry documents the tentative default (block with co
 **Recommended Working Default**:
 - **Fail-closed**: Internal neutral data (TDS transaction details, payee records, amounts, dates) may be prepared and stored.
 - **No statutory export adapter** in V1 until official current utility, schema, validation rules, and portal submission flow are researched and snapshotted.
-- Official ITD Form 140 guidance uses RPU (Remittance Processing Unit) → FVU (File Validation Unit) → .fvu format, but applicable form/transport and current utility vary by effective regime and may change.
+- Official ITD Form 140 guidance uses RPU (Return Preparation Utility) → FVU (File Validation Utility) → .fvu format, but applicable form/transport and current utility vary by effective regime and may change.
 - Deferred until: (1) Current Form 140 guidance and Rule 219 requirements verified from official ITD sources; (2) Applicable form code, field mapping, and export schema snapshotted; (3) Portal flow (upload method, validation, acceptance criteria) researched; (4) Current utility of exported artifact confirmed.
 
 **Alternatives**:
