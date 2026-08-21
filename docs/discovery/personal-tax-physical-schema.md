@@ -57,7 +57,7 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.5 `postings`
 
-- **Fields:** `tenant_id`, `book_set_id`, `posting_id`, `journal_entry_id`, `account_id`, signed side (`debit` or `credit`), non-zero amount, currency, posting date, source reference, rule snapshot reference where required, creation metadata.
+- **Fields:** NOT NULL: `tenant_id`, `book_set_id`, `posting_id`, `journal_entry_id`, `account_id`, signed side (`debit` or `credit`), non-zero amount, currency, posting date. Nullable: source reference, rule snapshot reference (required only where applicable rule exists).
 - **Primary key:** `(tenant_id, book_set_id, posting_id)`.
 - **Unique keys:** posting identity within its BookSet.
 - **Foreign keys:** `(tenant_id, book_set_id, journal_entry_id)` to `journal_entries`; `(tenant_id, book_set_id, account_id)` to `accounts`; any evidence or rule reference uses a composite tenant-aware database relationship and is tenant-compatible.
@@ -66,11 +66,11 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.6 `bookset_transfers`
 
-- **Fields:** `tenant_id`, `transfer_id`, `source_book_set_id`, `destination_book_set_id`, amount, currency, purpose, `evidence_artifact_id`, `source_journal_entry_id`, `destination_journal_entry_id`, posted status, creation metadata.
+- **Fields:** NOT NULL: `tenant_id`, `transfer_id`, `source_book_set_id`, `destination_book_set_id`, amount, currency, purpose, `evidence_artifact_id`, `source_journal_entry_id`, `destination_journal_entry_id`. Nullable: posted status, creation metadata non-identity fields.
 - **Primary key:** `(tenant_id, transfer_id)`.
 - **Unique keys:** transfer identity within the tenant.
-- **Foreign keys:** `(tenant_id, source_book_set_id)` to book_sets; `(tenant_id, destination_book_set_id)` to book_sets; `(tenant_id, source_book_set_id, source_journal_entry_id)` to journal_entries; `(tenant_id, destination_book_set_id, destination_journal_entry_id)` to journal_entries; `(tenant_id, evidence_artifact_id)` to evidence_artifacts.
-- **Constraints:** CHECK source_book_set_id != destination_book_set_id (source and destination must differ).
+- **Foreign keys:** `(tenant_id, source_book_set_id)` to book_sets; `(tenant_id, destination_book_set_id)` to book_sets; `(tenant_id, source_book_set_id, source_journal_entry_id)` to journal_entries; `(tenant_id, destination_book_set_id, destination_journal_entry_id)` to journal_entries; `(tenant_id, evidence_artifact_id)` to evidence_artifacts where evidence can be non-receipt explanatory evidence but the evidence reference is required NOT NULL.
+- **Constraints:** CHECK `source_book_set_id != destination_book_set_id` (source and destination must differ); both source and destination journal legs required NOT NULL.
 - **Immutability:** a posted transfer and its leg bindings are immutable.
 - **Gates:** source and destination BookSets are in same tenant; composite FKs enforce tenant/BookSet/journal scope for each leg; evidence artifact is tenant-scoped; both legs posted in one atomic transaction; both legs have same amount, currency, purpose, evidence; actual postings agree with transfer; any failure rolls back both legs and transfer row.
 
@@ -115,19 +115,19 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.11 `tax_cases`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `pan`, normalized `period_key`, assessment year, ordinal `filing_sequence`, filing trigger, governing Act, `rule_snapshot_id`, `authority_pack_id`, `authority_pack_content_hash`, selected form, frozen eligibility facts/predicate references, internal filing lifecycle, case readiness state, staleness reason, nullable `successor_tax_case_id`.
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `pan`, normalized `period_key`, assessment year, ordinal `filing_sequence`, filing trigger, governing Act, `rule_snapshot_id`, `authority_pack_id`, `authority_pack_content_hash`. Nullable: selected form (if not frozen at creation), internal filing lifecycle, case readiness state, staleness reason, `successor_tax_case_id`.
 - **Primary key:** `(tenant_id, tax_case_id)`.
 - **Unique keys:** `(tenant_id, period_key, filing_sequence)`; a TaxCase is one non-posting case per taxpayer, period, and sequence.
-- **Foreign keys:** composite FK `(tenant_id, pan)` to the matching unique candidate key in tenants; period to `income_periods`; rule snapshot `rule_snapshot_id`; composite FK `(authority_pack_id, authority_pack_content_hash)` to authority_packs exact immutable identity (ensures all four components sealed); nullable successor FK `(tenant_id, successor_tax_case_id)` to another TaxCase in the same tenant with the same tenant_id. If non-null, successor_tax_case_id must differ from tax_case_id (CHECK `successor_tax_case_id != tax_case_id`).
-- **Successor Lineage:** When a membership or source catalog change marks this case stale, an atomic transaction creates a successor TaxCase with a new filing_sequence, new tax_case_id, identical tenant_id, and sets this case's successor_tax_case_id to point to the new case. Both predecessor and successor share the same tenant_id; successor has a higher filing_sequence. Successors use the same PAN and period.
+- **Foreign keys:** composite FK `(tenant_id, pan)` to the matching unique candidate key in tenants; period to `income_periods`; rule snapshot `rule_snapshot_id`; composite FK `(authority_pack_id, authority_pack_content_hash)` to authority_packs exact immutable identity (ensures all four components sealed).
+- **Successor Lineage:** Successor cases are tracked via the separate tax_case_lineage relation (2.25), not via direct pointer. No successor_tax_case_id field exists on tax_cases.
 - **Immutability:** PAN, period, sequence, trigger, Act, authority pack ID, selected form facts, and membership snapshot are immutable. Internal state transitions and staleness are audited; an original case is never edited into a successor.
 - **Internal states:** preparation/readiness state is separate from external portal status. Internal filing lifecycle is exactly `prepared`, `exported`, or `unknown`; case readiness remains an internal product state.
-- **Portal status:** only these five normalized portal labels are allowed: `submitted`, `verified`, `processed`, `defective`, and `case_transferred_to_assessing_officer`, corresponding to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq). Each non-null portal label requires a bound `portal_status_evidence` row retaining the exact raw label and evidence. An invalid return is a separate derived legal consequence/internal condition only when supported by bound defect or notice evidence; it is never a portal label. Form 16A is never a portal status.
+- **Portal status:** only these five normalized portal labels are allowed: `SUBMITTED`, `VERIFIED`, `PROCESSED`, `DEFECTIVE`, and `CASE_TRANSFERRED_TO_ASSESSING_OFFICER`, corresponding to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq). Each non-null portal label requires a bound `portal_status_evidence` row retaining the exact raw label and evidence. An invalid return is a separate derived legal consequence/internal condition only when supported by bound defect or notice evidence; it is never a portal label. Form 16A is never a portal status.
 - **Gates:** TaxCase creation binds the matching tenant PAN, period-derived Act, compatible rule snapshot, compatible authority pack via exact (ID, content_hash) ensuring all four components sealed, normalized membership, and non-empty source catalog atomically. Form eligibility must be evaluated from the frozen facts and official predicates before `ready`, validation, or export. A changed membership/source catalog marks the case stale and blocks the affected action.
 
 ### 2.12 `filing_snapshots`
 
-- **Fields:** `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, `authority_pack_content_hash`, declared `tax_computation_version`, declared `tax_computation_hash` (expected hash for canonical computation), as_of_instant timestamp, snapshot_content_hash (computed over inputs: ordered BookSet entries + artifact hashes + computation version/hash).
+- **Fields:** NOT NULL: `snapshot_id`, `tenant_id`, `tax_case_id`, `authority_pack_id`, `authority_pack_content_hash`, declared `tax_computation_version`, declared `tax_computation_hash` (expected hash for canonical computation), as_of_instant timestamp, snapshot_content_hash (computed over inputs: ordered BookSet entries + artifact hashes + computation version/hash).
 - **Primary key:** `snapshot_id`.
 - **Unique keys:** `UNIQUE(tenant_id, tax_case_id, snapshot_id)` and `(tenant_id, tax_case_id, as_of_instant, snapshot_content_hash)` — tenant-scoped uniqueness ensures no cross-case snapshot confusion.
 - **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; composite FK `(authority_pack_id, authority_pack_content_hash)` to authority_packs.
@@ -141,7 +141,7 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Fields:** `tenant_id`, `tax_case_id`, `snapshot_id`, `book_set_id`, ledger_version, event_cursor.
 - **Primary key:** `(tenant_id, tax_case_id, snapshot_id, book_set_id)`.
 - **Unique keys:** one row per snapshot per BookSet; enforces nonempty membership before seal.
-- **Foreign keys:** composite FK `(tenant_id, tax_case_id, snapshot_id)` to filing_snapshots; `(tenant_id, book_set_id)` to book_sets.
+- **Foreign keys:** composite FK `(tenant_id, tax_case_id, snapshot_id)` to filing_snapshots; `(tenant_id, book_set_id)` to book_sets; composite FK `(tenant_id, tax_case_id, book_set_id)` to tax_case_bookset_membership exact PK. A snapshot cannot include a BookSet outside case membership.
 - **Immutability:** all fields immutable after snapshot seals.
 - **Gate:** Before snapshot is sealed, membership is deterministically enumerated and frozen. Readiness gate: membership must be nonempty.
 
@@ -156,7 +156,7 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.13 `tax_computations`
 
-- **Fields:** `computation_id`, `snapshot_id`, version, result_hash (computed over tax computation payload/result), tax computation state.
+- **Fields:** NOT NULL: `computation_id`, `tenant_id`, `tax_case_id`, `snapshot_id`, version, result_hash (computed over tax computation payload/result). Nullable: tax computation state.
 - **Primary key:** `computation_id`.
 - **Unique keys:** `UNIQUE(snapshot_id)` — exactly one canonical computation per snapshot.
 - **Foreign keys:** `snapshot_id` to FilingSnapshot (tenant-scoped via TaxCase).
@@ -166,7 +166,7 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.14 `export_runs`
 
-- **Fields:** `export_id`, `tenant_id`, `tax_case_id`, `snapshot_id`, export format, export timestamp, content hash, creation metadata.
+- **Fields:** NOT NULL: `export_id`, `tenant_id`, `tax_case_id`, `snapshot_id`, export format, export timestamp, content_hash, output_schema_version, validation_identity. Nullable: creation metadata non-identity fields.
 - **Primary key:** `export_id`.
 - **Unique keys:** candidate key `UNIQUE(tenant_id, tax_case_id, export_id)` (enforces each export belongs to exactly one case). `(snapshot_id, export_format, export_timestamp, content_hash)` optional secondary uniqueness for content tracking.
 - **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase (composite FK); composite FK `(tenant_id, tax_case_id, snapshot_id)` to FilingSnapshot ensuring export is in same case/snapshot/tenant.
@@ -176,31 +176,31 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.14a `submission_bindings`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `selected_export_id` NOT NULL, `selected_at` timestamp NOT NULL, `selected_by` actor NOT NULL, `locked_at` nullable timestamp.
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `selected_export_id`. Nullable: `locked_at` (null only before first attempt).
 - **Primary key:** `(tenant_id, tax_case_id)` — exactly one binding row per TaxCase for entire lifetime.
 - **Unique keys:** same as PK; enforces at most one binding per TaxCase.
-- **Candidate keys:** none additional.
+- **Candidate keys:** `(tenant_id, tax_case_id, locked_at)` — unique before first attempt to enforce single null-locked_at state; after first attempt locked_at is non-null and row becomes immutable.
 - **Foreign keys:** `(tenant_id, tax_case_id)` to TaxCase; composite FK `(tenant_id, tax_case_id, selected_export_id)` to ExportRun candidate key `UNIQUE(tenant_id, tax_case_id, export_id)` (ensures selected export belongs to same case).
 - **Row Creation:** A binding row is created and inserted only when an export is selected for the first time. Before selection, no row exists. The INSERT is atomic: `selected_export_id`, `selected_at`, `selected_by`, and `locked_at=NULL` are all set in one transaction.
 - **Before First Attempt:** `selected_export_id` is mutable via UPDATE with WHERE `locked_at IS NULL`. Each update changes `selected_export_id`, `selected_at`, `selected_by` atomically. Selection change history recorded in audit_records with tenant_id, tax_case_id, old/new export_id, actor, timestamp. Use serialized protocol: SELECT FOR UPDATE (Postgres/MySQL) or writer transaction (SQLite) on binding row, recheck `locked_at IS NULL`, then UPDATE with exactly-one-row check.
 - **After First Attempt:** First SubmissionAttempt insert atomically sets `locked_at` to non-null timestamp within same serialized transaction. Row becomes immutable; any attempted update to `selected_export_id` or `locked_at` after this flag is non-null fails closed.
-- **Concurrency gate:** UNIQUE(tenant_id, tax_case_id) constraint ensures exactly one binding per case. Serialized protocol (SELECT FOR UPDATE + recheck) prevents concurrent selection changes or first-attempt races.
+- **Concurrency gate:** UNIQUE(tenant_id, tax_case_id) constraint ensures exactly one binding per case. Candidate key `(tenant_id, tax_case_id, locked_at)` enforces single pre-attempt state. Serialized protocol (SELECT FOR UPDATE + recheck) prevents concurrent selection changes or first-attempt races.
 - **First Attempt Requirement:** First attempt requires an existing binding row with non-null `selected_export_id`.
-- **Gate:** Selection may be changed only via UPDATE before first SubmissionAttempt. Once first attempt exists, this binding becomes immutable and subsequent corrections use a successor TaxCase (PT-016) with its own new (tenant, successor_case_id) binding row.
+- **Gate:** Selection may be changed only via UPDATE before first SubmissionAttempt. Once first attempt exists, this binding becomes immutable and subsequent corrections use a successor TaxCase (PT-016) with its own new binding row.
 
 ### 2.15 `submission_attempts`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `attempt_id` (positive integer, sequence 1, 2, 3, ...), portal receipt/acknowledgement, raw portal status/response, capture timestamp, actor.
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `attempt_id` (positive integer, sequence 1, 2, 3, ...), `attempt_number` (CHECK `attempt_number > 0`), `binding_locked_at` (FK link to submission_bindings.locked_at). Nullable: `previous_attempt_id`, `previous_attempt_number` (required only for attempt_number > 1).
 - **Primary key:** `(tenant_id, tax_case_id, attempt_id)`.
-- **Unique keys:** candidate key enforced by PK itself.
-- **Constraints:** CHECK `attempt_id > 0` — attempt_id must be strictly positive; no gaps or duplicate (attempt_id) allowed for a single (tenant_id, tax_case_id).
-- **Foreign keys:** composite FK `(tenant_id, tax_case_id)` to submission_bindings (which enforces locked_at and prevents selection change once first attempt exists).
-- **Immutability:** tenant_id, tax_case_id, attempt_id, receipt/status, and response are immutable after insert. Retries are separate rows with attempt_id incremented.
-- **Serialized Protocol:** First attempt uses `attempt_id=1`; all subsequent retries increment attempt_id to 2, 3, etc. Use the same submission_bindings row lock:
-  - **First attempt:** requires no prior attempts for this (tenant_id, tax_case_id), requires `attempt_id=1`, atomically sets submission_bindings `locked_at` to non-null timestamp within same serialized transaction (SELECT FOR UPDATE or writer transaction on the binding row), and inserts the attempt row. If `locked_at` is already non-null or a prior attempt exists, insertion fails closed.
-  - **Retry:** requires `locked_at` non-null (confirmed by binding FK), requires an existing prior attempt for this (tenant_id, tax_case_id), and chooses exactly `MAX(attempt_id)+1` under the same binding lock. Insertion of duplicate or out-of-sequence attempt_id fails closed.
-- **Contiguity Note:** CHECK `attempt_id > 0` alone does not enforce contiguity (1, 2, 3, ...). The serialized protocol (SELECT FOR UPDATE + MAX + increment within a single serialized transaction) is the mechanism that enforces no gaps and no duplicates. A bare constraint cannot replace this protocol.
-- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash (via submission_bindings lookup) to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase, and the selection binding is updated (if no attempts yet, via UPDATE WHERE locked_at IS NULL). Post-submission (once first attempt exists and locked_at is non-null), correction work uses a linked successor TaxCase (PT-016) with independent FilingSnapshot, ExportRun, and new (tenant, successor_case_id) binding row.
+- **Unique keys:** candidate key `(tenant_id, tax_case_id, attempt_number)` enforces one row per attempt number.
+- **Constraints:** CHECK `attempt_id > 0 AND attempt_number > 0`; CHECK `(attempt_number=1 AND previous_attempt_id IS NULL AND previous_attempt_number IS NULL) OR (attempt_number>1 AND previous_attempt_id IS NOT NULL AND previous_attempt_number IS NOT NULL AND previous_attempt_number=attempt_number-1)` enforces contiguity: first attempt has no predecessor, later attempts reference the immediately preceding attempt.
+- **Foreign keys:** composite FK `(tenant_id, tax_case_id, binding_locked_at)` to submission_bindings candidate key `(tenant_id, tax_case_id, locked_at)` ensures binding is locked before any attempt; composite FK `(tenant_id, tax_case_id, previous_attempt_id, previous_attempt_number)` to submission_attempts candidate key `(tenant_id, tax_case_id, attempt_number)` (only when both previous fields non-null) creates self-referential chain.
+- **Immutability:** tenant_id, tax_case_id, attempt_id, attempt_number, portal receipt/status/response, binding_locked_at are immutable after insert. Retries are separate rows with attempt_number incremented.
+- **Serialized Protocol:** First attempt uses `attempt_number=1`, no previous fields; all subsequent retries increment attempt_number to 2, 3, etc., with explicit previous_attempt_id/number. Use the same submission_bindings row lock:
+  - **First attempt:** requires no prior attempts for this (tenant_id, tax_case_id), requires `attempt_number=1`, `previous_attempt_id=NULL`, `previous_attempt_number=NULL`, atomically sets submission_bindings `locked_at` to non-null timestamp within same serialized transaction (SELECT FOR UPDATE or writer transaction on the binding row), and inserts the attempt row with that timestamp as `binding_locked_at`. If `locked_at` is already non-null or a prior attempt exists, insertion fails closed.
+  - **Retry:** requires `locked_at` non-null (confirmed by binding FK), requires an existing prior attempt for this (tenant_id, tax_case_id), chooses exactly `MAX(attempt_number)+1`, and sets `previous_attempt_id` and `previous_attempt_number` to those of the prior row under the same binding lock. Insertion of duplicate or out-of-sequence attempt_number fails closed.
+- **Contiguity Note:** The CHECK constraint plus candidate key plus self-referential FK combine to enforce no gaps and no duplicates. The serialized protocol (SELECT FOR UPDATE + MAX + increment within single serialized transaction) is the implementation mechanism.
+- **Gate:** SubmissionAttempt records the binding of selected ExportRun/output hash (via submission_bindings lookup) to official portal receipt and status. Before submission, changed books/sources trigger a new FilingSnapshot and ExportRun within the same live TaxCase, and the selection binding is updated (if no attempts yet, via UPDATE WHERE locked_at IS NULL). Post-submission (once first attempt exists and locked_at is non-null), correction work uses a linked successor TaxCase (PT-016) with independent FilingSnapshot, ExportRun, and new binding row.
 
 ### 2.16 `tax_case_bookset_membership`
 
@@ -224,13 +224,13 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.17a `external_source_artifacts`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `source_id`, `evidence_artifact_id`, `evidence_artifact_hash`, parser_version, parser_role (if applicable to source type).
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `source_id`, `evidence_artifact_id`, `evidence_artifact_hash`. Nullable: parser_version, parser_role (if applicable to source type).
 - **Primary key:** `(tenant_id, tax_case_id, source_id, evidence_artifact_id, evidence_artifact_hash)` — prevents duplicate evidence binding to the same source.
-- **Unique keys:** enforced by PK; one row per distinct artifact per source.
+- **Unique keys/Candidate keys:** enforced by PK; one row per distinct artifact per source. Matching candidate key `UNIQUE(tenant_id, tax_case_id, source_id, evidence_artifact_id, evidence_artifact_hash)` for FK targets from derived_source_records.
 - **Foreign keys:** composite FK `(tenant_id, tax_case_id, source_id)` to external_sources candidate key; composite FK `(tenant_id, evidence_artifact_id, evidence_artifact_hash)` to evidence_artifacts candidate key UNIQUE(tenant_id, artifact_id, artifact_hash). Both FKs enforce tenant_id equality.
 - **Immutability:** all fields immutable after insert; junction bindings are append-only.
 - **Scope:** Tenant-scoped. Both FKs carry tenant_id to enforce same-tenant source and evidence.
-- **Gate:** every artifact linked to an external source must be bound explicitly via this junction; no cross-tenant artifact/source bindings are possible.
+- **Gate:** every artifact linked to an external source must be bound explicitly via this junction; no cross-tenant artifact/source bindings are possible. Derived records carry exact tuple reference to prevent binding artifacts from other sources or cases.
 
 ### 2.18 `evidence_artifacts`
 
@@ -243,12 +243,12 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.19 `external_source_derived_records`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `source_id`, `derived_record_id`, `artifact_id`, parsed facts, parser warnings, and derivation metadata.
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `source_id`, `derived_record_id`, `evidence_artifact_id`, `evidence_artifact_hash`. Nullable: parsed facts, parser warnings, and derivation metadata non-identity fields.
 - **Primary key:** `(tenant_id, tax_case_id, source_id, derived_record_id)`.
 - **Unique keys:** derived-record identity within its source.
-- **Foreign keys:** source composite key `(tenant_id, tax_case_id, source_id)` to external_sources; evidence composite FK `(tenant_id, artifact_id)` to `evidence_artifacts`. Single `tenant_id` field participates in both FKs, enforcing structural equality: source and artifact must belong to same tenant.
-- **Immutability:** derived records are append-only and retain their raw-artifact pointer.
-- **Tenant Enforcement:** No cross-tenant derived evidence is accepted, even when artifact IDs or source IDs collide; the composite tenant-aware database relationship, not application convention, enforces evidence ownership. The single tenant_id field in both FKs ensures structural enforcement.
+- **Foreign keys:** source composite key `(tenant_id, tax_case_id, source_id)` to external_sources candidate key; exact composite FK `(tenant_id, tax_case_id, source_id, evidence_artifact_id, evidence_artifact_hash)` to external_source_artifacts. Enforces: no artifact from another source/case; same tenant across source and evidence.
+- **Immutability:** derived records are append-only and retain their raw-artifact pointer via exact tuple.
+- **Tenant Enforcement:** No cross-tenant derived evidence is accepted, even when artifact IDs or source IDs collide; the exact composite tenant-aware database relationship enforces evidence ownership.
 - **Gate:** Parser warnings never become reconciliation success.
 
 ### 2.20 `reconciliation_records`
@@ -263,13 +263,14 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.21 `correction_metadata`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `filing_sequence` (from TaxCase), verified_trigger (source of correction requirement), applicable_mechanism_id, effective_rule_reference_id, deadline_source, correction_evidence_artifact_id, correction_evidence_artifact_hash, verifier, verification_timestamp.
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `filing_sequence` (from TaxCase), verified_trigger (source of correction requirement), applicable_mechanism_id, `rule_reference_id` (immutable reference to rule_snapshots), `correction_evidence_artifact_id`, `correction_evidence_artifact_hash`, verifier, verification_timestamp. Nullable: deadline_source.
 - **Primary key:** `(tenant_id, tax_case_id)`.
 - **Unique keys:** one verified metadata record per successor TaxCase.
-- **Foreign keys:** composite FK `(tenant_id, tax_case_id)` to TaxCase; composite FK `(tenant_id, correction_evidence_artifact_id, correction_evidence_artifact_hash)` to evidence_artifacts candidate key UNIQUE(tenant_id, artifact_id, artifact_hash); rule_reference_id references immutable rule_snapshots.
+- **Foreign keys:** composite FK `(tenant_id, tax_case_id)` to TaxCase; composite FK `(tenant_id, correction_evidence_artifact_id, correction_evidence_artifact_hash)` to evidence_artifacts candidate key UNIQUE(tenant_id, artifact_id, artifact_hash); composite FK `(tenant_id, tax_case_id)` to tax_case_lineage to bind correction to explicit successor lineage relation.
 - **Immutability:** verified metadata is append-only; a changed mechanism creates a new successor TaxCase and metadata row.
+- **Field Names:** Use `rule_reference_id` consistently (not `effective_rule_reference_id`); references immutable rule_snapshots.
 - **Non-integrity metadata:** verified_trigger label, mechanism description, deadline text, and verifier notes are observational; the actual mechanism enforcement uses TaxCase successor linking and rule bindings.
-- **Gates:** `filing_sequence = 1` needs no correction metadata; every sequence greater than one requires complete, verified correction metadata before `ready`, validation, or export. Missing or unverified metadata yields `REVIEW/BLOCK`.
+- **Gates:** `filing_sequence = 1` needs no correction metadata; every sequence greater than one requires complete, verified correction metadata with bound evidence before `ready`, validation, or export. Missing or unverified metadata yields `REVIEW/BLOCK`.
 
 ### 2.22 `correction_lineages`
 
@@ -284,12 +285,13 @@ The following is the complete contract for the entities in this RFC. A future im
 
 ### 2.23 `portal_status_evidence`
 
-- **Fields:** `tenant_id`, `tax_case_id`, `submission_attempt_id`, `evidence_id`, `evidence_artifact_id`, `evidence_artifact_hash`, normalized_label (one of: submitted, verified, processed, defective, case_transferred_to_assessing_officer), `official_label_raw` (exact raw label), capture_time, actor.
+- **Fields:** NOT NULL: `tenant_id`, `tax_case_id`, `submission_attempt_id`, `evidence_id`, `evidence_artifact_id`, `evidence_artifact_hash`, normalized_label (one of: SUBMITTED, VERIFIED, PROCESSED, DEFECTIVE, CASE_TRANSFERRED_TO_ASSESSING_OFFICER), `official_label_raw` (exact raw label), capture_time, actor. Nullable: none (all required for integrity).
 - **Primary key:** `(tenant_id, tax_case_id, submission_attempt_id, evidence_id)` — multiple evidence rows per submission attempt allowed; PK prevents duplicates.
 - **Unique keys:** evidence identity within the submission attempt.
-- **Foreign keys:** composite FK `(tenant_id, tax_case_id, submission_attempt_id)` to submission_attempts candidate key `UNIQUE(tenant_id, tax_case_id, attempt_id)` (ensures evidence is bound to a specific submission attempt); composite FK `(tenant_id, evidence_artifact_id, evidence_artifact_hash)` to evidence_artifacts matching UNIQUE(tenant_id, artifact_id, artifact_hash).
-- **Immutability:** evidence, its captured label, and attempt binding are append-only; no cross-tenant binding possible (both FKs scoped to tenant_id).
+- **Foreign keys:** composite FK `(tenant_id, tax_case_id, submission_attempt_id)` to submission_attempts via candidate key `UNIQUE(tenant_id, tax_case_id, attempt_number)` (ensures evidence is bound to a specific submission attempt); composite FK `(tenant_id, evidence_artifact_id, evidence_artifact_hash)` to evidence_artifacts matching UNIQUE(tenant_id, artifact_id, artifact_hash).
+- **Immutability:** evidence, its captured label, attempt binding, normalized label, and official_label_raw are append-only; no cross-tenant binding possible (both FKs scoped to tenant_id).
 - **Receipt and Status Provenance:** Receipt, status, and label capture are specific to the submission attempt, not to the TaxCase or FilingSnapshot. Retries (different submission_attempts) may have different evidence or status labels.
+- **Normalized Label Casing:** normalized_label uses uppercase UPPERCASE canonical codes; official_label_raw preserves exact as-received raw text.
 - **Gate:** portal label cannot be stored without bound filing-specific evidence (via submission attempt), exact raw label, and proof that the evidence was captured during that specific submission attempt. invalid_return condition derived separately only from bound defect/notice evidence. Internal `prepared`, `exported`, or `unknown` state never implies a portal label.
 
 ### 2.24 `audit_records`
@@ -303,6 +305,18 @@ The following is the complete contract for the entities in this RFC. A future im
 - **Immutability:** append-only; audit rows are never updated or deleted.
 - **Non-integrity metadata:** reason notes and outcome descriptions are observational; the primary integrity mechanism is immutability of the audit record itself.
 - **Gate:** every mutation of a protected or immutable aggregate records an auditable actor, scope, outcome, and full entity identity without exposing secrets or raw sensitive content in operational output. Audit records must not be nullable on tenant_id or entity_id_fields.
+
+### 2.25 `tax_case_lineage`
+
+- **Fields:** `tenant_id`, `lineage_id`, `predecessor_tax_case_id`, `predecessor_sequence`, `successor_tax_case_id`, `successor_sequence`, reason.
+- **Primary key:** `(tenant_id, lineage_id)`.
+- **Unique keys:** lineage identity within the tenant.
+- **Candidate key:** `(tenant_id, predecessor_tax_case_id, predecessor_sequence)` — exactly one immediate successor per predecessor.
+- **Foreign keys:** composite FK `(tenant_id, predecessor_tax_case_id)` to tax_cases; composite FK `(tenant_id, successor_tax_case_id)` to tax_cases. Both FKs carry exact tax_case_id matching; both cases share tenant_id, pan, and period_key (enforced structurally: tax_cases with same (tenant_id, pan, period_key) form the lineage chain).
+- **Constraints:** CHECK `successor_sequence > predecessor_sequence AND predecessor_tax_case_id != successor_tax_case_id`; UNIQUE constraint on `(tenant_id, successor_tax_case_id, successor_sequence)` ensures no successor is pointed to twice.
+- **Immutability:** lineage rows are immutable after insertion; the predecessor-successor link is permanent.
+- **Scope:** Shared tenant_id, shared taxpayer (pan), shared period_key. Structural sharing enforces lineage cohesion.
+- **Gate:** Successor TaxCase creation atomically inserts the lineage row binding predecessor to successor. Before export or submission, verify the applicable mechanism per the AuthorityPack; missing or unapproved mechanism returns REVIEW/BLOCK.
 
 ## 3. Required transaction gates
 
