@@ -288,13 +288,15 @@ Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor 
 
 **Status:** TENTATIVE - NOT OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision (Issue #1):** Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status is exactly the five current official ITD labels: `submitted`, `verified`, `processed`, `defective`, `invalid`; each requires filing-specific bound evidence.
+**Decision (Issue #1):** Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states: `prepared`, `exported`, `unknown` (never confuse with government/portal states). External portal status uses exactly these five normalized labels: `submitted`, `verified`, `processed`, `defective`, `case_transferred_to_assessing_officer`. They correspond to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq), which must be retained with filing-specific bound evidence.
 
-Record filing-specific acknowledgement, verification or ITR-V evidence, portal status, intimation, and defect evidence where present. There is no universal ARN. An e-TDS delay is not a product state. Form 16A is not return-processing evidence (only TDS evidence, never portal status). Do not claim a physical ITR-V upload route without source evidence.
+The normalized-to-raw mapping is fixed by that source: `submitted` → “Submitted and pending for e-Verification / Verification”; `verified` → “Successfully e-Verified / Verified”; `processed` → “Processed”; `defective` → “Defective”; `case_transferred_to_assessing_officer` → “Case transferred to Assessing Officer”.
+
+Record filing-specific acknowledgement, verification or ITR-V evidence, the exact raw official status label, portal status, intimation, and defect evidence where present. There is no universal ARN. An e-TDS delay is not a product state. If a defective return is treated as invalid after the notice path, record that as a separate derived legal consequence/internal condition only with defect or notice evidence; it is never a portal status. Form 16A is not return-processing evidence (only TDS evidence, never portal status). Do not claim a physical ITR-V upload route without source evidence.
 
 The product records evidence supplied by the taxpayer or CA; it does not infer a later portal state from elapsed time or from a local export. Internal states (prepared, exported) are never mistaken for external government status.
 
-**Failure mode:** A prepared export is reported as filed, or an acknowledgement is reported as processed without filing-specific status evidence. Or: Form 16A is classified as portal status instead of TDS evidence.
+**Failure mode:** A prepared export is reported as filed, an acknowledgement is reported as processed without filing-specific status evidence, an invalid legal consequence is stored as a portal status, or Form 16A is classified as portal status instead of TDS evidence.
 
 <a id="pt-014"></a>
 ### PT-014: Tenant-wide read-only status and explicit mutation scope
