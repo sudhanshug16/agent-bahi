@@ -1283,6 +1283,16 @@ never silently switch to payment-date accounting.
 
 Reports never write to ledger or mutate documents. Read-model rebuilding is optional (for performance only).
 
+### T-008 Invalidation: STALE/DRIFTED Report Markers
+
+When a correction or late-document operation commits (via Workflow 5 Branch A, Branch B, or any explicit reversal+replacement), the same atomic transaction must:
+
+1. **Enumerate affected reports**: Query all generated reports (P&L, balance sheet, aging, reconciliation, compliance exports, custom tags/splits) that contain or reference the corrected posting(s), source document, filing period, or related aggregate.
+2. **Mark STALE/DRIFTED**: For each affected report snapshot, audit pack, or filing case, set a durable `stale_marker` with the correction operation ID, timestamp, reason, and link to the new corrected journal/document.
+3. **Block reuse/export/submission**: While marked `STALE/DRIFTED`, that report artifact cannot be re-exported, re-submitted to portal, or used as current evidence without explicit deliberate regeneration (recompute → validate → review → re-close if applicable). A regenerated report receives a new snapshot ID.
+4. **Preserve prior artifacts immutable**: Original exported reports remain visible with their original state, evidence binding, timestamp, and `STALE/DRIFTED` marker. Users/auditors can see the prior artifact, its marker, and link to the correction that invalidated it.
+5. **Atomic failure rolls back correction**: If enumeration, marking, or validation fails, the entire correction transaction rolls back. No partial/silent state; all-or-nothing invalidation or no correction.
+
 ---
 
 ## 16. Eight End-to-End Workflows
@@ -1496,11 +1506,13 @@ Workflow:
    - [TX] Finalize invoice at 2026-03-15, post balanced journal.
    - [TX] Relock period with new audit entry after work complete (operator may reopen/reclose as needed).
    - Original locked-period state and any subsequent entries remain; only this invoice added to its original date.
+   - **[T-008 Invalidation]**: In the same transaction, atomically enumerate every generated report (P&L, balance sheet, aging, reconciliation), filing case/snapshot (GSTR-1, GSTR-3B, income-tax, payroll), and audit pack that referenced the original/prior journal or the corrected source document. Mark each as `STALE/DRIFTED` with the correction operation ID and timestamp. Block their reuse/export/submission as current until deliberate regeneration, review, and applicable re-close. Prior exported or submitted artifacts remain immutable and visible with their original state/evidence. If this atomic enumeration and marking fails, the entire correction transaction fails and rolls back; no partial/silent state.
 8. **Branch B Path** (Current-Period Adjustment, Old Period Stays Locked):
    - [TX] Do NOT unlock March period.
    - [TX] Create and post a current-period journal dated April 2026+ that links to the original March fact and records the correction.
    - Original March remains locked; April entry is visible as linked adjustment with source reference and reason.
    - No reversal or re-posting of March; correction is a separate April entry explicitly linked to original.
+   - **[T-008 Invalidation]**: In the same transaction, atomically enumerate every generated report and filing case/snapshot that referenced the original March journal or the corrected source document. Mark each as `STALE/DRIFTED` with the correction operation ID and timestamp. Block their reuse/export/submission as current until deliberate regeneration, review, and applicable re-close. Prior exported or submitted artifacts remain immutable and visible with their original state/evidence. If atomic enumeration and marking fails, the entire correction transaction fails and rolls back; no partial/silent state.
 
 ### 6. GSTR-1 Preparation → JSON → Manual Portal → ARN
 
@@ -1547,7 +1559,7 @@ Workflow:
    - A new attempt is allowed only as a NEW child/retry `ExternalOperation` for the same `operation_kind`, explicitly authorized by the operator and linked to the failed parent.
    - The child gets its own atomic setup transaction (as in step 6), its own frozen artifact hash, idempotency identity, and evidence tracking. The failed parent never finalizes. Repeat step 7 for the child. For an EWB-only child, retain the already-posted invoice and existing dispatch hold; do not repost or create a duplicate hold.
 9. **Apply the obligation-specific gate** after each operation independently reaches `evidence_recorded`:
-   - If IRN is required, that IRN evidence triggers the atomic invoice finalization in step 12.
+   - If IRN is required, that IRN evidence triggers the atomic invoice finalization in step 10.
    - If EWB is required, that EWB evidence atomically releases the `dispatch_hold` for dispatch/goods movement. It never finalizes the invoice and never substitutes for IRN evidence.
    - If both are required, release the invoice and dispatch gates independently: IRN evidence gates invoice finalization and EWB evidence gates dispatch. Neither evidence substitutes for the other.
 10. **Atomic invoice finalization for an IRN-required invoice** (requires the IRN operation's `current_state = evidence_recorded`):
