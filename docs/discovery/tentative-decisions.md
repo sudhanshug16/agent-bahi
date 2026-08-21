@@ -229,7 +229,7 @@ Awaiting owner review and dedicated source audit. No specific rate provider is l
   - No e-invoice (optional/research), no e-way bill (optional/research) mandates in V1.
   - No composition scheme, no simplified scheme.
   - No inter-state supply complexity in V1 focus (but multi-GSTIN model supports it).
-  
+
 - **Out of V1 Scope** (documented as deferred/future research):
   - Composition taxpayers (CMP-08, GSTR-4, deemed ITC rules).
   - Simplified scheme (turnover-based exemption, limited GSTR-1).
@@ -238,7 +238,7 @@ Awaiting owner review and dedicated source audit. No specific rate provider is l
   - E-way bill (OPEN_RESEARCH, not in V1).
   - Multi-state inventory/supply chains (model supports it; workflows may be deferred).
   - Specific industry compliance (finance, insurance, import/export, customs, etc.).
-  
+
 - **Unverified Transports** (gated as explicit deferred/open, not silently assumed):
   - Portal APIs, IRP credentials, e-invoice submission.
   - Bank auto-sync or auto-import.
