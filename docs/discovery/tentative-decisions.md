@@ -321,94 +321,39 @@ Awaiting owner review. V1 scope is a product/business choice; it determines deli
 
 ---
 
-### Entry T-006: Deterministic Batch Partial-Success Exit Codes and JSON Outcomes
+### Entry T-006: Tentative Numeric Proposal for Batch Exit-Code Signal—Not Implementation-Binding
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
 
-**Question**: How should batch operations report success, failure, and partial success to callers (CLI, agents, scripts) deterministically?
+**Note**: Exit-code behavior and batch semantics are defined in [architecture-decisions.md § CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation) (canonical for actual implementation). This entry proposes only a numeric code selection and JSON outcome schema, not the binding contract. Implementation must follow the architecture entries' behavior definitions.
 
-**Recommended Working Default**:
+**Question**: What numeric exit code should agent-bahi use to signal partial-success batches (some items succeeded, some did not)?
 
-**Exit Code Taxonomy**:
-- **Exit code 0**: All selected items succeeded. No item was skipped, failed, or returned an error. If a batch offers selection, all selected items completed successfully.
-- **Exit code 9** (recommended for unused terminal code): Partial success. Some selected items succeeded; others failed. Returned when `> 0` items succeeded AND `> 0` items failed/blocked.
-- **Non-zero (1, 2, 3, etc.)**: Total failure. Zero items succeeded; all selected items failed or the batch operation itself failed before any item was processed.
-- **Never exit 0 for partial success**. A batch that processes 100 items and succeeds on 99 must exit non-zero (recommend 9) with outcomes in JSON.
+**Recommended Numeric Proposal**:
 
-**JSON Response Envelope** (when `--json` flag is used):
-```json
-{
-  "batch_id": "request_id_or_digest",
-  "operation": "operation_name",
-  "started_at": "ISO8601_UTC",
-  "completed_at": "ISO8601_UTC",
-  "total_selected": 100,
-  "succeeded": 99,
-  "failed": 1,
-  "skipped": 0,
-  "exit_code": 9,
-  "per_item_outcomes": [
-    {
-      "item_id": "item_1",
-      "index": 0,
-      "status": "success",
-      "amount": 1000,
-      "posted_reference": "JE-2026-08-21-001"
-    },
-    {
-      "item_id": "item_2",
-      "index": 1,
-      "status": "failure",
-      "reason": "VALIDATION_BLOCKED",
-      "detail": "Invoice amount exceeds authorization limit"
-    },
-    {
-      "item_id": "item_100",
-      "index": 99,
-      "status": "success",
-      "amount": 1000,
-      "posted_reference": "JE-2026-08-21-100"
-    }
-  ],
-  "summary": "99 of 100 items succeeded. Review the per_item_outcomes for details."
-}
-```
+**Exit Code Convention** (numeric recommendation only; implementation contract in architecture-decisions.md):
+- **Exit code 0**: Reserved for "all selected items succeeded" (canonical in CLI-004/CLI-006).
+- **Exit code 9** (recommended if unused): Proposed for "at least one selected item succeeded AND at least one selected item was skipped, blocked, or failed" (partial success signal).
+- **Non-zero codes 1-8, 10+**: Total failure or error conditions (per CLI-004; canonical in architecture-decisions.md).
+- **Principle**: Never exit 0 when partial failure occurs. JSON outcomes array must accompany non-zero exits to enable caller to distinguish recoverable (partial success) from terminal failures (no success).
 
-**Key Behaviors**:
-- **Per-item outcomes**: JSON always includes an outcomes array listing every item's result (success, failure reason, blocked reason, skipped reason, posted reference if applicable).
-- **Shell status (exit code)**: Never silently report success (exit 0) when partial failure occurs. Exit code 9 (or alternative non-zero) indicates "some succeeded, some failed; check outcomes."
-- **Atomicity declaration**: Batch commands declare their atomicity policy upfront: "atomic per file" (entire file succeeds or rolls back), "per-item best-effort" (partial success allowed), "all-or-nothing" (one failure aborts all). V1 default: per-item best-effort with explicit outcomes.
-- **No hidden success**: Callers must not guess from output; the combination of exit code + JSON outcomes must be sufficient to determine exactly what succeeded, what failed, and why.
+**Recommended JSON Schema** (structure proposal; implementation contract in CLI-006):
+- Per-item outcomes array listing status (success, failure, blocked, skipped) per item.
+- Failure/blocked/skipped reasons included per item.
+- Success items include posted reference/digest if applicable.
 
-**Alternatives**:
-- Exit 0 for partial success, parse JSON to determine actual outcomes (high risk of silent failures if JSON parsing fails or is skipped).
-- All-or-nothing atomicity (one failure aborts entire batch; no partial success). Operationally safer but less flexible for large batches.
-- No JSON outcomes, only human-readable summary. Not suitable for agent orchestration.
-
-**Rationale**:
-Batch operations (import, reconciliation, posting) are common in accounting. Agents, scripts, and users need deterministic signals: exit 0 means "everything worked"; non-zero means "something failed." JSON outcomes enable agents to retry just failed items, and callers to report precise failures to users. Exit code 9 (recommended) is a reserved, documentation-testable code that clearly indicates "partial success; check outcomes." Silently reporting success (exit 0) for a batch where 1% fails risks silent data corruption and unnoticed reconciliation gaps.
-
-**Product Impact**:
-- **Agent reliability**: Agents can distinguish recoverable (retry failed items) from terminal failures (no retry).
-- **Operator clarity**: Users see exactly what succeeded and what failed in one command.
-- **Auditability**: Posted references and timestamps are retained per item.
-- **Script safety**: Scripts can check exit codes reliably without parsing variable-format output.
+**Rationale for Numeric Choice**:
+Exit code 9 is typically unused in shell convention; using it avoids collision with settled codes (CLI-004). It is a distinct, documentable signal that can be checked without parsing output. Combined with per-item JSON outcomes, it enables callers to distinguish recoverable partial success (retry failed items) from total failure (no retry). This aligns with industry practice (rsync 23 for partial, kubectl apply non-zero on any failure with detailed outcomes).
 
 **Reversal Path**:
-Owner may change the designated exit code (9, or another unused non-zero) or alter the JSON schema (e.g., add more detail to per-item outcomes). The principle (non-zero exit on partial success, JSON outcomes per item) is stable regardless of code choice. Existing callers must be updated when the exit-code or JSON schema version changes.
+Owner may select a different unused numeric code (10, 11, or other) instead of 9. The principle (non-zero for any partial success, JSON outcomes per item) remains stable. Code choice is cosmetic; behavior definition is in architecture-decisions.md CLI-004/CLI-006.
 
 **Dependencies**:
-- [CLI-004: Explicit exit-code taxonomy](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) (partially settled).
-- [CLI-006: Batch atomicity declared per operation](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation) (RECOMMENDED in architecture-decisions.md).
-- Linked to [Skill exception handling](architecture-decisions.md#skl-004-standard-exception-classes-with-remediation-context) and [durable checkpoints](architecture-decisions.md#skl-005-resumable-skill-runs-with-durable-checkpoints).
-
-**Evidence**:
-- Industry standards: GNU tools (grep, find) return exit 0 for matches, 1 for no matches, 2 for errors. rsync returns 23 for partial transfer. Exit-code disambiguation is standard practice.
-- Batch import tools (Postgres COPY, kubectl apply) use exit codes + per-item error reporting.
-- Agent orchestration frameworks (Apache Airflow, Temporal) require deterministic exit codes to route retry/escalation logic.
+- [CLI-004: Explicit exit-code taxonomy](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) (canonical; this entry does not override).
+- [CLI-006: Batch atomicity declared per operation](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation) (canonical; this entry does not override).
 
 **Owner Review Status**:
-Awaiting owner review. This entry documents the recommended default (exit 9 for partial success, JSON with per-item outcomes, never silent 0 on failure) to unblock Phase 3 implementation and skill error routing. Owner may select a different exit code or adjust JSON schema. The principle (deterministic, non-silent exit codes + granular JSON outcomes) is binding for accounting batch operations.
+Awaiting owner review. This entry proposes exit code 9 as the numeric signal for partial success; the actual implementation contract (when to exit 0, when to exit non-zero, atomicity declaration, JSON schema details) is canonical in architecture-decisions.md and must not be redefined here.
 
 ---
 
@@ -419,10 +364,11 @@ Awaiting owner review. This entry documents the recommended default (exit 9 for 
 **Question**: How should agent-bahi handle advance-tax (s404/408) estimated-amount input? Should it auto-calculate from FY income projection, or require manual operator entry?
 
 **Recommended Working Default**:
-- Advance-tax deadlines (15 Jun, 15 Sep, 15 Dec, 15 Mar per s408) are calculated deterministically from effective tax rules.
-- Advance-tax **estimated amount** requires explicit operator/agent input or is read from a configured annual estimate.
-- **No auto-projection** from partial-year actuals or assumed growth; estimation is owner/operator responsibility.
-- System stores the declared estimate, computed tax, installment due, payment made, and reconciliation against final-year tax for annual return.
+- Advance-tax deadlines (15 Jun, 15 Sep, 15 Dec, 15 Mar per s408) are calculated from s408 rule snapshot (external research gate).
+- Advance-tax **estimated amount is unverified operator/tenant input only**. Captured with provenance (operator identity, timestamp, source reference). The system stores this operator-declared estimate as an input artifact, not a binding computation.
+- **No auto-projection** from partial-year actuals; no heuristic calculation; no tax liability computation or labeling from this input alone.
+- **Annual-tax gates remain**: Official s408 installment thresholds, s87/89 relief eligibility, carryforward loss computation, and final-year reconciliation are gated by [Statutory Workflow Contract § Annual Income-Tax Return Workflow Contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract) and [payroll-compliance-matrix.md](payroll-compliance-matrix.md) rules, not T-007. Any computed installment-due, relief-amount, or tax-liability claim remains REVIEW/BLOCK until official rule snapshot applies.
+- System stores operator estimate input as provenance metadata; reconciliation is operator/CA responsibility at annual return (no automated validation or liability override).
 
 **Alternatives**:
 - Auto-calculate from YTD actuals and project to FY end (high risk: early-year assumptions drift; reconciliation gaps compound).
@@ -430,12 +376,13 @@ Awaiting owner review. This entry documents the recommended default (exit 9 for 
 - No advance-tax tracking (loses early warning of tax liability overage and underpayment penalty risk).
 
 **Rationale**:
-Advance-tax liability is owner/tenant responsibility; operator experience/judgment; and effective tax planning. Automatic projection invites reconciliation gaps (projection assumption vs. actual FY outcome). Operator entry keeps intent explicit and auditable. Stored estimate enables period-end reconciliation between paid installments and actual tax.
+Advance-tax estimation is owner/tenant/CA responsibility; capturing operator input with provenance enables audit trail and prevents silent assumptions. The captured estimate is working memory, not a system-computed liability. Annual-tax contract and official s408 rules remain the gates for any installment-due computation. Operator input alone cannot bypass verified-rate, verified-profile, or verified-taxpayer-branch gates.
 
 **Product Impact**:
-- **Operator control**: Tenant decides estimate based on known contracts, business plan, and tax strategy.
-- **Clear reconciliation**: Stored estimate vs. actual tax is transparent for annual return.
-- **Safe defaults**: No mismatched auto-projection surprises.
+- **Audit trail**: Operator estimate captured with provenance; no silent assumptions.
+- **No liability override**: Input is metadata/input provenance; does not compute or assign installment-due or tax liability.
+- **Operator control**: Tenant controls their estimate; system does not overrule with heuristics.
+- **Annual-tax gate preservation**: Verified rates, reliefs, and credits remain subject to statutory-workflow contract, not this input.
 
 **Reversal Path**:
 Owner may add optional auto-projection as an operator convenience (not a requirement). Once introduced, projection assumptions must be versioned and audit-trailed. Early override paths must be clear.
@@ -494,88 +441,87 @@ Awaiting owner review. This entry documents the tentative default (block with co
 
 ---
 
-### Entry T-009: Form 140/141 Export Format—JSON, XML, or Both
+### Entry T-009: Form 140/141 Statutory Export—Research-Gated, Fail-Closed
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
 
-**Question**: For non-payroll TDS quarterly statements (Form 140 general, Form 141 special month-end), what export format(s) should agent-bahi support? JSON only, XML only, or both?
+**Question**: Should agent-bahi generate and export statutory Form 140/141 artifacts, or defer this until official portal/submission flow is researched and settled?
 
 **Recommended Working Default**:
-- **JSON primary format**. Form 140/141 exports are JSON by default, matching the GSTR-1 precedent and enabling agent/skill integration.
-- **XML fallback support** only if official GST Portal / ITD portal demonstrates official XML schema or accepts XML upload.
-- **No CSV export** for Form 140/141; TDS forms are structured data, not flat records.
+- **Fail-closed**: Internal neutral data (TDS transaction details, payee records, amounts, dates) may be prepared and stored.
+- **No statutory export adapter** in V1 until official current utility, schema, validation rules, and portal submission flow are researched and snapshotted.
+- Official ITD Form 140 guidance uses RPU (Remittance Processing Unit) → FVU (File Validation Unit) → .fvu format, but applicable form/transport and current utility vary by effective regime and may change.
+- Deferred until: (1) Current Form 140 guidance and Rule 219 requirements verified from official ITD sources; (2) Applicable form code, field mapping, and export schema snapshotted; (3) Portal flow (upload method, validation, acceptance criteria) researched; (4) Current utility of exported artifact confirmed.
 
 **Alternatives**:
-- XML primary (closer to some government submissions, but less agent-native).
-- CSV export (loses hierarchical structure and makes validation harder).
-- Excel/XLSX (proprietary; harder for agents).
-- Multiple formats from day one (maintenance burden; risk of format divergence).
+- Export JSON/XML without researching official utility/schema (high risk: export may not match current portal acceptance criteria; silent export failure in reconciliation).
+- Export with claim that JSON/XML matches current official utility (premature: current utility changes with regimes and portal updates).
+- Manual form preparation by user/CA outside agent-bahi until researched (operationally acceptable; avoids premature export claim).
 
 **Rationale**:
-JSON is native to TypeScript/Bun stack, enables agent orchestration, and matches GSTR-1 precedent (settled in [decisions.md](decisions.md#confirmed)). Official ITD portal acceptance of JSON remains OPEN_RESEARCH; XML support can be added if discovered. Simplicity in V1 is better than premature multi-format support.
+Form 140 export is a statutory artifact. The official utility, schema, and portal flow must be verified before export is claimed to be usable. Official ITD Form 140 guidance and Rule 219 are the canonical sources; agent-bahi export must match those sources, not guess or assume precedent from other forms. Research gates prevent silent export failures or incorrect portal submissions.
 
 **Product Impact**:
-- **Agent compatibility**: Skills can parse and re-submit JSON natively.
-- **Consistency**: Matches GSTR-1 JSON export, reducing operator confusion.
-- **Future flexibility**: XML can be added as a generation alternative without breaking JSON consumers.
+- **Safety**: No premature export claims; users/CAs handle Form 140 until research confirms utility.
+- **Audit clarity**: No exported artifact without verified schema and portal flow.
+- **Future flexibility**: Once research closes (current Form 140 utility verified), export adapter can be implemented with confidence.
 
 **Reversal Path**:
-Owner may request XML or other format after discovering official portal acceptance or CA preference. JSON remains primary; alternative formats are additive.
+After Form 140/141 field structure, RPU/FVU/portal utility, and current official guidance are researched and snapshotted, owner may approve export adapter. Export schema and portal flow must be documented per research findings, not assumed from V1 precedents.
 
 **Dependencies**:
-- [GSTR-1-specific output boundary](decisions.md#confirmed) (JSON export settled for GSTR-1).
-- Form 140/141 field structure research (OPEN in [statutory-workflow-contracts.md](statutory-workflow-contracts.md#open-items-blocking-implementation)).
+- [TDS Workflow Contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
+- Form 140/141 current official guidance (ITD Form 140 FAQ, Rule 219) research (OPEN).
+- Portal flow (RPU/FVU/acceptance) verification (OPEN).
 
 **Evidence**:
-- GSTR-1 settled: JSON export is standard.
-- Industry: TDS portals (TRACES, etc.) accept JSON uploads alongside legacy XML.
+- Official ITD Form 140 guidance (ITD website, Form Navigator) states RPU→FVU→.fvu workflow; research required to verify current utility and portal acceptance.
+- Rule 219 specifies Form 140 due dates but does not prescribe export format; portal utility must be verified separately.
 
 **Owner Review Status**:
-Awaiting owner review. This entry documents the tentative default (JSON primary, XML if discovered as official, no CSV) to unblock Form 140/141 export module. Owner may prioritize XML or request other formats.
+Awaiting owner review and dedicated Form 140/141 export research. This entry documents the tentative default (fail-closed; no export until research closes) to prevent premature export claims. Owner may fund research and approve export adapter after closure.
 
 ---
 
-### Entry T-010: Amendment/Revised Return Workflow—ITR-X or Re-filing
+### Entry T-010: Post-Filing Return Case/Evidence/Correction—Research-Gated Submission
 
 **Status**: TENTATIVE_AGENT_DEFAULT — **NOT OWNER-APPROVED**
 
-**Question**: If an annual income-tax return is rejected or the taxpayer wants to amend after filing, should agent-bahi support revised/amended return (e.g., ITR-X under s163) or only allow complete re-filing of the original return?
+**Question**: How should agent-bahi handle post-filing return corrections, rejections, or disputes? What submission mechanisms are needed beyond the initial return filing?
 
 **Recommended Working Default**:
-- **Re-filing of the original return form only**, with full reconciliation against the prior-year filing (ARN, filing date, rejection reason if rejected).
-- **Amendment/ITR-X workflow remains OPEN_RESEARCH**. No tentative implementation; treat as a future feature pending:
-  1. Verification that ITR-X form exists and is official for the applicable return year (open: form code, structure, applicability timeline).
-  2. Confirmation of amendment deadline and procedure per s163/Rules.
-  3. Decision on whether to auto-generate ITR-X from changes or require manual entry.
-- **Correction journals**: For post-filing ledger corrections (e.g., discovery of an unposted expense), operator records a correction journal separately; return amendment is owner's choice and outside agent-bahi.
+- **Case/evidence preservation**: Agent-bahi retains case details (filing ARN, rejection reason, filing timestamp, taxpayer branch per s263(5)-(7)), supporting evidence (correspondence, notices, documentation), and correction lineage (original return → cause of correction → remedial action taken).
+- **Correction journals**: Post-filing ledger corrections (e.g., discovery of unposted expense) are recorded as explicit correction journals with documented reason, amount, prior-year impact, and correction date. This is separate from return submission.
+- **No return-amendment or defective-return submission adapter** in V1 until official regime, form existence, applicability branches (s263(5)-(7)), and portal submission flow are researched and settled.
+- Applicable branches per s263(5)-(7) are case-specific; no universal amendment/revised-return workflow applies to all return types/profiles.
 
 **Alternatives**:
-- Auto-generate ITR-X if differences detected from prior year (complex, requires verified form/rules).
-- Support both ITR-X and re-filing (supportable after research).
-- No amendment support; annual returns are final (operationally limiting).
+- Auto-submit revised/amended return based on detected differences (premature: requires verified form, applicable branch, and portal flow).
+- Manual re-filing of entire original return with amendments marked (operational burden; unclear portal acceptance).
+- No post-filing correction support (leaves audit trail incomplete).
 
 **Rationale**:
-ITR-X form, amendment eligibility, and deadline rules are OPEN_RESEARCH. Re-filing is always an option and is safer than guessing amendment procedure. Correction journals keep ledger changes explicit and separate from return-filing workflow. Owner may enable ITR-X after research closure and explicit approval. This aligns with [tentative-decisions.md](tentative-decisions.md) principle: no unapproved product defaults.
+Post-filing correction mechanisms (s263(5)-(7)) are fact-dependent and regime-dependent. No single mechanism applies to all taxpayers or return profiles. Official form names, applicable branches, deadlines, and portal flows must be verified per specific case facts and applicable s263 branch before agent-bahi claims to support any submission. Case/evidence preservation and correction lineage are universally needed; submission adapters are regime-specific and must be researched separately.
 
 **Product Impact**:
-- **Safety**: No premature ITR-X logic; operator/CA decides amendment strategy.
-- **Future flexibility**: Once ITR-X is researched, can be added as an automated or manual option.
-- **Auditability**: Correction journals and return filings remain separately linked.
+- **Audit safety**: Case details and corrections remain traceable.
+- **Future flexibility**: Once research determines applicable branches and submission flows, adapters can be implemented per branch/case type.
+- **No premature claims**: No "amendment" or "revised return" submission until official mechanism verified.
 
 **Reversal Path**:
-After ITR-X form, eligibility, and procedure are researched and settled, owner may approve auto-generation or manual ITR-X filing. Re-filing remains always available as a fallback.
+After official s263(5)-(7) branches are researched and applicable regime/form/deadline per branch is documented, owner may approve branch-specific submission adapters. Case/evidence preservation and correction lineage remain stable regardless of submission mechanism added.
 
 **Dependencies**:
-- Annual return workflow (s263 due dates, form selection per Rule 164).
-- [Amended/revised return workflow OPEN RESEARCH](statutory-workflow-contracts.md#open-items-blocking-implementation) (item 15).
+- [Annual Income-Tax Return Workflow Contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
+- s263(5)-(7) applicable branches and official procedures (OPEN_RESEARCH).
 - Correction journal model (settled in [decisions.md](decisions.md#confirmed)).
 
 **Evidence**:
-- ITR-X form existence, official name, structure, and applicability year remain unverified at knowledge cutoff.
-- Amendment deadline and procedure (s163) require official source confirmation.
+- s263(5)-(7) define applicable branches for post-filing return procedures; exact applicability and form/deadline per branch require verified research.
+- Current ITD Form Navigator and official guidance are required to confirm any submission mechanism.
 
 **Owner Review Status**:
-Awaiting owner review and dedicated amendment/ITR-X research. This entry documents the tentative default (re-filing only, amendment deferred) to unblock annual-return module without guessing amendment procedure. Owner may fund research and approve ITR-X support after closure.
+Awaiting owner review and dedicated s263(5)-(7) branch/procedure research. This entry documents the tentative default (case/evidence/lineage preservation; submission deferred) to prevent premature amendment/revised-return claims. Owner may fund research and approve branch-specific adapters after closure.
 
 ---
 
@@ -588,11 +534,11 @@ Entries T-001 through T-010 extend and clarify settled decisions from [decisions
 - **T-003** is the first detailed entry for [Fixed assets](decisions.md#confirmed) (RECOMMENDED in ARC-012).
 - **T-004** is the first detailed implementation entry for [Multi-currency](decisions.md#confirmed) and [Exchange-rate source](decisions.md#confirmed) (OPEN RESEARCH).
 - **T-005** clarifies V1 scope in support of settled [Engine ownership](decisions.md#confirmed), [Automation policy](decisions.md#confirmed), and [Multi-GSTIN tenant modeling](decisions.md#confirmed). E-invoice and e-way-bill adapters (CMP-006, CMP-007) are explicitly **RESEARCH-GATED and DEFERRED**, not V1-authorized; see [architecture-decisions.md](architecture-decisions.md#cmp-006-e-invoice-default-irp-via-configured-adapter) and [architecture-decisions.md](architecture-decisions.md#cmp-007-e-way-bill-default-configured-api-with-state-specific-rules-open-research) for research gates.
-- **T-006** (new): Specifies deterministic batch partial-success exit codes and JSON outcomes to support [CLI-004: Explicit exit-code taxonomy](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006: Batch atomicity declared per operation](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation). Recommends exit code 9 (if unused) for partial success; exit 0 only when all selected items succeed; JSON outcomes per item.
-- **T-007** (migrated from statutory-workflow-contracts.md examples): Advance-tax estimated-amount input—manual entry or auto-projection. Tentative default: manual operator entry, no auto-projection. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
-- **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction path via period reopen and correction journal. Supports [T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedules%E2%80%94book-vs-tax-with-tentative-slm-default) and fixed-asset module scope.
-- **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 export format—JSON, XML, or both. Tentative default: JSON primary (matching GSTR-1 precedent), XML if official acceptance discovered. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
-- **T-010** (migrated from statutory-workflow-contracts.md examples): Amendment/revised return workflow—ITR-X or re-filing. Tentative default: re-filing only; amendment (ITR-X) deferred until form/procedure research is closed and owner-approved. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
+- **T-006** (new): Proposes exit code 9 as numeric signal for partial-success batches. Implementation contract (atomicity, when to exit 0/non-zero, JSON schema) is canonical in [CLI-004](architecture-decisions.md#cli-004-explicit-exit-code-taxonomy) and [CLI-006](architecture-decisions.md#cli-006-batch-atomicity-declared-per-operation); this entry does not override those.
+- **T-007** (migrated from statutory-workflow-contracts.md examples): Advance-tax estimated-amount input. Tentative default: capture operator input with provenance; no auto-projection; no tax liability computation or gate bypass from input alone. Annual-tax contract gates remain canonical. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
+- **T-008** (migrated from statutory-workflow-contracts.md examples): Retroactive depreciation recalculation—block or auto-recalculate. Tentative default: block retroactive changes; correction via period reopen and correction journal. Supports [T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedules%E2%80%94book-vs-tax-with-tentative-slm-default) and fixed-asset module scope.
+- **T-009** (migrated from statutory-workflow-contracts.md examples): Form 140/141 statutory export—research-gated, fail-closed. Tentative default: internal neutral data only; no export adapter until Form 140 official utility/schema/portal flow researched and verified. Supports [TDS workflow contract](statutory-workflow-contracts.md#tds-workflow-contract-non-payroll-sections-393%E2%80%93394).
+- **T-010** (migrated from statutory-workflow-contracts.md examples): Post-filing return case/evidence/correction. Tentative default: preserve case details and correction lineage; no return-amendment or defective-return submission adapter until s263(5)-(7) branches and official procedures researched and verified. Supports [Annual income-tax return contract](statutory-workflow-contracts.md#annual-income-tax-return-workflow-contract).
 
 **None of these entries override settled decisions.** They provide implementation detail and working defaults for decisions that remain open or recommend future owner approval. Filing-specific settled decisions always override T-001.
 
