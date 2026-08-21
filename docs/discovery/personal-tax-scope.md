@@ -134,6 +134,8 @@ No static tax rule is embedded here. A subledger can preserve facts and evidence
 
 **Control:** TaxCase creation stores the immutable taxpayer, period, filing sequence, BookSet set, external-source set, and snapshot bindings. A missing applicable source stays visible and blocks the affected action.
 
+The TaxCase membership snapshot never mutates. Before `validate`, `export`, `submit`, or `finalize`, applicability is deterministically re-enumerated from current taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. If an applicable BookSet or required external source was added, removed, or changed since the snapshot, the TaxCase is marked `STALE` and the affected action is blocked until an immutable successor or rebuilt case captures the new membership. The old snapshot remains unchanged.
+
 **Open choice:** Exact TaxCase persistence and inclusion-query shape require the canonical contract migration.
 
 <a id="pt-006"></a>
@@ -205,7 +207,9 @@ Future AA access may exist only through a registered RBI AA ecosystem and consen
 
 **Decision:** Source readiness uses exactly these states: `UNKNOWN`, `DECLARED_NOT_APPLICABLE`, `EXPECTED`, `INGESTED`, `RECONCILED`, `CONFLICT`, `INCOMPLETE`, `READY`, `STALE`.
 
-`RECONCILED -> READY` is allowed only when every required expected source for the affected action is reconciled, no required conflict, incomplete, or stale state exists, and deterministic validations pass.
+Before readiness evaluation, the complete required source catalog is deterministically enumerated from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. The catalog must be non-empty and complete. Every required catalog entry must be either `RECONCILED` or `READY`, or have evidenced `DECLARED_NOT_APPLICABLE` status. Any required `UNKNOWN`, `EXPECTED`, `INGESTED`, `CONFLICT`, `INCOMPLETE`, or `STALE` entry returns `REVIEW/BLOCK` for the affected action.
+
+`RECONCILED -> READY` is allowed only for a complete, non-empty catalog when every required entry is reconciled or ready, any not-applicable entry is evidenced, no required conflict, incomplete, or stale state exists, and deterministic validations pass. An empty or not-yet-enumerated catalog can never pass `READY`.
 
 Required unresolved states block only the affected computation, export, or filing action. They do not block unrelated BookSet work. Optional unresolved sources remain visible and do not silently disappear.
 
@@ -343,10 +347,10 @@ These controls protect against the silent failure in which a plausible parser re
 | `RECONCILED` | Artifact and derived records reconcile for its scope | `READY`, `CONFLICT`, `INCOMPLETE`, or `STALE` |
 | `CONFLICT` | Evidence and books or another source disagree | `RECONCILED`, `INCOMPLETE`, or `STALE` |
 | `INCOMPLETE` | Artifact or required facts are partial | `RECONCILED`, `CONFLICT`, or `STALE` |
-| `READY` | Required source conditions and deterministic validations pass | `STALE` or a new reconciliation outcome |
+| `READY` | A complete, non-empty required catalog exists; every required entry is `RECONCILED`/`READY` or evidenced `DECLARED_NOT_APPLICABLE`; deterministic validations pass | `STALE` or a new reconciliation outcome |
 | `STALE` | A newer or invalidating source version exists | `INGESTED`, `INCOMPLETE`, or `CONFLICT` |
 
-The only inbound path to `READY` is from `RECONCILED`, and only when every required expected source for the affected action is reconciled, no required conflict/incomplete/stale exists, and deterministic validations pass. A mandatory unresolved source blocks only the affected computation, export, or filing. Optional unresolved sources stay visible. User or CA acknowledgement does not convert a mandatory gap to `READY`.
+Before any readiness transition, deterministically enumerate the complete required source catalog from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. The catalog must be non-empty. The only inbound path to `READY` is from `RECONCILED`, and only when every required catalog entry is `RECONCILED` or `READY`, every `DECLARED_NOT_APPLICABLE` entry has evidence, no required `UNKNOWN`, `EXPECTED`, `INGESTED`, `CONFLICT`, `INCOMPLETE`, or `STALE` entry exists, and deterministic validations pass. An empty or not-yet-enumerated catalog can never pass `READY`. A mandatory unresolved source blocks only the affected computation, export, or filing. Optional unresolved sources stay visible. User or CA acknowledgement does not convert a mandatory gap to `READY`.
 
 ### Transition review rules
 
@@ -374,7 +378,7 @@ agent-bahi status --tenant tenant_person
 
 It lists the personal BookSet, each proprietorship BookSet, and the TaxCases separately. It does not require `--book-set`.
 
-When multiple eligible BookSets exist, every mutation names one. Every TaxCase mutation names an immutable `--tax-case tc_...`:
+Aggregate TaxCase create, validate, and status operations are tenant/TaxCase-scoped and are explicitly exempt from `--book-set`. Only BookSet-scoped imports, reconciliations, ledger postings, and corrections require explicit `--book-set` when multiple eligible BookSets exist. Every TaxCase mutation after creation names an immutable `--tax-case tc_...`; ambiguity fails closed.
 
 ```text
 agent-bahi tax-case create --tenant tenant_person --tax-case tc_person_fy25_original --period FY-2025-26 --filing-sequence original
