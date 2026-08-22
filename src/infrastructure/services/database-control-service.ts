@@ -3,7 +3,7 @@ import type { Dialect } from "../../core/types.ts";
 import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
-import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
 
 /**
  * Database control inspection status.
@@ -211,7 +211,7 @@ export class DatabaseControlService {
    */
   private manifestForHistory(rows: readonly Record<string, unknown>[]): SqliteSchemaManifest | undefined {
     if (this.expectedManifest) return this.expectedManifest;
-    const candidates = [V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST];
+    const candidates = [V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST];
     return candidates.find((candidate) => rows.length === candidate.migrations.length && candidate.migrations.every((migration, index) => {
       const actual = rows[index];
       return actual?.id === migration.id && actual?.dialect === migration.dialect && actual?.checksum === migration.checksum && actual?.status === migration.status;

@@ -5,6 +5,7 @@ import { BOOKSET_V3_MIGRATION } from "./bookset-v3-migration.ts";
 import { BOOKSET_V4_MIGRATION } from "./bookset-v4-migration.ts";
 import { JOURNAL_V5_MIGRATION } from "./journal-v5-migration.ts";
 import { SALES_V6_MIGRATION } from "./sales-v6-migration.ts";
+import { PURCHASE_V7_MIGRATION } from "./purchase-v7-migration.ts";
 
 export type CurrentSqliteMigration = {
   readonly id: string;
@@ -25,12 +26,13 @@ export const CURRENT_SQLITE_MIGRATIONS: readonly CurrentSqliteMigration[] = Obje
   Object.freeze({ id: BOOKSET_V4_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V4_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
   Object.freeze({ id: JOURNAL_V5_MIGRATION.id, checksum: computeSqliteMigrationChecksum(JOURNAL_V5_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
   Object.freeze({ id: SALES_V6_MIGRATION.id, checksum: computeSqliteMigrationChecksum(SALES_V6_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
+  Object.freeze({ id: PURCHASE_V7_MIGRATION.id, checksum: computeSqliteMigrationChecksum(PURCHASE_V7_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
 ]);
 
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 export const CURRENT_DATA_FORMAT_VERSION = 1;
 export const CURRENT_DATABASE_GENERATION = 1;
-export const CURRENT_DATABASE_REVISION = 5;
+export const CURRENT_DATABASE_REVISION = 6;
 export const CURRENT_READER_PROTOCOL_MIN = 1;
 export const CURRENT_READER_PROTOCOL_MAX = 1;
 export const CURRENT_WRITER_PROTOCOL = 1;
@@ -43,6 +45,9 @@ export const V4_DATABASE_REVISION = 3;
 
 export const V5_SCHEMA_VERSION = 5;
 export const V5_DATABASE_REVISION = 4;
+
+export const V6_SCHEMA_VERSION = 6;
+export const V6_DATABASE_REVISION = 5;
 
 export interface SqliteSchemaManifest {
   readonly manifestVersion: number;
@@ -154,7 +159,23 @@ export const V5_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
   ]),
 });
 
-/** Immutable production manifest. The current schema is v6 after the sales slice migration. */
+/** V6 Schema Manifest for the V6->V7 purchase slice source. */
+export const V6_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
+  manifestVersion: 1,
+  schemaVersion: V6_SCHEMA_VERSION,
+  dataFormatVersion: 1,
+  generation: 1,
+  revision: V6_DATABASE_REVISION,
+  readerCompatibilityMin: 1,
+  readerCompatibilityMax: 1,
+  writerProtocol: 1,
+  migrations: Object.freeze([
+    ...V5_SCHEMA_MANIFEST.migrations,
+    Object.freeze({ id: SALES_V6_MIGRATION.id, checksum: computeSqliteMigrationChecksum(SALES_V6_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
+  ]),
+});
+
+/** Immutable production manifest. The current schema is v7 after the purchase slice migration. */
 export const CURRENT_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
   manifestVersion: 1,
   schemaVersion: CURRENT_SCHEMA_VERSION,

@@ -21,10 +21,12 @@ import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService, type DatabaseControlRecord } from "./database-control-service.ts";
 import { CORE_SCHEMA_SQLITE } from "../schema/core-schema.ts";
 import { DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
-import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
 import { BOOKSET_V3_MIGRATION } from "../schema/bookset-v3-migration.ts";
 import { BOOKSET_V4_MIGRATION } from "../schema/bookset-v4-migration.ts";
 import { JOURNAL_V5_MIGRATION } from "../schema/journal-v5-migration.ts";
+import { SALES_V6_MIGRATION } from "../schema/sales-v6-migration.ts";
+import { PURCHASE_V7_MIGRATION } from "../schema/purchase-v7-migration.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 
 type CatalogRow = {
@@ -338,7 +340,7 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
 }
 
 function manifestForHistory(rows: readonly MigrationRow[]): SqliteSchemaManifest | undefined {
-  return [V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST].find((candidate) => candidate.migrations.length === rows.length && candidate.migrations.every((migration, index) => {
+  return [V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST].find((candidate) => candidate.migrations.length === rows.length && candidate.migrations.every((migration, index) => {
     const actual = rows[index];
     return actual?.id === migration.id && actual?.dialect === migration.dialect && actual?.checksum === migration.checksum && actual?.status === migration.status && actual?.dirty_reason === null;
   }));
@@ -435,6 +437,8 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
     if (expectedManifest.schemaVersion >= 3) db.exec(BOOKSET_V3_MIGRATION.sqlite);
     if (expectedManifest.schemaVersion >= 4) db.exec(BOOKSET_V4_MIGRATION.sqlite);
     if (expectedManifest.schemaVersion >= 5) db.exec(JOURNAL_V5_MIGRATION.sqlite);
+    if (expectedManifest.schemaVersion >= 6) db.exec(SALES_V6_MIGRATION.sqlite);
+    if (expectedManifest.schemaVersion >= 7) db.exec(PURCHASE_V7_MIGRATION.sqlite);
     const catalog = queryRows<CatalogRow>(db, `
       SELECT type, name, tbl_name, sql
       FROM sqlite_schema

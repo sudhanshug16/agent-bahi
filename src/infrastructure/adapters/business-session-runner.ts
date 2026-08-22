@@ -25,6 +25,10 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "sales_invoice_lines",
   "bank_receipts",
   "bank_receipt_allocations",
+  "vendor_bills",
+  "vendor_bill_lines",
+  "vendor_payments",
+  "vendor_payment_allocations",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

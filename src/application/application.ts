@@ -13,10 +13,10 @@ import { MigrationService } from "../infrastructure/services/migration-service.t
 import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
-import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN, JOURNAL_V5_UPGRADE_PLAN, SALES_V6_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
+import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN, JOURNAL_V5_UPGRADE_PLAN, SALES_V6_UPGRADE_PLAN, PURCHASE_V7_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
 import { CORE_MIGRATIONS } from "../infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../infrastructure/schema/database-control-schema.ts";
-import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
+import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
 import { LedgerReportService } from "./services/ledger-report-service.ts";
 
@@ -50,7 +50,7 @@ export interface SqliteBootstrapOptions {
  * coordinator owns collision handling, so an existing path is never replaced
  * or silently reused for a different hop.
  */
-function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4" | "v4-to-v5" | "v5-to-v6"): string {
+function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4" | "v4-to-v5" | "v5-to-v6" | "v6-to-v7"): string {
   return basePath.endsWith(".sqlite")
     ? `${basePath.slice(0, -".sqlite".length)}.${hop}.sqlite`
     : `${basePath}.${hop}.sqlite`;
@@ -104,7 +104,7 @@ export function createSqliteApplication(
 
 /**
  * Production bootstrap. The v2 foundation is initialized first, then the
- * immutable coordinator applies 0003 (v2->v3) and 0004 (v3->v4) in sequence.
+ * immutable coordinator applies each pending SQLite upgrade in sequence.
  * Returns the public facade.
  */
 export async function bootstrapSqliteApplication(
@@ -181,6 +181,20 @@ export async function bootstrapSqliteApplication(
       })).upgrade({
         plan: SALES_V6_UPGRADE_PLAN,
         backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v5-to-v6"),
+        cliVersion: options.cliVersion ?? "agent-bahi",
+        buildId: options.buildId ?? "bootstrap",
+        now,
+      });
+    }
+
+    const postV6Inspection = await new DatabaseControlService(db, "sqlite", V6_SCHEMA_MANIFEST).inspect();
+    if (postV6Inspection.status === "AVAILABLE" && postV6Inspection.record?.schemaVersion === V6_SCHEMA_MANIFEST.schemaVersion) {
+      await new UpgradeCoordinator(db, new BackupService({
+        sourcePath: dbPath,
+        expectedSourceManifest: V6_SCHEMA_MANIFEST,
+      })).upgrade({
+        plan: PURCHASE_V7_UPGRADE_PLAN,
+        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v6-to-v7"),
         cliVersion: options.cliVersion ?? "agent-bahi",
         buildId: options.buildId ?? "bootstrap",
         now,

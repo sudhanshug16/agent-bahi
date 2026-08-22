@@ -20,6 +20,7 @@ import type { JournalPostPayload, JournalPostResult } from "./services/journal-c
 import { executeJournalPost } from "./services/journal-command-service.ts";
 import type { LedgerReportService, TrialBalanceReport, ProfitAndLossReport, BalanceSheetReport } from "./services/ledger-report-service.ts";
 import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeReceiptRecord, getInvoice, listOutstandingInvoices, type PartyCreatePayload, type PartyCreateResult, type InvoiceCreatePayload, type InvoiceCreateResult, type InvoicePostPayload, type InvoicePostResult, type ReceiptRecordPayload, type ReceiptRecordResult, type InvoiceView } from "./services/sales-command-service.ts";
+import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
 
 /**
  * Read-only tenant operations
@@ -92,6 +93,13 @@ export interface InvoiceCommands {
   outstanding(tenantId: TenantId, bookSetId: BookSetId): Promise<InvoiceView[]>;
 }
 export interface ReceiptCommands { record(envelope: SalesCommandEnvelope<ReceiptRecordPayload>): Promise<CommandResult<ReceiptRecordResult>>; }
+export interface BillCommands {
+  create(envelope: SalesCommandEnvelope<BillCreatePayload>): Promise<CommandResult<BillCreateResult>>;
+  post(envelope: SalesCommandEnvelope<BillPostPayload>): Promise<CommandResult<BillPostResult>>;
+  get(tenantId: TenantId, bookSetId: BookSetId, billId: string): Promise<BillView>;
+  outstanding(tenantId: TenantId, bookSetId: BookSetId): Promise<BillView[]>;
+}
+export interface VendorPaymentCommands { record(envelope: SalesCommandEnvelope<VendorPaymentRecordPayload>): Promise<CommandResult<VendorPaymentRecordResult>>; }
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -107,6 +115,8 @@ export type PublicApplicationFacade = {
   party: PartyCommands;
   invoice: InvoiceCommands;
   receipt: ReceiptCommands;
+  bill: BillCommands;
+  vendorPayment: VendorPaymentCommands;
 };
 
 /**
@@ -160,5 +170,12 @@ export function createPublicFacade(
       outstanding: (tenantId, bookSetId) => listOutstandingInvoices(sessionRunner, tenantId, bookSetId),
     },
     receipt: { record: (envelope) => executeReceiptRecord(sessionRunner, envelope) },
+    bill: {
+      create: (envelope) => executeBillCreate(sessionRunner, envelope),
+      post: (envelope) => executeBillPost(sessionRunner, envelope),
+      get: (tenantId, bookSetId, billId) => getBill(sessionRunner, tenantId, bookSetId, billId),
+      outstanding: (tenantId, bookSetId) => listOutstandingBills(sessionRunner, tenantId, bookSetId),
+    },
+    vendorPayment: { record: (envelope) => executeVendorPaymentRecord(sessionRunner, envelope) },
   };
 }

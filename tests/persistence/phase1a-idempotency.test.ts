@@ -13,6 +13,7 @@ import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3
 import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
 import { JOURNAL_V5_MIGRATION } from "../../src/infrastructure/schema/journal-v5-migration.ts";
 import { SALES_V6_MIGRATION } from "../../src/infrastructure/schema/sales-v6-migration.ts";
+import { PURCHASE_V7_MIGRATION } from "../../src/infrastructure/schema/purchase-v7-migration.ts";
 import { IdempotencyConflictError, DomainError } from "../../src/core/types.ts";
 
 describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
@@ -50,6 +51,7 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
         sql: JOURNAL_V5_MIGRATION.sqlite,
       },
       { id: SALES_V6_MIGRATION.id, sql: SALES_V6_MIGRATION.sqlite },
+      { id: PURCHASE_V7_MIGRATION.id, sql: PURCHASE_V7_MIGRATION.sqlite },
     ]);
 
     // Initialize database_control row via migration lease (v4 manifest)

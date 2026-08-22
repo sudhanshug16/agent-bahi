@@ -7,7 +7,8 @@ import { canonicalJson, computeCommandHash, computeResultHash } from "../command
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
 import { postJournalInSession, type JournalLinePayload } from "./journal-command-service.ts";
 
-export interface PartyCreatePayload { displayName: string; email?: string; phone?: string; }
+export type PartyRole = "CUSTOMER" | "VENDOR" | "BOTH";
+export interface PartyCreatePayload { displayName: string; email?: string; phone?: string; role?: PartyRole; partyType?: PartyRole; }
 export interface PartyCreateResult { partyId: string; displayName: string; status: "ACTIVE"; }
 export interface InvoiceLinePayload { description: string; revenueAccountId: string; amountMinor: number; }
 export interface InvoiceCreatePayload {
@@ -109,9 +110,10 @@ async function assertAccount(session: BusinessSession, tenantId: TenantId, bookS
 }
 
 async function assertCustomer(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, customerId: string): Promise<void> {
-  const row = await session.querySingle("SELECT id, status FROM parties WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [customerId, tenantId, bookSetId]);
+  const row = await session.querySingle("SELECT id, status, party_role FROM parties WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [customerId, tenantId, bookSetId]);
   if (!row) throw new DomainError("CUSTOMER_SCOPE_MISMATCH", "customer does not belong to tenant and BookSet");
   if (String(row.status) !== "ACTIVE") throw new DomainError("CUSTOMER_INACTIVE", "customer must be ACTIVE");
+  if (!(["CUSTOMER", "BOTH"] as string[]).includes(String(row.party_role ?? "CUSTOMER"))) throw new DomainError("PARTY_ROLE_MISMATCH", "party is not a customer");
 }
 
 function assertEnvelope<P>(envelope: SalesEnvelope<P>, bookSetId: unknown): void {
@@ -124,6 +126,9 @@ export async function executePartyCreate(sessionRunner: BusinessSessionRunner, e
   const displayName = nonblank(envelope.payload.displayName, "displayName", 512).trim();
   if (envelope.payload.email !== undefined) nonblank(envelope.payload.email, "email", 512);
   if (envelope.payload.phone !== undefined) nonblank(envelope.payload.phone, "phone", 128);
+  const role = envelope.payload.role ?? envelope.payload.partyType ?? "CUSTOMER";
+  if (!["CUSTOMER", "VENDOR", "BOTH"].includes(role)) throw new DomainError("INVALID_PARTY_ROLE", "role must be CUSTOMER, VENDOR, or BOTH");
+  if (envelope.payload.role !== undefined && envelope.payload.partyType !== undefined && envelope.payload.role !== envelope.payload.partyType) throw new DomainError("INVALID_PARTY_ROLE", "role and partyType must match");
   const requestHash = computeCommandHash("party.create", envelope, envelope.payload);
   return sessionRunner.withBusinessSession("write", async (session) => {
     const existing = await idempotency(session, envelope.tenantId, envelope.requestId);
@@ -135,7 +140,7 @@ export async function executePartyCreate(sessionRunner: BusinessSessionRunner, e
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
     const partyId = randomUUID();
     const now = new Date().toISOString();
-    await session.execute("INSERT INTO parties (id, tenant_id, book_set_id, display_name, email, phone, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)", [partyId, envelope.tenantId, envelope.bookSetId, displayName, envelope.payload.email ?? null, envelope.payload.phone ?? null, now, now]);
+    await session.execute("INSERT INTO parties (id, tenant_id, book_set_id, display_name, email, phone, party_role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)", [partyId, envelope.tenantId, envelope.bookSetId, displayName, envelope.payload.email ?? null, envelope.payload.phone ?? null, role, now, now]);
     return finishCommand(session, envelope, "party.create", requestHash, { partyId, displayName, status: "ACTIVE" }, "party", partyId, now);
   });
 }
