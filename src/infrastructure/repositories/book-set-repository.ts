@@ -7,18 +7,57 @@ export class SqliteBookSetRepository implements BookSetRepository {
   constructor(private db: Database) {}
 
   async create(bookSet: BookSet): Promise<void> {
-    await this.db.execute(
-      `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        bookSet.id,
-        bookSet.tenantId,
-        bookSet.kind,
-        bookSet.lifecycle,
-        bookSet.createdAt,
-        bookSet.updatedAt,
-      ],
-    );
+    const tx = await this.db.beginTransaction();
+
+    try {
+      // Verify tenant exists and get its kind
+      const tenant = await tx.executeSingle(
+        "SELECT id, kind FROM tenants WHERE id = ?",
+        [bookSet.tenantId],
+      );
+
+      if (!tenant) {
+        throw new DomainError("TENANT_NOT_FOUND", `Tenant not found: ${bookSet.tenantId}`);
+      }
+
+      const tenantKind = tenant.kind as string;
+
+      // Enforce BookSet kind cardinality based on tenant kind
+      if (tenantKind === "COMPANY" && bookSet.kind !== "COMPANY") {
+        throw new DomainError(
+          "INVALID_BOOK_SET_KIND",
+          `COMPANY tenant can only have COMPANY BookSet, not ${bookSet.kind}`,
+          { tenantKind, bookSetKind: bookSet.kind },
+        );
+      }
+
+      if (tenantKind === "INDIVIDUAL" && bookSet.kind === "COMPANY") {
+        throw new DomainError(
+          "INVALID_BOOK_SET_KIND",
+          `INDIVIDUAL tenant cannot have COMPANY BookSet`,
+          { tenantKind, bookSetKind: bookSet.kind },
+        );
+      }
+
+      // Insert the BookSet
+      await tx.execute(
+        `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          bookSet.id,
+          bookSet.tenantId,
+          bookSet.kind,
+          bookSet.lifecycle,
+          bookSet.createdAt,
+          bookSet.updatedAt,
+        ],
+      );
+
+      await tx.commit();
+    } catch (error) {
+      await tx.rollback();
+      throw error;
+    }
   }
 
   async getById(bookSetId: BookSetId, tenantId: TenantId): Promise<BookSet> {

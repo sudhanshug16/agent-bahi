@@ -33,8 +33,7 @@ CREATE TABLE tenants (
   base_currency TEXT NOT NULL DEFAULT 'INR',
   default_book_set_id TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  CONSTRAINT fk_tenant_default_book_set FOREIGN KEY (default_book_set_id) REFERENCES book_sets(id)
+  updated_at TEXT NOT NULL
 );
 
 -- Book sets: accounting partitions within tenant
@@ -49,6 +48,30 @@ CREATE TABLE book_sets (
   CONSTRAINT uq_book_set_tenant_kind UNIQUE (tenant_id, kind)
 );
 
+-- Composite FK enforcement: tenant.default_book_set_id must belong to same tenant
+-- Trigger on insert/update of tenants
+CREATE TRIGGER tenants_default_book_set_tenant_match BEFORE INSERT ON tenants
+WHEN NEW.default_book_set_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+      SELECT 1 FROM book_sets
+      WHERE id = NEW.default_book_set_id AND tenant_id = NEW.id
+    ) THEN RAISE(ABORT, 'default_book_set_id must belong to same tenant')
+  END;
+END;
+
+CREATE TRIGGER tenants_default_book_set_tenant_match_upd BEFORE UPDATE ON tenants
+WHEN NEW.default_book_set_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+      SELECT 1 FROM book_sets
+      WHERE id = NEW.default_book_set_id AND tenant_id = NEW.id
+    ) THEN RAISE(ABORT, 'default_book_set_id must belong to same tenant')
+  END;
+END;
+
 -- Accounts: chart of accounts
 CREATE TABLE accounts (
   id TEXT PRIMARY KEY,
@@ -58,6 +81,7 @@ CREATE TABLE accounts (
   name TEXT NOT NULL,
   account_type TEXT NOT NULL,
   parent_account_id TEXT,
+  archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   CONSTRAINT fk_account_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
@@ -65,6 +89,28 @@ CREATE TABLE accounts (
   CONSTRAINT fk_account_parent FOREIGN KEY (parent_account_id) REFERENCES accounts(id),
   CONSTRAINT uq_account_code_scope UNIQUE (tenant_id, book_set_id, code)
 );
+
+-- Composite FK enforcement: account.book_set_id must belong to account's tenant_id
+-- This is the critical cross-tenant isolation constraint
+CREATE TRIGGER accounts_book_set_tenant_match BEFORE INSERT ON accounts
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+      SELECT 1 FROM book_sets
+      WHERE id = NEW.book_set_id AND tenant_id = NEW.tenant_id
+    ) THEN RAISE(ABORT, 'account book_set_id must belong to account tenant_id')
+  END;
+END;
+
+CREATE TRIGGER accounts_book_set_tenant_match_upd BEFORE UPDATE ON accounts
+BEGIN
+  SELECT CASE
+    WHEN NOT EXISTS (
+      SELECT 1 FROM book_sets
+      WHERE id = NEW.book_set_id AND tenant_id = NEW.tenant_id
+    ) THEN RAISE(ABORT, 'account book_set_id must belong to account tenant_id')
+  END;
+END;
 
 -- Legal identities: normalized PAN/registration fingerprints
 CREATE TABLE legal_identities (
@@ -90,7 +136,8 @@ CREATE TABLE tenant_creation_requests (
   CONSTRAINT fk_tcr_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
--- GST registrations: tenant-scoped, effective-dated
+-- GST registrations: tenant-scoped, effective-dated (supports historical records)
+-- No UNIQUE(tenant_id, gstin) - allows multiple records for different effective date ranges
 CREATE TABLE gst_registrations (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -106,9 +153,38 @@ CREATE TABLE gst_registrations (
   redacted_display TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  CONSTRAINT fk_gst_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-  CONSTRAINT uq_gst_tenant_gstin UNIQUE (tenant_id, gstin)
+  CONSTRAINT fk_gst_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
+
+-- Constraint: No overlapping effective date ranges for same GSTIN within tenant
+-- This allows historical records but prevents invalid overlaps
+CREATE TRIGGER gst_registrations_no_overlap BEFORE INSERT ON gst_registrations
+BEGIN
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1 FROM gst_registrations gs
+      WHERE gs.tenant_id = NEW.tenant_id
+        AND gs.gstin = NEW.gstin
+        AND gs.id != NEW.id
+        AND gs.effective_from <= COALESCE(NEW.effective_to, '9999-12-31')
+        AND COALESCE(gs.effective_to, '9999-12-31') >= NEW.effective_from
+    ) THEN RAISE(ABORT, 'overlapping GST registration effective date ranges')
+  END;
+END;
+
+CREATE TRIGGER gst_registrations_no_overlap_upd BEFORE UPDATE ON gst_registrations
+BEGIN
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1 FROM gst_registrations gs
+      WHERE gs.tenant_id = NEW.tenant_id
+        AND gs.gstin = NEW.gstin
+        AND gs.id != NEW.id
+        AND gs.effective_from <= COALESCE(NEW.effective_to, '9999-12-31')
+        AND COALESCE(gs.effective_to, '9999-12-31') >= NEW.effective_from
+    ) THEN RAISE(ABORT, 'overlapping GST registration effective date ranges')
+  END;
+END;
 
 -- Evidence: content-addressed audit artifacts
 CREATE TABLE evidence (
@@ -178,7 +254,7 @@ CREATE TABLE tenants (
   lifecycle TEXT NOT NULL CHECK (lifecycle IN ('CREATING', 'ACTIVE', 'ARCHIVED')),
   name TEXT NOT NULL,
   base_currency TEXT NOT NULL DEFAULT 'INR',
-  default_book_set_id TEXT REFERENCES book_sets(id),
+  default_book_set_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -194,6 +270,27 @@ CREATE TABLE book_sets (
   UNIQUE (tenant_id, kind)
 );
 
+-- Composite FK enforcement: tenant.default_book_set_id must belong to same tenant
+CREATE OR REPLACE FUNCTION check_tenant_default_book_set()
+RETURNS TRIGGER AS \$\$
+BEGIN
+  IF NEW.default_book_set_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM book_sets
+      WHERE id = NEW.default_book_set_id AND tenant_id = NEW.id
+    ) THEN
+      RAISE EXCEPTION 'default_book_set_id must belong to same tenant';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+\$\$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tenants_default_book_set_tenant_match
+  BEFORE INSERT OR UPDATE ON tenants
+  FOR EACH ROW
+  EXECUTE FUNCTION check_tenant_default_book_set();
+
 -- Accounts: chart of accounts
 CREATE TABLE accounts (
   id TEXT PRIMARY KEY,
@@ -203,10 +300,30 @@ CREATE TABLE accounts (
   name TEXT NOT NULL,
   account_type TEXT NOT NULL,
   parent_account_id TEXT REFERENCES accounts(id),
+  archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (tenant_id, book_set_id, code)
 );
+
+-- Composite FK enforcement: account.book_set_id must belong to account's tenant_id
+CREATE OR REPLACE FUNCTION check_account_book_set_tenant()
+RETURNS TRIGGER AS \$\$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM book_sets
+    WHERE id = NEW.book_set_id AND tenant_id = NEW.tenant_id
+  ) THEN
+    RAISE EXCEPTION 'account book_set_id must belong to account tenant_id';
+  END IF;
+  RETURN NEW;
+END;
+\$\$ LANGUAGE plpgsql;
+
+CREATE TRIGGER accounts_book_set_tenant_match
+  BEFORE INSERT OR UPDATE ON accounts
+  FOR EACH ROW
+  EXECUTE FUNCTION check_account_book_set_tenant();
 
 -- Legal identities: normalized PAN/registration fingerprints
 CREATE TABLE legal_identities (
@@ -231,7 +348,8 @@ CREATE TABLE tenant_creation_requests (
   created_at TEXT NOT NULL
 );
 
--- GST registrations: tenant-scoped, effective-dated
+-- GST registrations: tenant-scoped, effective-dated (supports historical records)
+-- No UNIQUE(tenant_id, gstin) - allows multiple records for different effective date ranges
 CREATE TABLE gst_registrations (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL REFERENCES tenants(id),
@@ -246,9 +364,31 @@ CREATE TABLE gst_registrations (
   last_four TEXT,
   redacted_display TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE (tenant_id, gstin)
+  updated_at TEXT NOT NULL
 );
+
+-- Constraint: No overlapping effective date ranges for same GSTIN within tenant
+CREATE OR REPLACE FUNCTION check_gst_registrations_no_overlap()
+RETURNS TRIGGER AS \$\$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM gst_registrations gs
+    WHERE gs.tenant_id = NEW.tenant_id
+      AND gs.gstin = NEW.gstin
+      AND gs.id != NEW.id
+      AND gs.effective_from <= COALESCE(NEW.effective_to, '9999-12-31'::TEXT)
+      AND COALESCE(gs.effective_to, '9999-12-31'::TEXT) >= NEW.effective_from
+  ) THEN
+    RAISE EXCEPTION 'overlapping GST registration effective date ranges';
+  END IF;
+  RETURN NEW;
+END;
+\$\$ LANGUAGE plpgsql;
+
+CREATE TRIGGER gst_registrations_no_overlap
+  BEFORE INSERT OR UPDATE ON gst_registrations
+  FOR EACH ROW
+  EXECUTE FUNCTION check_gst_registrations_no_overlap();
 
 -- Evidence: content-addressed audit artifacts
 CREATE TABLE evidence (
@@ -320,8 +460,7 @@ CREATE TABLE tenants (
   base_currency VARCHAR(3) NOT NULL DEFAULT 'INR',
   default_book_set_id VARCHAR(36),
   created_at VARCHAR(50) NOT NULL,
-  updated_at VARCHAR(50) NOT NULL,
-  CONSTRAINT fk_tenant_default_book_set FOREIGN KEY (default_book_set_id) REFERENCES book_sets(id)
+  updated_at VARCHAR(50) NOT NULL
 );
 
 -- Book sets: accounting partitions within tenant
@@ -336,6 +475,29 @@ CREATE TABLE book_sets (
   UNIQUE KEY uq_book_set_tenant_kind (tenant_id, kind)
 );
 
+-- Composite FK enforcement: tenant.default_book_set_id must belong to same tenant
+CREATE TRIGGER tenants_default_book_set_tenant_match BEFORE INSERT ON tenants
+FOR EACH ROW
+BEGIN
+  IF NEW.default_book_set_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM book_sets
+    WHERE id = NEW.default_book_set_id AND tenant_id = NEW.id
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'default_book_set_id must belong to same tenant';
+  END IF;
+END;
+
+CREATE TRIGGER tenants_default_book_set_tenant_match_upd BEFORE UPDATE ON tenants
+FOR EACH ROW
+BEGIN
+  IF NEW.default_book_set_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM book_sets
+    WHERE id = NEW.default_book_set_id AND tenant_id = NEW.id
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'default_book_set_id must belong to same tenant';
+  END IF;
+END;
+
 -- Accounts: chart of accounts
 CREATE TABLE accounts (
   id VARCHAR(36) PRIMARY KEY,
@@ -345,6 +507,7 @@ CREATE TABLE accounts (
   name VARCHAR(255) NOT NULL,
   account_type VARCHAR(50) NOT NULL,
   parent_account_id VARCHAR(36),
+  archived_at VARCHAR(50),
   created_at VARCHAR(50) NOT NULL,
   updated_at VARCHAR(50) NOT NULL,
   CONSTRAINT fk_account_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
@@ -352,6 +515,29 @@ CREATE TABLE accounts (
   CONSTRAINT fk_account_parent FOREIGN KEY (parent_account_id) REFERENCES accounts(id),
   UNIQUE KEY uq_account_code_scope (tenant_id, book_set_id, code)
 );
+
+-- Composite FK enforcement: account.book_set_id must belong to account's tenant_id
+CREATE TRIGGER accounts_book_set_tenant_match BEFORE INSERT ON accounts
+FOR EACH ROW
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM book_sets
+    WHERE id = NEW.book_set_id AND tenant_id = NEW.tenant_id
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'account book_set_id must belong to account tenant_id';
+  END IF;
+END;
+
+CREATE TRIGGER accounts_book_set_tenant_match_upd BEFORE UPDATE ON accounts
+FOR EACH ROW
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM book_sets
+    WHERE id = NEW.book_set_id AND tenant_id = NEW.tenant_id
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'account book_set_id must belong to account tenant_id';
+  END IF;
+END;
 
 -- Legal identities: normalized PAN/registration fingerprints
 CREATE TABLE legal_identities (
@@ -377,7 +563,8 @@ CREATE TABLE tenant_creation_requests (
   CONSTRAINT fk_tcr_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
--- GST registrations: tenant-scoped, effective-dated
+-- GST registrations: tenant-scoped, effective-dated (supports historical records)
+-- No UNIQUE(tenant_id, gstin) - allows multiple records for different effective date ranges
 CREATE TABLE gst_registrations (
   id VARCHAR(36) PRIMARY KEY,
   tenant_id VARCHAR(36) NOT NULL,
@@ -393,9 +580,39 @@ CREATE TABLE gst_registrations (
   redacted_display VARCHAR(50),
   created_at VARCHAR(50) NOT NULL,
   updated_at VARCHAR(50) NOT NULL,
-  CONSTRAINT fk_gst_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-  UNIQUE KEY uq_gst_tenant_gstin (tenant_id, gstin)
+  CONSTRAINT fk_gst_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
+
+-- Constraint: No overlapping effective date ranges for same GSTIN within tenant
+CREATE TRIGGER gst_registrations_no_overlap BEFORE INSERT ON gst_registrations
+FOR EACH ROW
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM gst_registrations gs
+    WHERE gs.tenant_id = NEW.tenant_id
+      AND gs.gstin = NEW.gstin
+      AND gs.id != NEW.id
+      AND gs.effective_from <= COALESCE(NEW.effective_to, '9999-12-31')
+      AND COALESCE(gs.effective_to, '9999-12-31') >= NEW.effective_from
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'overlapping GST registration effective date ranges';
+  END IF;
+END;
+
+CREATE TRIGGER gst_registrations_no_overlap_upd BEFORE UPDATE ON gst_registrations
+FOR EACH ROW
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM gst_registrations gs
+    WHERE gs.tenant_id = NEW.tenant_id
+      AND gs.gstin = NEW.gstin
+      AND gs.id != NEW.id
+      AND gs.effective_from <= COALESCE(NEW.effective_to, '9999-12-31')
+      AND COALESCE(gs.effective_to, '9999-12-31') >= NEW.effective_from
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'overlapping GST registration effective date ranges';
+  END IF;
+END;
 
 -- Evidence: content-addressed audit artifacts
 CREATE TABLE evidence (
@@ -425,19 +642,13 @@ CREATE TABLE audit_records (
 );
 
 -- Append-only guard: prevent UPDATE/DELETE on audit_records
-DELIMITER \\\\
 CREATE TRIGGER audit_records_no_update BEFORE UPDATE ON audit_records
 FOR EACH ROW
-BEGIN
-  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_records are immutable';
-END\\\\
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_records are immutable';
 
 CREATE TRIGGER audit_records_no_delete BEFORE DELETE ON audit_records
 FOR EACH ROW
-BEGIN
-  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_records are immutable';
-END\\\\
-DELIMITER ;
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_records are immutable';
 
 -- Idempotency records: tenant-scoped request deduplication
 CREATE TABLE idempotency_records (
