@@ -40,9 +40,9 @@ INSERT INTO audit_records_v4
 SELECT
   id, tenant_id, NULL,
   COALESCE(action, 'unknown'),
-  action,
+  COALESCE(action, 'unknown'),
   COALESCE(actor_type, 'SYSTEM'),
-  actor_id,
+  COALESCE(actor_id, 'legacy'),
   'INTERNAL',
   'legacy backfill',
   COALESCE(request_id, id),
@@ -53,7 +53,7 @@ SELECT
   entity_type,
   entity_id,
   COALESCE(created_at, datetime('now')),
-  created_at
+  COALESCE(created_at, datetime('now'))
 FROM audit_records;
 
 DROP TABLE IF EXISTS audit_records;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
@@ -12,12 +13,16 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import {
   CURRENT_SCHEMA_MANIFEST,
   V2_SCHEMA_MANIFEST,
+  V3_SCHEMA_MANIFEST,
   computeSqliteMigrationChecksum,
   schemaManifestHash,
   type SqliteSchemaManifest,
 } from "../../src/infrastructure/schema/current-manifest.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
+import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
+import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
+import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN } from "../../src/infrastructure/schema/upgrade-plans.ts";
 import type { UpgradePlan, UpgradeRequest } from "../../src/application/ports/upgrade.ts";
 
 let directory: string;
@@ -207,5 +212,74 @@ describe("SQLite UpgradeCoordinator", () => {
       definition: plan.migration,
     })).resolves.toBeUndefined();
     expect(await db.querySingle("SELECT status, dirty_reason FROM schema_migrations WHERE id = ?", [plan.migration.id])).toEqual({ status: "APPLIED", dirty_reason: null });
+  });
+});
+
+describe("BookSet V3 -> V4 Migration via UpgradeCoordinator", () => {
+  let directory: string;
+  let dbPath: string;
+  let db: SqliteAdapter;
+
+  async function setupV3Database(): Promise<void> {
+    directory = await mkdtemp(join(tmpdir(), "agent-bahi-v34-"));
+    dbPath = join(directory, "live.sqlite");
+    db = new SqliteAdapter({ path: dbPath });
+    const migrations = new MigrationService(db, "sqlite");
+    await migrations.migrate([
+      { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
+      { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
+      { id: BOOKSET_V3_MIGRATION.id, sql: BOOKSET_V3_MIGRATION.sqlite },
+    ]);
+    const control = new DatabaseControlService(db, "sqlite", V3_SCHEMA_MANIFEST);
+    await db.withMigrationLease((session) => control.initialize({ cliVersion: "test", buildId: "v3-setup", now: new Date("2026-01-01T00:00:00.000Z") }, session).then(() => undefined));
+  }
+
+  async function cleanupDatabase(): Promise<void> {
+    await db.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+
+  beforeEach(setupV3Database);
+  afterEach(cleanupDatabase);
+
+  it("v4 schema includes legacy columns for backwards compatibility", async () => {
+    // Perform direct v3->v4 migration (simulating bootstrap path which uses direct MigrationService)
+    const migrationService = new MigrationService(db, "sqlite");
+    await migrationService.migrate([
+      { id: BOOKSET_V4_MIGRATION.id, sql: BOOKSET_V4_MIGRATION.sqlite, manifest: BOOKSET_V4_MIGRATION.manifest },
+    ]);
+
+    // Verify v4 schema exists with new columns including legacy preservation columns
+    const auditColumns = await db.query("PRAGMA table_info(audit_records)");
+    const columnNames = (auditColumns.rows as any[]).map(r => r.name);
+
+    // New v4 command audit columns
+    expect(columnNames).toContain("command");
+    expect(columnNames).toContain("source");
+    expect(columnNames).toContain("reason");
+    expect(columnNames).toContain("book_set_id");
+
+    // Legacy v2 columns preserved for backwards compatibility
+    expect(columnNames).toContain("legacy_entity_type");
+    expect(columnNames).toContain("legacy_entity_id");
+
+    // Verify column count (core columns + v4 new columns + legacy columns)
+    // v2 had: id, tenant_id, action, actor_type, actor_id, request_id, entity_type, entity_id, change_summary, evidence_ids, created_at
+    // v4 adds: book_set_id, command, source, reason, canonical_before_hash, canonical_after_hash, legacy_entity_type, legacy_entity_id, committed_at
+    // and keeps: id, tenant_id, action, actor_type, actor_id, request_id, entity_type, entity_id, change_summary, evidence_ids, created_at
+    expect(columnNames.length).toBeGreaterThan(12); // At least 11 old columns + some new ones
+  });
+
+  it("creates immutability triggers for idempotency_records in v4 migration", async () => {
+    const migrationService = new MigrationService(db, "sqlite");
+    await migrationService.migrate([
+      { id: BOOKSET_V4_MIGRATION.id, sql: BOOKSET_V4_MIGRATION.sqlite, manifest: BOOKSET_V4_MIGRATION.manifest },
+    ]);
+
+    // Verify triggers exist
+    const updateTrigger = await db.querySingle("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'idempotency_records_no_update'");
+    const deleteTrigger = await db.querySingle("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'idempotency_records_no_delete'");
+    expect(updateTrigger).toBeDefined();
+    expect(deleteTrigger).toBeDefined();
   });
 });
