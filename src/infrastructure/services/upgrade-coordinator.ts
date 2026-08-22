@@ -23,7 +23,7 @@ import {
   type SqliteSchemaManifest,
 } from "../schema/current-manifest.ts";
 import { DatabaseControlService } from "./database-control-service.ts";
-import { MIGRATION_SCHEMA_SQLITE, MigrationService } from "./migration-service.ts";
+import { MIGRATION_SCHEMA_SQLITE, MigrationService, verificationManifestHash } from "./migration-service.ts";
 import { DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 
 type ControlRow = Record<string, unknown>;
@@ -55,6 +55,22 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(canonical(value));
 }
 
+function assertManifestSerializable(value: unknown): void {
+  if (typeof value === "bigint" || typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
+    throw new UpgradeError("UPGRADE_PREFLIGHT_FAILED", "Upgrade probes must use manifest-serializable values");
+  }
+  if (Array.isArray(value)) {
+    value.forEach(assertManifestSerializable);
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
+      if (!key.trim()) throw new UpgradeError("UPGRADE_PREFLIGHT_FAILED", "Upgrade probe result keys must be nonblank");
+      assertManifestSerializable(entry);
+    });
+  }
+}
+
 function integer(value: unknown, field: string): number {
   const parsed = typeof value === "bigint" ? Number(value) : value;
   if (!Number.isSafeInteger(parsed)) throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Upgrade source metadata is malformed");
@@ -83,6 +99,7 @@ function validateProbe(probe: UpgradePreflightProbe): void {
   }
   const literalLimit = /\blimit\s+([0-9]+)/i.exec(sql)?.[1];
   if (literalLimit !== undefined && Number(literalLimit) > maxRows) throw new UpgradeError("UPGRADE_PREFLIGHT_FAILED", "Upgrade preflight bound is invalid");
+  assertManifestSerializable(probe.expectedRows);
 }
 
 function validateManifestShape(manifest: SqliteSchemaManifest): void {
@@ -170,17 +187,23 @@ export class UpgradeCoordinator implements UpgradeCoordinatorPort {
         await this.assertExactSource(session, await this.readState(session), request.plan.sourceManifest);
         await this.faults.beforeApply?.(session);
 
+        const verificationManifest = request.plan.migration.manifest ?? request.plan.targetVerificationManifest;
         const metadata = canonicalJson({
+          // Keep the upgrade identity fields used by the coordinator while
+          // persisting the exact verification manifest consumed by
+          // MigrationService.recoverDirty. Older coordinator records remain
+          // readable as coordinator metadata; new records are recoverable.
           backup: { checksum: backup.checksum, size: backup.size },
           sourceManifestHash: sourceHash,
           targetManifestHash: targetHash,
+          verificationManifest: verificationManifest ?? null,
         });
         const appended = request.plan.targetManifest.migrations.at(-1)!;
         const timestamp = (request.now ?? new Date()).toISOString();
         await session.execute(
           `INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
            VALUES (?, ?, ?, 'APPLYING', ?, 0, NULL, ?, ?, ?, ?)`,
-          [appended.id, "sqlite", appended.checksum, timestamp, session.leaseToken(), request.plan.targetManifest.manifestVersion, targetHash, metadata],
+          [appended.id, "sqlite", appended.checksum, timestamp, session.leaseToken(), verificationManifest?.version ?? null, verificationManifest ? verificationManifestHash(verificationManifest) : null, metadata],
         );
         const applying = await session.execute(
           `UPDATE database_control SET state = 'APPLYING', updated_at = ? WHERE id = 1 AND state = 'READY' AND revision = ? AND schema_version = ? AND data_format_version = ? AND generation = ? AND last_migration_id = ? AND last_migration_checksum = ?`,

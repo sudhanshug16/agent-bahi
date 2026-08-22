@@ -353,3 +353,11 @@ PGlite GitHub issue #704 as an advisory-lock bug; that claim is not established.
 - **Decision**: Local deployments use stdio. Hosted deployments use Streamable HTTP; both HTTP and HTTPS are allowed. The default bind address is loopback. Each deployment has exactly one owner.
 - **Status**: `OWNER-APPROVED`.
 - **Supersedes**: Any earlier remote-database or multi-owner deployment assumptions are `SUPERSEDED` by this boundary.
+
+## Production-readiness retraction (2026-08-23)
+
+The repaired BookSet V3 persistence slice and its green local checks do not
+imply that Agent-Bahi is production-ready. The broader accounting, tax,
+payroll, reporting, CLI/MCP, authorization, operational restore, and release
+evidence remain required before a production claim. Any earlier wording that
+could be read as production-ready for this foundation is retracted.

@@ -40,9 +40,12 @@ export class SqliteBookSetRepository implements BookSetRepository {
       );
     }
 
-    // Validate display_name: non-null, non-blank, trimmed
-    if (!bookSet.displayName || bookSet.displayName !== bookSet.displayName.trim() || !bookSet.displayName.trim()) {
-      throw new DomainError("INVALID_DISPLAY_NAME", "display_name must be non-null, non-blank, and trimmed");
+    // Validate display_name at the typed boundary and persist its canonical
+    // trimmed representation. SQLite independently enforces nonblank and
+    // trim equality for direct writers.
+    const displayName = bookSet.displayName.trim();
+    if (!displayName) {
+      throw new DomainError("INVALID_DISPLAY_NAME", "display_name must be non-null and non-blank");
     }
 
     // Insert the BookSet
@@ -53,7 +56,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
         bookSet.id,
         bookSet.tenantId,
         bookSet.kind,
-        bookSet.displayName,
+        displayName,
         bookSet.lifecycle,
         bookSet.createdAt,
         bookSet.updatedAt,

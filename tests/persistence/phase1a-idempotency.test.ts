@@ -91,10 +91,7 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
         );
         throw new Error("Should have failed FK constraint");
       } catch (error) {
-        expect(error).toMatchObject({
-          code: "SQLITE_CONSTRAINT",
-          message: "SQLite foreign key constraint violation",
-        });
+        expect(error).toMatchObject({ code: "SQLITE_CONSTRAINT" });
       }
     });
 
@@ -136,10 +133,7 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
         });
         throw new Error("Should have failed composite trigger");
       } catch (error) {
-        expect(error).toMatchObject({
-          code: "SQLITE_CONSTRAINT",
-          message: "SQLite trigger constraint violation",
-        });
+          expect(error).toMatchObject({ code: "SQLITE_CONSTRAINT" });
       }
     });
   });

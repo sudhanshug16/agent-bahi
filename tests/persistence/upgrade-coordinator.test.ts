@@ -186,4 +186,26 @@ describe("SQLite UpgradeCoordinator", () => {
     await db.execute("UPDATE database_control SET state = 'RECOVERY_REQUIRED', recovery_reason = 'mixed' WHERE id = 1");
     await expect(coordinator.recover({ request: request(plan, "unused-3.sqlite"), reason: "mixed" })).resolves.toMatchObject({ status: "RECOVERY_REQUIRED" });
   });
+
+  it("persists a recovery-readable manifest envelope after an uncertain commit", async () => {
+    const plan = planFor();
+    await expect(new UpgradeCoordinator(db, new BackupService(dbPath), {
+      afterCommit: () => { throw new Error("simulated connection loss"); },
+    }).upgrade(request(plan, "recovery-envelope.sqlite"))).rejects.toMatchObject({ code: "UPGRADE_OUTCOME_UNCERTAIN" });
+
+    const history = await db.querySingle("SELECT checksum, manifest_json FROM schema_migrations WHERE id = ?", [plan.migration.id]);
+    expect(String(history?.manifest_json)).toContain(schemaManifestHash(plan.targetManifest));
+    await db.execute("UPDATE schema_migrations SET status = 'DIRTY', dirty_reason = ? WHERE id = ?", ["simulated crash", plan.migration.id]);
+    await expect(new MigrationService(db, "sqlite").recoverDirty({
+      migrationId: plan.migration.id,
+      expectedDialect: "sqlite",
+      expectedStatus: "DIRTY",
+      expectedChecksum: String(history?.checksum),
+      expectedDirtyReason: "simulated crash",
+      actor: "test",
+      reason: "reopen after uncertain commit",
+      definition: plan.migration,
+    })).resolves.toBeUndefined();
+    expect(await db.querySingle("SELECT status, dirty_reason FROM schema_migrations WHERE id = ?", [plan.migration.id])).toEqual({ status: "APPLIED", dirty_reason: null });
+  });
 });

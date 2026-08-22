@@ -274,7 +274,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
     const fixture = await createCanonicalFixture();
     let captured: import("../../src/application/ports/persistence.ts").BusinessSession | undefined;
     try {
-      const runner = BusinessSessionFactory.createSessionRunner(fixture, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
+      const runner = BusinessSessionFactory.createSessionRunner(fixture.path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       await expect(runner.withBusinessSession("write", async (session) => {
         captured = session;
         throw new Error("rollback-test");

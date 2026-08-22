@@ -165,6 +165,9 @@ function manifestHash(manifest: MigrationVerificationManifest): string {
   return hashCanonical(canonicalManifest(manifest));
 }
 
+/** Stable identity shared by coordinator and recovery for persisted probes. */
+export const verificationManifestHash = manifestHash;
+
 function validateManifest(manifest: MigrationVerificationManifest, dialect: Dialect): void {
   if (manifest.version !== 1 || manifest.dialect !== dialect || manifest.probes.length === 0) {
     throw new DomainError("MIGRATION_MANIFEST_INVALID", "Migration verification manifest is incomplete or uses the wrong dialect");
@@ -182,8 +185,16 @@ function parseManifest(value: unknown): MigrationVerificationManifest | null {
   if (typeof value !== "string" || value.length === 0) return null;
   try {
     const parsed: unknown = JSON.parse(value);
-    if (parsed === null || typeof parsed !== "object") return null;
-    const candidate = parsed as { version?: unknown; dialect?: unknown; probes?: unknown; retrySafe?: unknown };
+    // UpgradeCoordinator v3 records an envelope so its source/target hashes
+    // remain auditable. Recovery consumes the nested immutable verification
+    // manifest; accepting the envelope preserves compatibility with the
+    // coordinator's prior metadata shape without weakening probe validation.
+    const candidateEnvelope = parsed !== null && typeof parsed === "object"
+      ? parsed as { verificationManifest?: unknown }
+      : undefined;
+    const manifestValue = candidateEnvelope?.verificationManifest ?? parsed;
+    if (manifestValue === null || typeof manifestValue !== "object") return null;
+    const candidate = manifestValue as { version?: unknown; dialect?: unknown; probes?: unknown; retrySafe?: unknown };
     if (candidate.version !== 1 || candidate.dialect !== "sqlite" || !Array.isArray(candidate.probes) || typeof candidate.retrySafe !== "boolean") return null;
     const probes: MigrationVerificationProbe[] = [];
     const ids = new Set<string>();

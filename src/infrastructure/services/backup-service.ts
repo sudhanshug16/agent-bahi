@@ -21,7 +21,8 @@ import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService, type DatabaseControlRecord } from "./database-control-service.ts";
 import { CORE_SCHEMA_SQLITE } from "../schema/core-schema.ts";
 import { DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
-import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { BOOKSET_V3_MIGRATION } from "../schema/bookset-v3-migration.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 
 type CatalogRow = {
@@ -94,18 +95,18 @@ export class BackupService implements BackupServicePort {
   private readonly sourceIdentity: InodeIdentity;
   private readonly afterVacuum?: (stagingPath: string) => void | Promise<void>;
   private readonly beforePublication?: () => void;
-  private readonly expectedSourceManifest: SqliteSchemaManifest;
+  private readonly expectedSourceManifest?: SqliteSchemaManifest;
 
   constructor(sourcePath: string | BackupServiceOptions) {
     const requestedPath = typeof sourcePath === "string" ? sourcePath : sourcePath.sourcePath;
     this.afterVacuum = typeof sourcePath === "string" ? undefined : sourcePath.afterVacuum;
     this.beforePublication = typeof sourcePath === "string" ? undefined : sourcePath.beforePublication;
-    this.expectedSourceManifest = typeof sourcePath === "string" ? CURRENT_SCHEMA_MANIFEST : sourcePath.expectedSourceManifest ?? CURRENT_SCHEMA_MANIFEST;
+    this.expectedSourceManifest = typeof sourcePath === "string" ? undefined : sourcePath.expectedSourceManifest;
     this.sourcePath = canonicalExistingRegularPath(requestedPath, "BACKUP_SOURCE_UNSAFE");
     this.sourceIdentity = regularIdentity(this.sourcePath, "BACKUP_SOURCE_UNSAFE");
   }
 
-  async createBackup(destinationPath: string, expectedSourceManifest: SqliteSchemaManifest = this.expectedSourceManifest): Promise<BackupResult> {
+  async createBackup(destinationPath: string, expectedSourceManifest?: SqliteSchemaManifest): Promise<BackupResult> {
     const finalPath = canonicalDestinationPath(destinationPath);
     if (samePath(finalPath, this.sourcePath)) {
       throw new DomainError("BACKUP_DESTINATION_EXISTS", "Backup destination conflicts with the source");
@@ -119,12 +120,13 @@ export class BackupService implements BackupServicePort {
     let finalIdentity: InodeIdentity | undefined;
 
     try {
-      const initial = await this.captureSourceExpectation(expectedSourceManifest);
+      const sourceManifest = expectedSourceManifest ?? this.expectedSourceManifest;
+      const initial = await this.captureSourceExpectation(sourceManifest);
       await this.vacuumInto(stagingPath);
       await this.afterVacuum?.(stagingPath);
       stagingIdentity = regularIdentity(stagingPath, "BACKUP_FAILED");
 
-      const after = await this.captureSourceExpectation(expectedSourceManifest);
+      const after = await this.captureSourceExpectation(sourceManifest);
       if (after.control !== undefined && !sameControl(initial.control, after.control)) {
         throw new DomainError("BACKUP_CONTROL_CHANGED", "Source database control changed during backup");
       }
@@ -132,7 +134,7 @@ export class BackupService implements BackupServicePort {
         throw new DomainError("BACKUP_CONTROL_CHANGED", "Source database metadata changed during backup");
       }
 
-      await this.verifySqliteFile(stagingPath, initial, expectedSourceManifest);
+      await this.verifySqliteFile(stagingPath, initial, sourceManifest);
       ensureNoSidecars(stagingPath);
       chmodSync(stagingPath, 0o600);
       fsyncFile(stagingPath);
@@ -203,11 +205,11 @@ export class BackupService implements BackupServicePort {
     }
   }
 
-  async verifyBackup(backupPath: string, expectedSourceManifest: SqliteSchemaManifest = this.expectedSourceManifest): Promise<boolean> {
+  async verifyBackup(backupPath: string, expectedSourceManifest?: SqliteSchemaManifest): Promise<boolean> {
     const canonicalPath = canonicalExistingRegularPath(backupPath, "BACKUP_DESTINATION_UNSAFE");
     ensureNoSidecars(canonicalPath);
     try {
-      await this.verifySqliteFile(canonicalPath, undefined, expectedSourceManifest);
+      await this.verifySqliteFile(canonicalPath, undefined, expectedSourceManifest ?? this.expectedSourceManifest);
       ensureNoSidecars(canonicalPath);
       return true;
     } catch (error) {
@@ -215,7 +217,7 @@ export class BackupService implements BackupServicePort {
     }
   }
 
-  private async captureSourceExpectation(expectedSourceManifest: SqliteSchemaManifest): Promise<SourceExpectation> {
+  private async captureSourceExpectation(expectedSourceManifest?: SqliteSchemaManifest): Promise<SourceExpectation> {
     let db: BunDatabase | undefined;
     try {
       assertIdentity(this.sourcePath, this.sourceIdentity, "BACKUP_CONTROL_CHANGED");
@@ -245,7 +247,7 @@ export class BackupService implements BackupServicePort {
     }
   }
 
-  private async verifySqliteFile(path: string, expected?: SourceExpectation, expectedSourceManifest: SqliteSchemaManifest = this.expectedSourceManifest): Promise<void> {
+  private async verifySqliteFile(path: string, expected?: SourceExpectation, expectedSourceManifest?: SqliteSchemaManifest): Promise<void> {
     let db: BunDatabase | undefined;
     try {
       db = openReadonly(path);
@@ -276,7 +278,7 @@ export class BackupService implements BackupServicePort {
 
 export { BackupService as SqliteBackupService };
 
-async function captureExpectation(db: BunDatabase, expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST): Promise<SourceExpectation> {
+async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSchemaManifest): Promise<SourceExpectation> {
   const port = readonlyPort(db);
   const historyRows = queryRows<MigrationRow>(db, `
     SELECT id, dialect, checksum, status, executed_at, duration_ms,
@@ -284,9 +286,11 @@ async function captureExpectation(db: BunDatabase, expectedManifest: SqliteSchem
            verification_manifest_hash, manifest_json
     FROM schema_migrations ORDER BY id ASC
   `);
-  validateMigrationHistory(historyRows, expectedManifest);
+  const manifest = expectedManifest ?? manifestForHistory(historyRows);
+  if (!manifest) throw new DomainError("BACKUP_HISTORY_MISMATCH", "SQLite migration history is not an accepted immutable sequence");
+  validateMigrationHistory(historyRows, manifest);
 
-  const controlService = new DatabaseControlService(port, "sqlite", expectedManifest);
+  const controlService = new DatabaseControlService(port, "sqlite", manifest);
   const control = await controlService.inspect();
   let controlRecord = control.record;
   if (control.status !== "AVAILABLE" || !controlRecord) {
@@ -297,14 +301,14 @@ async function captureExpectation(db: BunDatabase, expectedManifest: SqliteSchem
       throw new DomainError("BACKUP_SOURCE_UNAVAILABLE", "Database control is unavailable");
     }
     controlRecord = looseControlRecord(db);
-    const expectedLast = expectedManifest.migrations.at(-1);
-    if (controlRecord.schemaVersion !== expectedManifest.schemaVersion
-      || controlRecord.dataFormatVersion !== expectedManifest.dataFormatVersion
-      || controlRecord.readerCompatibilityMin !== expectedManifest.readerCompatibilityMin
-      || controlRecord.readerCompatibilityMax !== expectedManifest.readerCompatibilityMax
-      || controlRecord.requiredWriterProtocol !== expectedManifest.writerProtocol
-      || controlRecord.generation !== expectedManifest.generation
-      || controlRecord.revision !== expectedManifest.revision
+    const expectedLast = manifest.migrations.at(-1);
+    if (controlRecord.schemaVersion !== manifest.schemaVersion
+      || controlRecord.dataFormatVersion !== manifest.dataFormatVersion
+      || controlRecord.readerCompatibilityMin !== manifest.readerCompatibilityMin
+      || controlRecord.readerCompatibilityMax !== manifest.readerCompatibilityMax
+      || controlRecord.requiredWriterProtocol !== manifest.writerProtocol
+      || controlRecord.generation !== manifest.generation
+      || controlRecord.revision !== manifest.revision
       || !expectedLast
       || controlRecord.lastMigrationId !== expectedLast.id
       || controlRecord.lastMigrationChecksum !== expectedLast.checksum) {
@@ -321,7 +325,7 @@ async function captureExpectation(db: BunDatabase, expectedManifest: SqliteSchem
     WHERE name NOT LIKE 'sqlite_%'
     ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
   `);
-  validateCanonicalSchema(catalogRows);
+  validateCanonicalSchema(catalogRows, manifest);
 
   return {
     control: controlRecord,
@@ -329,6 +333,13 @@ async function captureExpectation(db: BunDatabase, expectedManifest: SqliteSchem
     catalog: canonicalHash(catalogRows),
     catalogRows,
   };
+}
+
+function manifestForHistory(rows: readonly MigrationRow[]): SqliteSchemaManifest | undefined {
+  return [V2_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST].find((candidate) => candidate.migrations.length === rows.length && candidate.migrations.every((migration, index) => {
+    const actual = rows[index];
+    return actual?.id === migration.id && actual?.dialect === migration.dialect && actual?.checksum === migration.checksum && actual?.status === migration.status && actual?.dirty_reason === null;
+  }));
 }
 
 function looseControlRecord(db: BunDatabase): DatabaseControlRecord {
@@ -379,8 +390,8 @@ function validateMigrationHistory(rows: MigrationRow[], expectedManifest: Sqlite
   }
 }
 
-function validateCanonicalSchema(catalog: CatalogRow[]): void {
-  const expected = expectedCatalog();
+function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest): void {
+  const expected = expectedCatalog(expectedManifest);
   const actualByName = new Map(catalog.map((row) => [`${row.type}:${row.name}`, row]));
   for (const expectedRow of expected) {
     const actual = actualByName.get(`${expectedRow.type}:${expectedRow.name}`);
@@ -403,22 +414,29 @@ function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[])
   }
 }
 
-let cachedExpectedCatalog: CatalogRow[] | undefined;
-function expectedCatalog(): CatalogRow[] {
-  if (cachedExpectedCatalog) return cachedExpectedCatalog;
+const cachedExpectedCatalog = new Map<string, CatalogRow[]>();
+function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST): CatalogRow[] {
+  const key = expectedManifest.schemaVersion + ":" + expectedManifest.revision;
+  const cached = cachedExpectedCatalog.get(key);
+  if (cached) return cached;
   const db = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
     db.exec(MIGRATION_SCHEMA_SQLITE);
     db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
     db.exec(CORE_SCHEMA_SQLITE);
     db.exec(DATABASE_CONTROL_TABLE_DDL);
-    cachedExpectedCatalog = queryRows<CatalogRow>(db, `
+    // The expected catalog is the actual current production schema, not the
+    // v2 source catalog. Apply the immutable sequence through 0003 so backup
+    // verification cannot accept a v3 history with a v2 shape.
+    if (expectedManifest.schemaVersion >= 3) db.exec(BOOKSET_V3_MIGRATION.sqlite);
+    const catalog = queryRows<CatalogRow>(db, `
       SELECT type, name, tbl_name, sql
       FROM sqlite_schema
       WHERE name NOT LIKE 'sqlite_%'
       ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
     `);
-    return cachedExpectedCatalog;
+    cachedExpectedCatalog.set(key, catalog);
+    return catalog;
   } finally {
     db.close();
   }

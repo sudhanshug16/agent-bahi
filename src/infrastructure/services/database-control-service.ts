@@ -3,7 +3,7 @@ import type { Dialect } from "../../core/types.ts";
 import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
-import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
 
 /**
  * Database control inspection status.
@@ -100,7 +100,7 @@ export class DatabaseControlService {
   constructor(
     private db: Database,
     private dialect: Dialect,
-    private expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST,
+    private expectedManifest?: SqliteSchemaManifest,
   ) {}
 
   /**
@@ -126,7 +126,8 @@ export class DatabaseControlService {
       const migrationHistory = await this.db.query(
         "SELECT id, dialect, checksum, status FROM schema_migrations ORDER BY rowid",
       );
-      if (migrationHistory.rowCount !== this.expectedManifest.migrations.length || this.expectedManifest.migrations.some((expected, index) => {
+      const expectedManifest = this.manifestForHistory(migrationHistory.rows);
+      if (!expectedManifest || migrationHistory.rowCount !== expectedManifest.migrations.length || expectedManifest.migrations.some((expected, index) => {
         const actual = migrationHistory.rows[index];
         return !actual || actual.id !== expected.id || actual.dialect !== expected.dialect || actual.checksum !== expected.checksum || actual.status !== expected.status;
       })) {
@@ -157,7 +158,7 @@ export class DatabaseControlService {
       const row = rows.rows[0];
 
       // Validate row structure and parse record
-      const validation = this.validateAndParseRecord(row, this.expectedManifest);
+      const validation = this.validateAndParseRecord(row, expectedManifest);
       if (validation.error) {
         return { status: "UNAVAILABLE", reason: "ROW_DATA_INVALID" };
       }
@@ -201,6 +202,20 @@ export class DatabaseControlService {
     });
 
     return { name: "database_control", kind, columns, checks: [], ddl: object.sql == null ? undefined : String(object.sql) };
+  }
+
+  /**
+   * An omitted manifest is resolved only from an exact immutable history
+   * prefix. There is deliberately no "current" fallback: a v2 database must
+   * not be represented as v3 before 0003 has run.
+   */
+  private manifestForHistory(rows: readonly Record<string, unknown>[]): SqliteSchemaManifest | undefined {
+    if (this.expectedManifest) return this.expectedManifest;
+    const candidates = [V2_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST];
+    return candidates.find((candidate) => rows.length === candidate.migrations.length && candidate.migrations.every((migration, index) => {
+      const actual = rows[index];
+      return actual?.id === migration.id && actual?.dialect === migration.dialect && actual?.checksum === migration.checksum && actual?.status === migration.status;
+    }));
   }
 
   /**
@@ -264,6 +279,12 @@ export class DatabaseControlService {
       );
     }
 
+    const history = await session.execute("SELECT id, dialect, checksum, status FROM schema_migrations ORDER BY rowid");
+    const expectedManifest = this.manifestForHistory(history.rows);
+    if (!expectedManifest) {
+      throw new DomainError("DATABASE_CONTROL_MIGRATION_NOT_APPLIED", "Applied migration history is not a known production sequence");
+    }
+
     // Check for existing row
     const existingRow = await session.executeSingle(
       `SELECT id, last_migration_checksum
@@ -273,7 +294,7 @@ export class DatabaseControlService {
     if (existingRow) {
       // Row exists; validate it matches exactly
       const existingChecksum = String(existingRow.last_migration_checksum);
-      if (existingChecksum !== DATABASE_CONTROL_CHECKSUM) {
+      if (existingChecksum !== expectedManifest.migrations.at(-1)?.checksum) {
         throw new DomainError(
           "DATABASE_CONTROL_CHECKSUM_MISMATCH",
           "Existing database_control row checksum is not canonical",
@@ -281,7 +302,7 @@ export class DatabaseControlService {
       }
 
       // Return existing row without modification, using only the pinned session.
-      const existingRecord = await this.readDatabaseControlRecord(session);
+      const existingRecord = await this.readDatabaseControlRecord(session, expectedManifest);
       if (existingRecord) {
         return existingRecord;
       }
@@ -304,17 +325,17 @@ export class DatabaseControlService {
       ) VALUES (${Array.from({ length: 17 }, () => builder.placeholder()).join(", ")})
     `;
 
-    const lastMigration = this.expectedManifest.migrations.at(-1)!;
+    const lastMigration = expectedManifest.migrations.at(-1)!;
     await session.execute(insertSql, [
       1, // id
-      this.expectedManifest.schemaVersion,
-      this.expectedManifest.dataFormatVersion,
-      this.expectedManifest.readerCompatibilityMin,
-      this.expectedManifest.readerCompatibilityMax,
-      this.expectedManifest.writerProtocol,
+      expectedManifest.schemaVersion,
+      expectedManifest.dataFormatVersion,
+      expectedManifest.readerCompatibilityMin,
+      expectedManifest.readerCompatibilityMax,
+      expectedManifest.writerProtocol,
       "READY", // state
-      this.expectedManifest.revision,
-      this.expectedManifest.generation,
+      expectedManifest.revision,
+      expectedManifest.generation,
       lastMigration.id, // last_migration_id
       lastMigration.checksum, // last_migration_checksum
       params.cliVersion, // last_writer_cli_version
@@ -326,7 +347,7 @@ export class DatabaseControlService {
     ]);
 
     // Read back the inserted row using the same session.
-    const readbackRecord = await this.readDatabaseControlRecord(session);
+    const readbackRecord = await this.readDatabaseControlRecord(session, expectedManifest);
     if (readbackRecord) {
       return readbackRecord;
     }
@@ -344,6 +365,7 @@ export class DatabaseControlService {
    */
   private async readDatabaseControlRecord(
     session: MigrationSession,
+    expectedManifest: SqliteSchemaManifest,
   ): Promise<DatabaseControlRecord | undefined> {
     const row = await session.executeSingle(
       `SELECT id, schema_version, data_format_version, reader_compatibility_min,
@@ -355,7 +377,7 @@ export class DatabaseControlService {
     );
 
     if (!row) return undefined;
-    return this.validateAndParseRecord(row, this.expectedManifest).record;
+    return this.validateAndParseRecord(row, expectedManifest).record;
   }
 
   /**
@@ -532,7 +554,7 @@ export class DatabaseControlService {
    */
   private validateAndParseRecord(
     row: Record<string, unknown>,
-    expectedManifest: SqliteSchemaManifest = this.expectedManifest,
+    expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST,
   ): { record?: DatabaseControlRecord; error?: string } {
     try {
       // Validate id is exactly 1

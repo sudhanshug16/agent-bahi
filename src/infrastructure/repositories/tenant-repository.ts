@@ -38,7 +38,7 @@ export class SqliteTenantRepository implements TenantRepository {
         defaultBookSet.id,
         tenant.id,
         defaultBookSet.kind,
-        defaultBookSet.displayName,
+        defaultBookSet.displayName.trim(),
         "ACTIVE",
         defaultBookSet.createdAt,
         defaultBookSet.updatedAt,
@@ -121,7 +121,17 @@ export class SqliteTenantRepository implements TenantRepository {
     }
 
     if (tenant.lifecycle !== "CREATING") {
-      throw new Error(`Cannot activate tenant in ${tenant.lifecycle} state`);
+      throw new DomainError("TENANT_NOT_ACTIVATABLE", "Tenant must be CREATING before activation");
+    }
+
+    const defaultBookSet = await this.session.querySingle(
+      `SELECT t.default_book_set_id, bs.lifecycle
+       FROM tenants t LEFT JOIN book_sets bs ON bs.id = t.default_book_set_id AND bs.tenant_id = t.id
+       WHERE t.id = ?`,
+      [tenantId],
+    );
+    if (!defaultBookSet?.default_book_set_id || defaultBookSet.lifecycle !== "ACTIVE") {
+      throw new DomainError("TENANT_ACTIVATION_INVALID", "Tenant activation requires a same-tenant ACTIVE default BookSet");
     }
 
     // Transition to ACTIVE
@@ -150,7 +160,7 @@ export class SqliteTenantRepository implements TenantRepository {
       );
 
       if (bookSet && bookSet.lifecycle === "ACTIVE") {
-        throw new Error(`Cannot archive tenant with active default BookSet ${bookSet.id}`);
+        throw new DomainError("CANNOT_ARCHIVE_DEFAULT_BOOK_SET", "Cannot archive tenant with an active default BookSet");
       }
     }
 

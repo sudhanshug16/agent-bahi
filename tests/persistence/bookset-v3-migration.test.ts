@@ -65,7 +65,7 @@ function createV3Plan(): UpgradePlan {
       sql: BOOKSET_V3_MIGRATION.sqlite,
       manifest: BOOKSET_V3_MIGRATION.manifest,
     },
-    preflightProbes: [{ id: "source-empty", sql: "SELECT COUNT(*) as count FROM book_sets LIMIT 1", expectedRows: [] }],
+    preflightProbes: [{ id: "source-table", sql: "SELECT CAST(COUNT(*) AS TEXT) AS table_count FROM sqlite_master WHERE type = 'table' AND name = 'book_sets' LIMIT 1", expectedRows: [{ table_count: "1" }] }],
     targetVerificationProbes: BOOKSET_V3_MIGRATION.manifest.probes,
   };
 }
@@ -112,7 +112,7 @@ describe("BookSet V2→V3 Migration", () => {
 
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenantId, "INDIVIDUAL", "ACTIVE", "Test Tenant", "INR", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
+        [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
       );
 
       // Insert v2 BookSets (without display_name)
@@ -134,9 +134,22 @@ describe("BookSet V2→V3 Migration", () => {
       // Set default
       await db.execute("UPDATE tenants SET default_book_set_id = ? WHERE id = ?", [companyBookSetId, tenantId]);
 
+      // Populate a self-parented account graph; 0003 must rebuild this table
+      // together with book_sets while preserving both rows and their links.
+      const parentAccountId = randomUUID();
+      const childAccountId = randomUUID();
+      await db.execute(
+        "INSERT INTO accounts (id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [parentAccountId, tenantId, companyBookSetId, "1000", "Assets", "ASSET", null, "2026-01-01T12:00:00Z", "2026-01-01T12:00:00Z"],
+      );
+      await db.execute(
+        "INSERT INTO accounts (id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [childAccountId, tenantId, companyBookSetId, "1010", "Bank", "ASSET", parentAccountId, "2026-01-01T12:01:00Z", "2026-01-01T12:01:00Z"],
+      );
+
       const plan = createV3Plan();
       (plan as any).preflightProbes = [
-        { id: "check-data", sql: "SELECT COUNT(*) as count FROM book_sets", expectedRows: [{ count: 3 }], maxRows: 1 },
+        { id: "check-data", sql: "SELECT CAST(COUNT(*) AS TEXT) AS count FROM book_sets LIMIT 1", expectedRows: [{ count: "3" }], maxRows: 1 },
       ];
 
       const coordinator = new UpgradeCoordinator(db, new BackupService(dbPath));
@@ -166,6 +179,8 @@ describe("BookSet V2→V3 Migration", () => {
       // Verify default still points to correct BookSet
       const tenantAfter = await db.querySingle("SELECT default_book_set_id FROM tenants WHERE id = ?", [tenantId]);
       expect(tenantAfter?.default_book_set_id).toBe(companyBookSetId);
+      const childAfter = await db.querySingle("SELECT parent_account_id, tenant_id, book_set_id FROM accounts WHERE id = ?", [childAccountId]);
+      expect(childAfter).toEqual({ parent_account_id: parentAccountId, tenant_id: tenantId, book_set_id: companyBookSetId });
 
       // Verify foreign key constraints still work
       const control = await db.querySingle("SELECT schema_version, revision FROM database_control WHERE id = 1");
@@ -187,7 +202,7 @@ describe("BookSet V2→V3 Migration", () => {
 
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenantId, "COMPANY", "ACTIVE", "Company Tenant", "INR", now, now],
+        [tenantId, "COMPANY", "CREATING", "Company Tenant", "INR", now, now],
       );
 
       // Verify display_name is required
@@ -226,6 +241,26 @@ describe("BookSet V2→V3 Migration", () => {
         [prop2Id, tenantId, "PROPRIETORSHIP", "Prop 2", "ACTIVE", now, now],
       );
 
+      // Name uniqueness is tenant-scoped and case-insensitive.
+      await expect(db.execute(
+        "INSERT INTO book_sets (id, tenant_id, kind, display_name, lifecycle, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [randomUUID(), tenantId, "PERSONAL", "company 1", "ACTIVE", now, now],
+      )).rejects.toThrow();
+
+      await db.execute("UPDATE tenants SET default_book_set_id = ? WHERE id = ?", [bs1Id, tenantId]);
+      await expect(db.execute("UPDATE book_sets SET lifecycle = 'ARCHIVED' WHERE id = ?", [bs1Id])).rejects.toThrow();
+      await expect(db.execute("DELETE FROM book_sets WHERE id = ?", [bs1Id])).rejects.toThrow();
+      await db.execute("UPDATE tenants SET default_book_set_id = NULL WHERE id = ?", [tenantId]);
+      await db.execute("UPDATE book_sets SET lifecycle = 'ARCHIVED' WHERE id = ?", [prop2Id]);
+      await expect(db.execute("UPDATE tenants SET default_book_set_id = ? WHERE id = ?", [prop2Id, tenantId])).rejects.toThrow();
+
+      const unreadyTenant = randomUUID();
+      await db.execute(
+        "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [unreadyTenant, "INDIVIDUAL", "CREATING", "Unready", "INR", now, now],
+      );
+      await expect(db.execute("UPDATE tenants SET lifecycle = 'ACTIVE' WHERE id = ?", [unreadyTenant])).rejects.toThrow();
+
       const bookSets = await db.query("SELECT COUNT(*) as count FROM book_sets WHERE tenant_id = ?", [tenantId]);
       expect((bookSets.rows[0] as any).count).toBe(3n);
     });
@@ -239,7 +274,7 @@ describe("BookSet V2→V3 Migration", () => {
       const tenantId = randomUUID();
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenantId, "INDIVIDUAL", "ACTIVE", "Test", "INR", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
+        [tenantId, "INDIVIDUAL", "CREATING", "Test", "INR", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
       );
 
       const bookSetId = randomUUID();
@@ -249,8 +284,19 @@ describe("BookSet V2→V3 Migration", () => {
       );
 
       // Create plan with intentional failure in migration SQL
-      const plan = createV3Plan();
-      plan.migration.sql = BOOKSET_V3_MIGRATION.sqlite + "; SELECT * FROM nonexistent_table;";
+      const original = createV3Plan();
+      const brokenSql = BOOKSET_V3_MIGRATION.sqlite + "; SELECT * FROM nonexistent_table;";
+      const plan = {
+        ...original,
+        migration: { ...original.migration, sql: brokenSql },
+        targetManifest: {
+          ...original.targetManifest,
+          migrations: [...original.targetManifest.migrations.slice(0, -1), {
+            ...original.targetManifest.migrations.at(-1)!,
+            checksum: computeSqliteMigrationChecksum(brokenSql),
+          }],
+        },
+      } as UpgradePlan;
 
       const coordinator = new UpgradeCoordinator(db, new BackupService(dbPath));
       let error: any;
@@ -341,7 +387,7 @@ describe("BookSet V2→V3 Migration", () => {
 
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenantId, "INDIVIDUAL", "ACTIVE", "Test", "INR", now, now],
+        [tenantId, "INDIVIDUAL", "CREATING", "Test", "INR", now, now],
       );
 
       // Create one COMPANY
@@ -395,7 +441,7 @@ describe("BookSet V2→V3 Migration", () => {
 
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenantId, "INDIVIDUAL", "ACTIVE", "Test", "INR", now, now],
+        [tenantId, "INDIVIDUAL", "CREATING", "Test", "INR", now, now],
       );
 
       // Try blank name
@@ -426,11 +472,11 @@ describe("BookSet V2→V3 Migration", () => {
 
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenant1, "COMPANY", "ACTIVE", "T1", "INR", now, now],
+        [tenant1, "COMPANY", "CREATING", "T1", "INR", now, now],
       );
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenant2, "COMPANY", "ACTIVE", "T2", "INR", now, now],
+        [tenant2, "COMPANY", "CREATING", "T2", "INR", now, now],
       );
 
       const bs1 = randomUUID();
@@ -476,8 +522,19 @@ describe("BookSet V2→V3 Migration", () => {
       expect(replayResult.status).toBe("ALREADY_APPLIED");
 
       // Try with changed migration SQL - should fail
-      const changedPlan = createV3Plan();
-      changedPlan.migration.sql = BOOKSET_V3_MIGRATION.sqlite + "; -- changed";
+      const changedSql = BOOKSET_V3_MIGRATION.sqlite + "\nSELECT 1";
+      const changedBase = createV3Plan();
+      const changedPlan = {
+        ...changedBase,
+        migration: { ...changedBase.migration, sql: changedSql },
+        targetManifest: {
+          ...changedBase.targetManifest,
+          migrations: [...changedBase.targetManifest.migrations.slice(0, -1), {
+            ...changedBase.targetManifest.migrations.at(-1)!,
+            checksum: computeSqliteMigrationChecksum(changedSql),
+          }],
+        },
+      } as UpgradePlan;
 
       await expect(coordinator.upgrade(request(changedPlan, "conflict.sqlite"))).rejects.toMatchObject({ code: "UPGRADE_IDEMPOTENCY_CONFLICT" });
     });
@@ -494,7 +551,7 @@ describe("BookSet V2→V3 Migration", () => {
 
       await db.execute(
         "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [tenantId, "COMPANY", "ACTIVE", "Test", "INR", now, now],
+        [tenantId, "COMPANY", "CREATING", "Test", "INR", now, now],
       );
 
       await db.execute(
@@ -506,9 +563,10 @@ describe("BookSet V2→V3 Migration", () => {
       const backupPath = join(directory, "backup.sqlite");
       const coordinator = new UpgradeCoordinator(db, new BackupService(dbPath));
 
-      const result = await coordinator.upgrade(request(plan, backupPath));
+      const result = await coordinator.upgrade(request(plan, "backup.sqlite"));
       expect(result.status).toBe("APPLIED");
-      expect(result.backup?.path).toBe(backupPath);
+      expect(result.backup?.path.endsWith("/backup.sqlite")).toBe(true);
+      expect(await Bun.file(backupPath).exists()).toBe(true);
       expect(result.backup?.checksum).toMatch(/^[0-9a-f]{64}$/);
 
       // Verify backup is v2
