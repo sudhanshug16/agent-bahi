@@ -3,10 +3,12 @@
  *
  * Adds command/audit integrity with structured audit fields, idempotency immutability,
  * and BookSet binding for mutation commands. Preserves all existing audit/idempotency data
- * with deterministic legacy backfill for new structured fields.
+ * with deterministic legacy backfill for new structured fields. Losslessly preserves all
+ * original v2 columns (entity_type, entity_id) in legacy_entity column for historical audit.
  */
 export const BOOKSET_V4_MIGRATION_SQLITE = `
 -- Stage: Create new audit_records table with structured command fields
+-- Preserves all original v2 columns by storing legacy entity data
 CREATE TABLE audit_records_v4 (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -14,7 +16,7 @@ CREATE TABLE audit_records_v4 (
   command TEXT NOT NULL CHECK (command IN ('bookset.create', 'bookset.set-default', 'bookset.archive', 'tenant.activate')),
   action TEXT NOT NULL,
   actor_type TEXT NOT NULL CHECK (actor_type IN ('HUMAN', 'AGENT', 'SYSTEM')),
-  actor_id TEXT NOT NULL,
+  actor_id TEXT,
   source TEXT NOT NULL CHECK (source IN ('CLI', 'MCP', 'INTERNAL', 'IMPORT')),
   reason TEXT NOT NULL,
   request_id TEXT NOT NULL,
@@ -22,31 +24,36 @@ CREATE TABLE audit_records_v4 (
   canonical_after_hash TEXT,
   change_summary TEXT,
   evidence_ids TEXT,
+  legacy_entity_type TEXT,
+  legacy_entity_id TEXT,
   committed_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   CONSTRAINT fk_audit_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id),
   CONSTRAINT fk_audit_book_set FOREIGN KEY (book_set_id) REFERENCES book_sets(id)
 );
 
--- Backfill audit_records_v4 from audit_records with deterministic defaults
+-- Losslessly backfill audit_records_v4 from audit_records, preserving all v2 columns
 INSERT INTO audit_records_v4
   (id, tenant_id, book_set_id, command, action, actor_type, actor_id, source, reason, request_id,
-   canonical_before_hash, canonical_after_hash, change_summary, evidence_ids, committed_at, created_at)
+   canonical_before_hash, canonical_after_hash, change_summary, evidence_ids,
+   legacy_entity_type, legacy_entity_id, committed_at, created_at)
 SELECT
   id, tenant_id, NULL,
   COALESCE(action, 'unknown'),
-  COALESCE(action, 'unknown'),
+  action,
   COALESCE(actor_type, 'SYSTEM'),
-  COALESCE(actor_id, 'legacy'),
+  actor_id,
   'INTERNAL',
   'legacy backfill',
   COALESCE(request_id, id),
   NULL,
   NULL,
-  COALESCE(change_summary, ''),
-  COALESCE(evidence_ids, ''),
+  change_summary,
+  evidence_ids,
+  entity_type,
+  entity_id,
   COALESCE(created_at, datetime('now')),
-  COALESCE(created_at, datetime('now'))
+  created_at
 FROM audit_records;
 
 DROP TABLE IF EXISTS audit_records;
@@ -116,6 +123,16 @@ export const BOOKSET_V4_MIGRATION = {
       {
         id: "v4-audit-records-has-book-set-id",
         sql: "SELECT CAST(COUNT(*) AS TEXT) AS column_count FROM pragma_table_info('audit_records') WHERE name = 'book_set_id' LIMIT 1",
+        expectedRows: [{ column_count: "1" }],
+      },
+      {
+        id: "v4-audit-records-has-legacy-entity-type",
+        sql: "SELECT CAST(COUNT(*) AS TEXT) AS column_count FROM pragma_table_info('audit_records') WHERE name = 'legacy_entity_type' LIMIT 1",
+        expectedRows: [{ column_count: "1" }],
+      },
+      {
+        id: "v4-audit-records-has-legacy-entity-id",
+        sql: "SELECT CAST(COUNT(*) AS TEXT) AS column_count FROM pragma_table_info('audit_records') WHERE name = 'legacy_entity_id' LIMIT 1",
         expectedRows: [{ column_count: "1" }],
       },
       {

@@ -94,31 +94,27 @@ export async function bootstrapSqliteApplication(
       });
     }
 
-    // Apply v4 migration if at v3 (direct application for bootstrap simplicity)
-    try {
-      const v3Inspection = await new DatabaseControlService(db, "sqlite", V3_SCHEMA_MANIFEST).inspect();
-      if (v3Inspection.status === "AVAILABLE" && v3Inspection.record?.schemaVersion === V3_SCHEMA_MANIFEST.schemaVersion) {
-        // Apply the v4 migration directly since we're starting from v3
-        const v4MigrationService = new MigrationService(db, "sqlite");
-        await v4MigrationService.migrate([
-          {
-            id: BOOKSET_V4_MIGRATION.id,
-            sql: BOOKSET_V4_MIGRATION.sqlite,
-            manifest: BOOKSET_V4_MIGRATION.manifest,
-          },
-        ]);
+    // Upgrade v3->v4: apply directly for bootstrap (no backup needed for fresh databases)
+    // In production, v3->v4 must go through UpgradeCoordinator for existing databases
+    const postV3Inspection = await new DatabaseControlService(db, "sqlite", V3_SCHEMA_MANIFEST).inspect();
+    if (postV3Inspection.status === "AVAILABLE" && postV3Inspection.record?.schemaVersion === V3_SCHEMA_MANIFEST.schemaVersion) {
+      const v4MigrationService = new MigrationService(db, "sqlite");
+      await v4MigrationService.migrate([
+        {
+          id: BOOKSET_V4_MIGRATION.id,
+          sql: BOOKSET_V4_MIGRATION.sqlite,
+          manifest: BOOKSET_V4_MIGRATION.manifest,
+        },
+      ]);
 
-        // Update database_control to v4
-        await db.withMigrationLease(async (session) => {
-          const lastMigration = (await session.execute("SELECT id, checksum FROM schema_migrations WHERE status = 'APPLIED' ORDER BY rowid DESC LIMIT 1")).rows[0];
-          await session.execute(
-            `UPDATE database_control SET schema_version = ?, revision = ?, last_migration_id = ?, last_migration_checksum = ?, updated_at = ? WHERE id = 1`,
-            [4, 3, lastMigration?.id, lastMigration?.checksum, now.toISOString()]
-          );
-        });
-      }
-    } catch (error) {
-      throw new Error(`Failed to apply v4 migration: ${error instanceof Error ? error.message : String(error)}`);
+      // Update database_control to v4
+      await db.withMigrationLease(async (session) => {
+        const lastMigration = (await session.execute("SELECT id, checksum FROM schema_migrations WHERE status = 'APPLIED' ORDER BY rowid DESC LIMIT 1")).rows[0];
+        await session.execute(
+          `UPDATE database_control SET schema_version = ?, revision = ?, last_migration_id = ?, last_migration_checksum = ?, updated_at = ? WHERE id = 1`,
+          [4, 3, lastMigration?.id, lastMigration?.checksum, now.toISOString()]
+        );
+      });
     }
   } finally {
     await db.close();
