@@ -1,4 +1,5 @@
 import { CLI_VERSION, COMMAND_REGISTRY, commandHelp } from "../../src/domain/commands/registry.ts";
+import { runGate0Proofs } from "./proof.ts";
 
 export const EXIT_CODES = {
   ok: 0,
@@ -25,7 +26,7 @@ export function parseInvocation(args: readonly string[]): Invocation {
   };
 }
 
-export function runCli(args: readonly string[]): { output: string; error: string; exitCode: number } {
+export async function runCli(args: readonly string[]): Promise<{ output: string; error: string; exitCode: number }> {
   const invocation = parseInvocation(args);
   if (invocation.version) {
     return { output: invocation.json ? JSON.stringify({ ok: true, version: CLI_VERSION }) : CLI_VERSION, error: "", exitCode: EXIT_CODES.ok };
@@ -38,10 +39,13 @@ export function runCli(args: readonly string[]): { output: string; error: string
     };
   }
   if (invocation.command === "gate0.proof") {
+    const results = await runGate0Proofs();
+    const allPass = results.every((result) => result.status === "PASS");
+    const output = JSON.stringify({ ok: true, command: "gate0.proof", version: CLI_VERSION, results }, null, 2);
     return {
-      output: JSON.stringify({ ok: true, command: "gate0.proof", status: "available", version: CLI_VERSION }),
+      output,
       error: "",
-      exitCode: EXIT_CODES.ok,
+      exitCode: allPass ? EXIT_CODES.ok : EXIT_CODES.domain,
     };
   }
   const error = { ok: false, error: { code: "UNKNOWN_COMMAND", message: "unknown command", exit_code: EXIT_CODES.usage } };
@@ -49,7 +53,7 @@ export function runCli(args: readonly string[]): { output: string; error: string
 }
 
 if (import.meta.main) {
-  const result = runCli(Bun.argv.slice(2));
+  const result = await runCli(Bun.argv.slice(2));
   if (result.output) console.log(result.output);
   if (result.error) console.error(result.error);
   process.exitCode = result.exitCode;

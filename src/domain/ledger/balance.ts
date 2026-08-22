@@ -4,7 +4,32 @@ export type PostingAmount = {
 };
 
 export function isBalanced(postings: readonly PostingAmount[]): boolean {
-  const debit = postings.reduce((sum, posting) => sum + posting.debitMinorUnits, 0n);
-  const credit = postings.reduce((sum, posting) => sum + posting.creditMinorUnits, 0n);
-  return debit === credit;
+  if (postings.length === 0) {
+    return false;
+  }
+
+  let totalDebit = 0n;
+  let totalCredit = 0n;
+
+  for (const posting of postings) {
+    const debit = posting.debitMinorUnits;
+    const credit = posting.creditMinorUnits;
+
+    if (debit < 0n || credit < 0n) {
+      return false;
+    }
+
+    if (debit > 0n && credit > 0n) {
+      return false;
+    }
+
+    if (debit === 0n && credit === 0n) {
+      return false;
+    }
+
+    totalDebit += debit;
+    totalCredit += credit;
+  }
+
+  return totalDebit === totalCredit;
 }

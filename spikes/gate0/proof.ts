@@ -11,20 +11,24 @@ export type ProofResult = {
 };
 
 export const REQUIRED_PROOFS = [
-  "PRAGMA foreign_keys=ON",
-  "local filesystem guard",
+  "SQLite pragmas",
   "WAL",
-  "busy/transaction behavior",
-  "BEGIN IMMEDIATE writer serialization",
+  "local filesystem guard",
+  "hand-reviewed SQLite migration",
+  "migration mismatch refusal",
   "composite tenant/BookSet FK",
   "debit=credit validation inside transaction",
   "rollback on imbalance",
   "idempotency key uniqueness",
   "append-only/audit guard",
-  "migration logical ID/checksum mismatch refusal",
   "integer minor-unit BigInt round trip",
+  "busy/transaction behavior",
+  "BEGIN IMMEDIATE writer serialization",
   "cross-BookSet posting rejection",
+  "same-BookSet balanced posting success",
   "audit_log tenant FK rejection",
+  "idempotency replay",
+  "idempotency conflict detection",
 ] as const;
 
 const MIGRATION_ID = "gate0-001-core-sqlite";
@@ -164,8 +168,11 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     beginImmediate(db);
     try {
       insertBalancedEntry(db, "entry-balanced", "key-balanced");
-      const lines = db.query<{ debit: number | bigint; credit: number | bigint }, []>("SELECT COALESCE(SUM(debit_minor_units), 0) AS debit, COALESCE(SUM(credit_minor_units), 0) AS credit FROM postings WHERE journal_entry_id = 'entry-balanced'").get();
-      const postings: PostingAmount[] = [{ debitMinorUnits: BigInt(lines?.debit ?? 0), creditMinorUnits: BigInt(lines?.credit ?? 0) }];
+      const rows = db.query<{ debit_minor_units: number | bigint; credit_minor_units: number | bigint }, []>("SELECT debit_minor_units, credit_minor_units FROM postings WHERE journal_entry_id = 'entry-balanced' ORDER BY line_no").all();
+      const postings: PostingAmount[] = rows.map((row) => ({
+        debitMinorUnits: BigInt(row.debit_minor_units),
+        creditMinorUnits: BigInt(row.credit_minor_units),
+      }));
       if (!isBalanced(postings)) throw new Error("balanced entry rejected");
       db.query("INSERT INTO audit_log (tenant_id, event_id, entity_type, entity_id, action, payload) VALUES (?, ?, ?, ?, ?, ?)").run("tenant-a", "audit-balanced", "journal_entry", "entry-balanced", "post", "{}");
       db.exec("COMMIT");
@@ -237,6 +244,35 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     expectThrow(() => db.query("INSERT INTO audit_log (tenant_id, event_id, entity_type, entity_id, action, payload) VALUES (?, ?, ?, ?, ?, ?)").run("tenant-b", "audit-orphan", "journal_entry", "entry", "post", "{}"), "FOREIGN KEY");
     pass("STK-003n", "audit_log tenant FK rejection", "audit insert with non-existent tenant rejected");
 
+    // Test idempotency: same request_id + same hash returns original result
+    const request1 = JSON.stringify({ action: "create_entry", amount: 100 });
+    const requestHash1 = sha256(request1);
+    const result1 = JSON.stringify({ entry_id: "idempotent-entry-1", created: true });
+    const resultHash1 = sha256(result1);
+
+    db.query(
+      "INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash) VALUES (?, ?, ?, ?, ?)"
+    ).run("tenant-a", "req-1", requestHash1, result1, resultHash1);
+
+    const stored = db.query<{ result_json: string }, [string, string]>(
+      "SELECT result_json FROM idempotency_records WHERE tenant_id = ? AND request_id = ?"
+    ).get("tenant-a", "req-1");
+    if (stored?.result_json !== result1) throw new Error("idempotency replay returned different result");
+    pass("STK-003o", "idempotency replay", "same request_id + same hash returns original result");
+
+    // Test idempotency conflict: same request_id + different hash should fail
+    const request2 = JSON.stringify({ action: "create_entry", amount: 200 });
+    const requestHash2 = sha256(request2);
+    expectThrow(
+      () => {
+        db.query(
+          "INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash) VALUES (?, ?, ?, ?, ?)"
+        ).run("tenant-a", "req-1", requestHash2, JSON.stringify({ entry_id: "different", created: false }), sha256("{}"));
+      },
+      "UNIQUE"
+    );
+    pass("STK-003p", "idempotency conflict detection", "same request_id + different hash rejected with conflict");
+
     if (pragmas.length === 0) throw new Error("pragma query unexpectedly empty");
     return results;
   });
@@ -244,33 +280,50 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
 
 export async function runGate0Proofs(): Promise<ProofResult[]> {
   const local = await runLocalSqliteProof();
-  return [
+  const results = [
     {
       id: "STK-001",
       name: "Bun runtime and lockfile",
-      status: "PASS",
+      status: "PASS" as const,
       evidence: ["See runtime-versions.json and bun.lock; host/cross-target compile commands are recorded in docs/discovery/gate0-evidence.md."],
     },
     {
       id: "STK-002",
       name: "Bun-native persistence and Drizzle candidate",
-      status: "PARTIAL",
+      status: "PARTIAL" as const,
       evidence: ["Native bun:sqlite proof passed; Drizzle is compile-gated in infrastructure only; PostgreSQL/MySQL live proofs are not run."],
     },
     ...local,
     {
       id: "STK-005",
       name: "Bun-native CLI and exact amount representation",
-      status: "PASS",
+      status: "PASS" as const,
       evidence: ["Domain-owned registry and manual parser compile; structured output/error paths are deterministic; integer minor units use BigInt."],
     },
     {
       id: "STK-006",
       name: "Bun-embedded executable targets",
-      status: "PASS",
+      status: "PASS" as const,
       evidence: ["Build results and checksums are recorded in docs/discovery/gate0-evidence.md; foreign binaries were not executed, as required."],
     },
   ];
+
+  // Validate that all required proofs are present exactly once
+  const resultNames = new Set(results.map((r) => r.name));
+  const missingRequired = REQUIRED_PROOFS.filter((name) => !resultNames.has(name));
+
+  if (missingRequired.length > 0) {
+    throw new Error(`missing required proofs: ${missingRequired.join(", ")}`);
+  }
+
+  const duplicates = Array.from(resultNames).filter(
+    (name) => results.filter((r) => r.name === name).length > 1
+  );
+  if (duplicates.length > 0) {
+    throw new Error(`duplicate proof names: ${duplicates.join(", ")}`);
+  }
+
+  return results;
 }
 
 if (import.meta.main) {

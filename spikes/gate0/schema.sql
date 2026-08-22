@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS journal_entries (
   book_set_id TEXT NOT NULL,
   id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'POSTED')),
   PRIMARY KEY (tenant_id, book_set_id, id),
   UNIQUE (tenant_id, idempotency_key),
   FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets (tenant_id, id)
@@ -34,7 +35,7 @@ CREATE TABLE IF NOT EXISTS postings (
   line_no INTEGER NOT NULL CHECK (line_no > 0),
   debit_minor_units INTEGER NOT NULL DEFAULT 0,
   credit_minor_units INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (tenant_id, journal_entry_id, line_no),
+  PRIMARY KEY (tenant_id, book_set_id, journal_entry_id, line_no),
   CHECK (
     (debit_minor_units > 0 AND credit_minor_units = 0)
     OR (credit_minor_units > 0 AND debit_minor_units = 0)
@@ -54,6 +55,54 @@ CREATE TABLE IF NOT EXISTS audit_log (
   payload TEXT NOT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
+
+CREATE TABLE IF NOT EXISTS idempotency_records (
+  tenant_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  result_hash TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, request_id),
+  FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+);
+
+CREATE TRIGGER IF NOT EXISTS journal_entries_validate_balance_on_post
+BEFORE UPDATE OF status ON journal_entries
+WHEN NEW.status = 'POSTED' AND OLD.status = 'DRAFT'
+BEGIN
+  SELECT CASE
+    WHEN (
+      SELECT COUNT(*) FROM postings
+      WHERE tenant_id = NEW.tenant_id
+        AND book_set_id = NEW.book_set_id
+        AND journal_entry_id = NEW.id
+    ) = 0 THEN RAISE(ABORT, 'cannot post journal entry with no postings')
+    WHEN (
+      SELECT COALESCE(SUM(debit_minor_units), 0) FROM postings
+      WHERE tenant_id = NEW.tenant_id
+        AND book_set_id = NEW.book_set_id
+        AND journal_entry_id = NEW.id
+    ) != (
+      SELECT COALESCE(SUM(credit_minor_units), 0) FROM postings
+      WHERE tenant_id = NEW.tenant_id
+        AND book_set_id = NEW.book_set_id
+        AND journal_entry_id = NEW.id
+    ) THEN RAISE(ABORT, 'cannot post journal entry with unbalanced postings')
+  END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS postings_no_insert_when_posted
+BEFORE INSERT ON postings
+BEGIN
+  SELECT CASE
+    WHEN (
+      SELECT status FROM journal_entries
+      WHERE tenant_id = NEW.tenant_id
+        AND book_set_id = NEW.book_set_id
+        AND id = NEW.journal_entry_id
+    ) = 'POSTED' THEN RAISE(ABORT, 'cannot insert postings for posted journal entry')
+  END;
+END;
 
 CREATE TRIGGER IF NOT EXISTS postings_no_update
 BEFORE UPDATE ON postings
