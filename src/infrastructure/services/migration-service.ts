@@ -458,6 +458,16 @@ export class MigrationService {
           }
         } else if (!this.isCurrentSchema(backup)) {
           this.throwUnknownSchema();
+        } else {
+          // A current stage beside a current backup is a recoverable interrupted
+          // swap only when both tables contain the same exact rows.  Do this
+          // before RENAME: the backup is the only remaining history when the
+          // live table is absent, so silently preferring stage would lose it.
+          await this.validateExactRawRows(
+            session,
+            "schema_migrations_stage_v1",
+            "schema_migrations_backup_v1",
+          );
         }
         await session.executeRaw(`RENAME TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`);
         return;
@@ -945,6 +955,27 @@ export class MigrationService {
           `Row ${actualId} mismatch: expected ${expectedJson}, got ${actualJson}`
         );
       }
+    }
+  }
+
+  private async validateExactRawRows(
+    session: MigrationSession,
+    actualTableName: string,
+    expectedTableName: string,
+  ): Promise<void> {
+    const actualRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier(actualTableName)}`)).rows;
+    const expectedRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier(expectedTableName)}`)).rows;
+    const actualJson = canonicalRows(actualRows);
+    const expectedJson = canonicalRows(expectedRows);
+
+    // canonicalJson only makes object key order and row order deterministic;
+    // it deliberately does not coerce values (including integer/string or
+    // number/BigInt representations) before comparing the two raw result sets.
+    if (actualJson.length !== expectedJson.length || actualJson.some((row, index) => row !== expectedJson[index])) {
+      throw new DomainError(
+        "CONTROL_SCHEMA_UPGRADE_FAILED",
+        `MySQL stage and backup rows differ; refusing recovery before rename`,
+      );
     }
   }
 
