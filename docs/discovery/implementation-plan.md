@@ -11,7 +11,7 @@
 See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-010 records. Those entries are owner-approved and binding. TypeScript + Bun is owner-selected. These decisions do not authorize implementation; only the decision applicable to a phase or action gates that work.
 
 - **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#t-001).
-- **T-002**: Frappe Books reference and licensing boundary (behavior/concept reference only; MIT license; no code reuse). See [Tentative Decisions](tentative-decisions.md#t-002).
+- **T-002**: Agent-bahi MIT license and Frappe Books AGPL-3.0 licensing boundary (study/reference-only for behavior and concepts; no copying or adapting source, schema, prose, or assets). See [Tentative Decisions](tentative-decisions.md#t-002).
 - **T-003**: Fixed-asset depreciation policy (separate book/tax schedules; SLM method parameterized and reversible; not implementation authorization).
 - **T-004**: FX provider and fallback selection (purpose-specific immutable snapshots; no cross-purpose rate substitution; missing statutory source blocks affected lane only).
 - **T-005**: Regular-GST V1 profile baseline (no-registration + regular GST domestic/interstate/export with no universal turnover/AATO ceiling; GSTR-1; GSTR-3B and GST credit reconciliation; e-invoice/e-way-bill upload-file workflows only, with AATO applicability rules inside research-gated e-invoice decisions only; composition/inventory/specialized regimes deferred).

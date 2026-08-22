@@ -74,7 +74,7 @@ Owner-approved as the fallback default for external statutory submissions where 
 ---
 
 <a id="t-002"></a>
-### Entry T-002: MIT License and Frappe Books Study/Reference Only
+### Entry T-002: Agent-Bahi MIT License and Frappe Books AGPL-3.0 Study/Reference Only
 
 **Status**: OWNER-APPROVED
 
@@ -82,7 +82,7 @@ Owner-approved as the fallback default for external statutory submissions where 
 
 **Recommended Working Default**:
 - Agent-bahi is licensed under **MIT**.
-- Frappe Books is a **study and behavior/concept reference only**. Agent-bahi does not copy or adapt Frappe source code, database schemas, UI patterns, prose, or assets.
+- Frappe Books is distributed under **AGPL-3.0** and is a **study and behavior/concept reference only**. Agent-bahi does not copy or adapt Frappe source code, database schemas, UI patterns, prose, or assets.
 - Frappe Books concepts may inform independent design and research, but all agent-bahi implementation and documentation is original and written in agent-bahi's own words.
 
 **Alternatives**:
@@ -93,19 +93,19 @@ Owner-approved as the fallback default for external statutory submissions where 
 Frappe Books is a useful source of documented accounting and GST behavior for
 study, but it is not an implementation source. An independent MIT-licensed
 agent-bahi implementation keeps product decisions, source, schema, prose, and
-assets separate from the study material and avoids silent dependency on vendor
-behavior that is not independently verified.
+assets separate from the AGPL-3.0 study material and avoids silent dependency on
+vendor behavior that is not independently verified.
 
 **Product Impact**:
 - Design quality: Documented Frappe Books accounting/GST behavior provides a bounded reference without attributing unsupported capabilities.
-- License clarity: Agent-bahi uses MIT; Frappe Books remains study/reference material only.
+- License clarity: Agent-bahi uses MIT; Frappe Books is AGPL-3.0 and remains study/reference material only.
 - Operational simplicity: No Frappe source, schema, prose, or assets enter the repository.
 - Future flexibility: Independent implementation allows divergence from Frappe if Indian compliance rules or agent-bahi requirements change.
 
 **Reversal Path**:
-Any change to the MIT license or to the Frappe study/reference boundary requires
-a new explicit owner decision. It does not authorize copying or adapting Frappe
-source, schema, prose, or assets.
+Any change to Agent-bahi's MIT license or to Frappe Books' AGPL-3.0
+study/reference boundary requires a new explicit owner decision. It does not
+authorize copying or adapting Frappe source, schema, prose, or assets.
 
 **Dependencies**:
 - No dependencies on other settled decisions. This is independent of filing workflows, compliance rules, or architecture.
@@ -118,10 +118,10 @@ source, schema, prose, or assets.
   a study aid and does not authorize reuse of Frappe material.
 
 **Owner Review Status**:
-Owner-approved. Agent-bahi is MIT-licensed. Frappe Books is study/reference-only
-for behavior and concepts; no Frappe source code, schema, prose, or assets are
-copied or adapted. Agent-bahi's implementation and documentation remain
-independent.
+Owner-approved. Agent-bahi is MIT-licensed. Frappe Books is distributed under
+AGPL-3.0 and is study/reference-only for behavior and concepts; no Frappe source
+code, schema, prose, or assets are copied or adapted. Agent-bahi's implementation
+and documentation remain independent.
 
 ---
 
@@ -767,7 +767,7 @@ All Personal Tax decisions are documented in the canonical discovery packet: [Pe
 Entries T-001 through T-011 extend and clarify settled decisions from [decisions.md](decisions.md#confirmed) and [architecture-decisions.md](architecture-decisions.md):
 
 - **T-001** (now clarified): Establishes a fallback default for filing submission only where no filing-specific boundary exists. Does not override GSTR-1 or any filing-specific settled decision. Extends [GSTR-1-specific output boundary](decisions.md#confirmed) and [Government filing boundary](decisions.md#confirmed) as a generic template for undefined filings only.
-- **T-002** settles MIT licensing and the Frappe Books study/reference-only boundary; no Frappe source, schema, prose, or assets are copied or adapted.
+- **T-002** settles Agent-bahi's MIT licensing and Frappe Books' AGPL-3.0 study/reference-only boundary; no Frappe source, schema, prose, or assets are copied or adapted.
 - **T-003** establishes the approved separate book/tax schedules and SLM book default for [Fixed assets](decisions.md#confirmed); only exact statutory tax methods and rates remain OPEN_RESEARCH.
 - **T-004** extends [Multi-currency](decisions.md#confirmed) and [Exchange-rate source](decisions.md#confirmed) with original currency and immutable purpose-specific snapshots; missing statutory evidence affects only its compliance lane.
 - **T-005** defines V1 no-registration and regular GST coverage, domestic/interstate/export, GST credit reconciliation, and e-invoice/e-way upload files. Direct transports remain research-gated; composition, specialized regimes, and inventory remain deferred.
