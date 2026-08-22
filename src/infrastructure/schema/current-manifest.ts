@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { CORE_MIGRATIONS } from "./core-schema.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_MIGRATIONS } from "./database-control-schema.ts";
 import { BOOKSET_V3_MIGRATION } from "./bookset-v3-migration.ts";
+import { BOOKSET_V4_MIGRATION } from "./bookset-v4-migration.ts";
 
 export type CurrentSqliteMigration = {
   readonly id: string;
@@ -19,12 +20,13 @@ export const CURRENT_SQLITE_MIGRATIONS: readonly CurrentSqliteMigration[] = Obje
   Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
   Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
   Object.freeze({ id: BOOKSET_V3_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V3_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
+  Object.freeze({ id: BOOKSET_V4_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V4_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
 ]);
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 export const CURRENT_DATA_FORMAT_VERSION = 1;
 export const CURRENT_DATABASE_GENERATION = 1;
-export const CURRENT_DATABASE_REVISION = 2;
+export const CURRENT_DATABASE_REVISION = 3;
 export const CURRENT_READER_PROTOCOL_MIN = 1;
 export const CURRENT_READER_PROTOCOL_MAX = 1;
 export const CURRENT_WRITER_PROTOCOL = 1;
@@ -85,7 +87,7 @@ export const V2_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
   ]),
 });
 
-/** Immutable production manifest. The current schema is v3 after BookSet migration. */
+/** Immutable production manifest. The current schema is v4 after BookSet command/audit migration. */
 export const CURRENT_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
   manifestVersion: 1,
   schemaVersion: CURRENT_SCHEMA_VERSION,

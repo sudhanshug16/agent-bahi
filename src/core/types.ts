@@ -102,3 +102,9 @@ export class IdempotencyConflictError extends DomainError {
     super("IDEMPOTENCY_CONFLICT", message);
   }
 }
+
+export class IdempotencyCorruptError extends DomainError {
+  constructor(message: string) {
+    super("IDEMPOTENCY_CORRUPT", message);
+  }
+}
