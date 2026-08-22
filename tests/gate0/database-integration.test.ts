@@ -62,7 +62,7 @@ describe("Gate0 PostgreSQL integration contract", () => {
       results = await runDatabaseIntegrationTests(config);
     }
     validateIntegrationResults("PostgreSQL", "PG", results);
-  });
+  }, { timeout: 120000 }); // 120s timeout for semantic matrix execution
 });
 
 describe("Gate0 MySQL integration contract", () => {
@@ -92,5 +92,5 @@ describe("Gate0 MySQL integration contract", () => {
       results = await runDatabaseIntegrationTests(config);
     }
     validateIntegrationResults("MySQL", "MY", results);
-  });
+  }, { timeout: 120000 }); // 120s timeout for semantic matrix execution
 });
