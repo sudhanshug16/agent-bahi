@@ -1,27 +1,13 @@
 import { Database } from "bun:sqlite";
 import type { SqlitePort, SqlValue } from "../../application/ports/sqlite-port.ts";
-
-function assertLocalFilesystemPath(path: string): void {
-  const tempDir = process.env.TMPDIR ?? "/tmp";
-  const root = tempDir.replace(/\/+$/, "");
-  const underRoot = path.startsWith(`${root}/`);
-  const networkLike = path.startsWith("//")
-    || ["/net/", "/afs/", "/mnt/", "/media/", "/Volumes/"]
-      .some((prefix) => path.startsWith(prefix));
-  const isIdenticalToRoot = path === root;
-  const hasUnsafeTraversal = path.includes("/../");
-
-  if (!underRoot || networkLike || isIdenticalToRoot || hasUnsafeTraversal) {
-    throw new Error(`refusing non-local or unsafe filesystem path: ${path}`);
-  }
-}
+import { assertSafeSqlitePath } from "./path-policy.ts";
 
 export class NativeBunSqlite implements SqlitePort {
   readonly database: Database;
 
   constructor(path: string) {
-    assertLocalFilesystemPath(path);
-    this.database = new Database(path, { strict: true, create: true, safeIntegers: true });
+    const canonicalPath = assertSafeSqlitePath(path);
+    this.database = new Database(canonicalPath, { strict: true, create: true, safeIntegers: true });
 
     // Enable foreign key constraints
     this.database.exec("PRAGMA foreign_keys = ON");

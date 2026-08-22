@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession, TableMetadata, ColumnMetadata } from "../../application/ports/persistence.ts";
 import type { SqliteConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
-import { resolve } from "path";
+import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 
 /**
  * SQLite Migration Session (callback-scoped): holds BEGIN IMMEDIATE transaction.
@@ -276,11 +276,9 @@ export class SqliteAdapter implements Database {
   private adapterId = randomUUID(); // Stable ID for this adapter instance
 
   constructor(config: SqliteConfig) {
-    // Verify canonical path safety
-    this.assertLocalFilesystemPath(config.path);
-    this.dbPath = config.path;
+    this.dbPath = assertSafeSqlitePath(config.path);
 
-    this.db = new BunDatabase(config.path, {
+    this.db = new BunDatabase(this.dbPath, {
       strict: true,
       create: true,
       safeIntegers: true,
@@ -309,42 +307,6 @@ export class SqliteAdapter implements Database {
       ?.journal_mode;
     if (String(journalMode).toLowerCase() !== "wal") {
       throw new DomainError("SQLITE_CONFIG_FAILED", "PRAGMA journal_mode WAL failed to enable");
-    }
-  }
-
-  private assertLocalFilesystemPath(path: string): void {
-    try {
-      // Reject network-like paths
-      if (
-        path.startsWith("//") ||
-        path.startsWith("/net/") ||
-        path.startsWith("/afs/") ||
-        path.startsWith("/mnt/") ||
-        path.startsWith("/media/") ||
-        path.startsWith("/Volumes/")
-      ) {
-        throw new Error("Network filesystem path detected");
-      }
-
-      // On macOS, reject cloud sync paths
-      if (
-        path.includes("/Library/Mobile Documents/") ||
-        path.includes("/iCloud Drive/")
-      ) {
-        throw new Error("Cloud sync path detected");
-      }
-
-      // Must be absolute path
-      if (!path.startsWith("/")) {
-        throw new Error("SQLite path must be absolute");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new DomainError(
-        "SQLITE_UNSAFE_PATH",
-        `SQLite database path rejected for safety: ${message}`,
-        { path },
-      );
     }
   }
 

@@ -1,36 +1,23 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { NativeBunSqlite } from "../../src/infrastructure/sqlite/native-sqlite.ts";
 
-function cleanupDb(path: string) {
-  for (const suffix of ["", "-wal", "-shm"]) {
-    try {
-      const file = Bun.file(`${path}${suffix}`);
-      if (file) {
-        file.delete().catch(() => {
-          // ignore
-        });
-      }
-    } catch {
-      // ignore
-    }
-  }
-}
-
 describe("NativeBunSqlite adapter", () => {
-  test("rejects non-local filesystem paths", () => {
-    expect(() => new NativeBunSqlite("/net/example/proof.sqlite")).toThrow("refusing non-local");
-    expect(() => new NativeBunSqlite("//server/share/proof.sqlite")).toThrow("refusing non-local");
-    expect(() => new NativeBunSqlite("/mnt/remote/proof.sqlite")).toThrow("refusing non-local");
+  test("rejects non-local filesystem paths with the public typed error", () => {
+    for (const path of ["/net/example/proof.sqlite", "//server/share/proof.sqlite", "/mnt/remote/proof.sqlite"]) {
+      expect(() => new NativeBunSqlite(path)).toThrow("SQLite database path rejected for safety");
+    }
   });
 
   test("rejects unsafe path traversal", () => {
     const tmpdir = process.env.TMPDIR ?? "/tmp";
-    expect(() => new NativeBunSqlite(`${tmpdir}/../../../etc/passwd`)).toThrow("refusing non-local");
+    expect(() => new NativeBunSqlite(`${tmpdir}/../../../etc/passwd`)).toThrow("SQLite database path rejected for safety");
   });
 
-  test("enforces PRAGMA foreign_keys=ON", () => {
-    const tmpdir = process.env.TMPDIR ?? "/tmp";
-    const path = `${tmpdir}/test-fk-${crypto.randomUUID()}.sqlite`;
+  test("enforces PRAGMA foreign_keys=ON", async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-native-"));
+    const path = join(directory, "foreign-keys.sqlite");
     const db = new NativeBunSqlite(path);
     try {
       const results = db.query<{ foreign_keys: number | bigint }>("PRAGMA foreign_keys");
@@ -38,13 +25,13 @@ describe("NativeBunSqlite adapter", () => {
       expect(Number(results[0].foreign_keys)).toBe(1);
     } finally {
       db.close();
-      cleanupDb(path);
+      await rm(directory, { recursive: true, force: true });
     }
   });
 
-  test("enforces PRAGMA journal_mode=WAL", () => {
-    const tmpdir = process.env.TMPDIR ?? "/tmp";
-    const path = `${tmpdir}/test-wal-${crypto.randomUUID()}.sqlite`;
+  test("enforces PRAGMA journal_mode=WAL", async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-native-"));
+    const path = join(directory, "wal.sqlite");
     const db = new NativeBunSqlite(path);
     try {
       const results = db.query<{ journal_mode: string }>("PRAGMA journal_mode");
@@ -52,13 +39,13 @@ describe("NativeBunSqlite adapter", () => {
       expect(results[0].journal_mode?.toLowerCase()).toBe("wal");
     } finally {
       db.close();
-      cleanupDb(path);
+      await rm(directory, { recursive: true, force: true });
     }
   });
 
-  test("enforces PRAGMA busy_timeout=50", () => {
-    const tmpdir = process.env.TMPDIR ?? "/tmp";
-    const path = `${tmpdir}/test-busy-${crypto.randomUUID()}.sqlite`;
+  test("enforces PRAGMA busy_timeout=50", async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-native-"));
+    const path = join(directory, "busy.sqlite");
     const db = new NativeBunSqlite(path);
     try {
       const results = db.query<{ timeout: number | bigint }>("PRAGMA busy_timeout");
@@ -66,13 +53,13 @@ describe("NativeBunSqlite adapter", () => {
       expect(Number(results[0].timeout)).toBe(50);
     } finally {
       db.close();
-      cleanupDb(path);
+      await rm(directory, { recursive: true, force: true });
     }
   });
 
-  test("constructor verifies PRAGMA settings are enforced", () => {
-    const tmpdir = process.env.TMPDIR ?? "/tmp";
-    const path = `${tmpdir}/test-verify-${crypto.randomUUID()}.sqlite`;
+  test("constructor verifies PRAGMA settings are enforced", async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-native-"));
+    const path = join(directory, "verify.sqlite");
 
     const db = new NativeBunSqlite(path);
     db.close();
@@ -81,6 +68,6 @@ describe("NativeBunSqlite adapter", () => {
       new NativeBunSqlite(path);
     }).not.toThrow();
 
-    cleanupDb(path);
+    await rm(directory, { recursive: true, force: true });
   });
 });
