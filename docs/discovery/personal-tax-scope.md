@@ -213,7 +213,7 @@ The TaxCase membership snapshot is one sealed normalized set created at case cre
 
 **TaxComputation and ExportRuns:**
 
-TaxComputation derives from exactly one FilingSnapshot and never posts to the books. Multiple immutable ExportRuns are allowed; one explicitly selected export may be marked submission-bound. SubmissionAttempt records binding the selected ExportRun to a receipt or raw portal status.
+TaxComputation derives from exactly one FilingSnapshot and never posts to the books. Multiple immutable ExportRuns are allowed; one explicitly selected export may be marked submission-bound only when its immutable `validation_outcome` is exactly `PASSED`, its integrity status is `CURRENT`, and its FilingSnapshot is `CURRENT`. `FAILED`, `INCOMPLETE`, `UNKNOWN`, `REVIEW`, `STALE`, and `DRIFTED` exports are structurally ineligible. SubmissionAttempt records the exact selected ExportRun binding; it cannot be created for any other outcome or status.
 
 **Pre-Submission Changes:**
 
@@ -346,6 +346,8 @@ AIS/26AS/books differences may be marked READY only with explicit reconciliation
 
 The fact of reconciliation (not acknowledgement alone) is the requirement; unresolved conflict cannot be overridden by user checkbox or CA acknowledgement.
 
+`READY` and `DECLARED_NOT_APPLICABLE` are fail-closed states, not prose labels. `READY` requires a non-null exact source/evidence binding plus an immutable hash of the complete, nonempty required catalog and its ordered evidence bindings. `DECLARED_NOT_APPLICABLE` requires a non-null exact source/evidence binding, actor, reason, and scope. A missing or mismatched binding, hash, or conditional field leaves the source unresolved and blocks the affected action.
+
 **Failure mode:** A missing artifact is treated as optional because a user acknowledged a checklist. An optional source is hidden because it is unresolved. A conflict is marked READY without explicit reconciliation reason/amount/evidence/actor/date.
 
 **Control:** Before readiness evaluation, the complete required source catalog is deterministically enumerated from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. An empty or not-yet-enumerated catalog can never pass `READY`. Required unresolved states block only the affected computation, export, or filing action; they do not block unrelated BookSet work. Optional unresolved sources remain visible and do not silently disappear.
@@ -388,7 +390,7 @@ Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor 
 
 **Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision (Issue #1):** Local lifecycle (`PREPARED`, `EXPORTED`, `UNKNOWN`) is separate from portal/government status. Validation results are recorded only as the ExportRun `validation_outcome`, never as a local lifecycle state. Export never implies upload/submission/verification/processing. A government status such as submitted is recorded only by an explicit action and bound filing-specific receipt/acknowledgement/evidence; preserve exact raw label/evidence and do not infer later states from elapsed time. Every export creates an immutable activity/audit event. Configurable automation may create a reminder/activity asking whether it was submitted. User may dismiss/remind later; dismissal never means submitted and does not delete audit history.
+**Decision (Issue #1):** Local lifecycle (`PREPARED`, `EXPORTED`, `UNKNOWN`) is separate from portal/government status. Validation results are recorded only as the ExportRun `validation_outcome`, never as a local lifecycle state. Export never implies upload/submission/verification/processing. Only an ExportRun whose validation outcome is exactly `PASSED` and whose FilingSnapshot/ExportRun integrity status is `CURRENT` may be selected, bound, or receive a SubmissionAttempt; all other outcomes, stale exports, and drifted exports fail closed. A government status such as submitted is recorded only by an explicit action and bound filing-specific receipt/acknowledgement/evidence; preserve exact raw label/evidence and do not infer later states from elapsed time. Every export creates an immutable activity/audit event. Configurable automation may create a reminder/activity asking whether it was submitted. User may dismiss/remind later; dismissal never means submitted and does not delete audit history.
 
 Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states are exactly `PREPARED`, `EXPORTED`, and `UNKNOWN` (never confuse them with government/portal states). External portal status uses exactly these five normalized labels: `SUBMITTED`, `VERIFIED`, `PROCESSED`, `DEFECTIVE`, `CASE_TRANSFERRED_TO_ASSESSING_OFFICER`. They correspond to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq), which must be retained with filing-specific bound evidence.
 
@@ -469,6 +471,8 @@ Current books continue to update independently throughout. The successor case re
 **Mechanism Selection:**
 
 The exact official correction route (revised, rectification, defect-response, etc.) is year/rule/portal-specific and must be verified by the applicable AuthorityPack and official evidence. The mechanism is never guessed from a user label or elapsed time; verification happens before marking the successor READY.
+
+Correction metadata is structurally bound to the actual successor TaxCase's exact successor sequence, AuthorityPack ID/content hash, governing Act, period, filing trigger, and `rule_snapshot_id`. Its route FK repeats that exact tuple and the same `rule_snapshot_id`; an independently supplied route from another AuthorityPack cannot satisfy the successor metadata. When a correction invalidates prior filing work, the affected FilingSnapshots and ExportRuns are atomically and durably marked `STALE` or `DRIFTED` with reason, source, and superseding TaxCase; they remain immutable and cannot be reused, exported, or submitted.
 
 **Failure mode:** A filed case is edited in place. A correction route is inferred without verifying the governing period and portal route. Original submission artifacts are not preserved as immutable records.
 
