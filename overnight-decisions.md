@@ -210,3 +210,34 @@ The earlier `docker exec` and lifecycle references in this decision are historic
 3. No existing containers named `agent-bahi-postgres-*` or `agent-bahi-mysql-*` (cleanup on exit enforces this).
 4. Integration tests pass and produce evidence matching the expected proof IDs and semantics.
 5. Container cleanup confirmed (no dangling agent-bahi containers).
+
+## Phase 1A: Migration Lease and Atomic Idempotency (2026-08-22)
+
+### Decided: Callback-only migration lease (withMigrationLease) 
+Removed exposed `migrationSession()` method to prevent transaction-scoped handles from escaping callback scope. Lifetime must be enforced by the callback pattern per dialect.
+
+**Why:** SQLite transactions are connection-bound; PostgreSQL db.begin() holds locks during callback; MySQL reserved connections are auto-returned on callback exit. Exposing the session object after callback completion is a correctness bug.
+
+**How to apply:** All migration work must use `db.withMigrationLease(async (session) => { ... })`. Session never escapes the callback closure.
+
+### Decided: TenantService insertion order under nullable FKs
+Fixed pre-existing bug: service contradicted its algorithm comments by inserting tenant with non-null default_book_set_id before the book_set was created, violating composite trigger.
+
+Correct order:
+1. Reserve idempotency row (tenant_id=NULL, result=NULL, hash from params only)
+2. Insert tenant (default_book_set_id=NULL)
+3. Insert book_set (FK to tenant satisfied)
+4. UPDATE tenant set default_book_set_id (trigger validates same-tenant row)
+5. UPDATE request row with result (finalize idempotency)
+
+**Why:** FK constraints and triggers are not advisory; they must be satisfied in order or transaction fails. Nullable columns allow insertion without forward references.
+
+**How to apply:** When idempotency row exists, check if partial (tenant_id=NULL, result=NULL) and continue from step 2. Same request_id with different parameters fails on hash mismatch before any mutations.
+
+### Known limitation: Per-process SQLite lock
+Current advisory lock implementation is per-adapter-instance, not durable across different SQLite connections to the same file. Acceptable for Phase 1A bootstrap; production deployment should use migration lock file or database-level semaphore. Test DEFECT-10 documents this.
+
+**Why:** SQLite BEGIN IMMEDIATE is connection-scoped; holding an uncommitted lock transaction prevents other processes from writing, but only if they attempt to write and hit SQLITE_BUSY. No portable cross-process coordination without filesystem lock file.
+
+### Decided: No drop/weaken of FK/trigger constraints
+Tests required FK ON; composite trigger for default_book_set_id same-tenant enforcement; UNIQUE request_id for idempotency. All remain enforced in schema and verified by tests. Code now satisfies them correctly rather than bypassing.
