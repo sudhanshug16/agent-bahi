@@ -159,6 +159,48 @@ The earlier `docker exec` and lifecycle references in this decision are historic
 - **Reversibility**: Revert the isolated Gate0 registry/finalizer, catalog-query, cleanup, and focused-test changes without changing accounting-domain code, migrations, production databases, or Docker credentials. Any relaxation requires a new explicit owner review.
 - **Status**: `OWNER REVIEW PENDING`.
 
+## OD-016 — Phase 1A production persistence foundation
+
+- **Date**: 2026-08-22
+- **Decision**: Implement Phase 1A production persistence foundation as a clean, dialect-neutral architecture with SQLite, PostgreSQL, and MySQL adapters. Foundation includes: database configuration/URL parser; Database/Transaction/UnitOfWork ports; migration service with explicit locking (advisory locks per dialect); compatibility preflight with CLI semver + schema version + data-format version; core relational model (tenants, book_sets, accounts, legal_identities, gst_registrations, evidence, audit_records, idempotency_records); application services (TenantService with atomic bootstrap); SQLite-native adapter (foreign_keys ON, WAL, busy_timeout=0, safeIntegers); PostgreSQL/MySQL adapters (pg_advisory_lock / GET_LOCK for serialization).
+- **Scope**: Persistence/services/tests only. NO CLI handlers, NO journals/business documents, NO compliance calculations. COMPANY/PERSONAL/PROPRIETORSHIP BookSet cardinality enforced. Account code scope (tenant_id, book_set_id) prevents reuse. Cross-tenant access rejected. Audit records append-only (triggers prevent UPDATE/DELETE). All code TypeScript-safe; no external database npm dependencies (Bun SQL native only).
+- **Alternatives**: Delay persistence until business logic gates are proven (risks design feedback late); use ORM for schema generation (loses hand-reviewed constraint/checksum provenance); implement only SQLite without dialect abstraction (reduces portability proof).
+- **Evidence**:
+  - Commit 4fbb08f: 16 files, 3498 insertions. Core infrastructure: `src/core/types.ts` (typed errors), `src/infrastructure/config/database.ts` (URL parser), `src/application/ports/persistence.ts` (Database/Transaction/UnitOfWork ports), `src/application/ports/repositories.ts` (repository ports).
+  - Adapters: `sqlite-adapter.ts` (PRAGMA safety, safeIntegers), `postgres-adapter.ts` (pg_advisory_lock), `mysql-adapter.ts` (GET_LOCK, TLS), `database-factory.ts` (instantiation).
+  - Services: `migration-service.ts` (locking, checksums, dirty state), `compatibility-service.ts` (matrix, preflight), `tenant-service.ts` (atomic create+default-BookSet).
+  - Repositories: `tenant-repository.ts`, `book-set-repository.ts`, `account-repository.ts` (all with cross-tenant guards).
+  - Schema: `core-schema.ts` (SQLite/PostgreSQL/MySQL dialect-specific DDL, UNIQUE constraints, append-only triggers).
+  - Tests: `tests/persistence/phase1a.test.ts` (24 passing: database init, schema tables, PRAGMAs, tenant creation, BookSet cardinality, account code scope, cross-tenant isolation, compatibility, migration tracking).
+- **Reversibility**: Ports and adapters are cleanly layered; replace adapter or schema without changing application logic. Repository implementations can be swapped. Migration history is immutable; new versions add entries, never rewrite. Compatibility matrix is additive. UNIQUE constraints on (tenant_id, kind) for COMPANY/PERSONAL are intentional; PROPRIETORSHIP multiplicity is deferred to later trigger-based implementation.
+- **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING`.
+
+### Design notes
+
+- **Dialect-neutral ports**: Domain and application depend on Database/Transaction/UnitOfWork ports only; infrastructure implements per-dialect. PostgreSQL/MySQL adapters implement same port interface; swap without changing domain.
+- **Explicit locking**: Migration service acquires advisory lock before schema changes; no auto-migration mid-operation. SQLite uses lockLevel counter (single-process testing); production migration requires file-based lock or serializable transaction on lock table. PostgreSQL pg_advisory_lock is per-connection; MySQL GET_LOCK is per-session.
+- **Compatibility gating**: CLI version + schema logical ID + data-format version tracked separately. Gate0 marked read-only in matrix; Phase 1+ will add new entries. Mismatch fails closed before any read/write.
+- **Tenant bootstrap**: createTenantWithDefaultBookSet atomically creates tenant (CREATING state) + default BookSet + sets pointer in single transaction. Activation explicit (CREATING → ACTIVE). Prevents partial state on failure.
+- **Cross-tenant guard**: Every repository method validates (tenant_id, book_set_id) scope on load. Account code uniqueness is (tenant_id, book_set_id) scoped; cannot reuse within scope (natural given single-tenant assumption). BookSet archival prevented if default.
+- **Append-only audit**: SQLite triggers on audit_records prevent UPDATE/DELETE. PostgreSQL/MySQL equivalents in schema. Durable immutability without application trust.
+- **Checksum verification**: Migration service computes SHA256 of SQL and stores/verifies against tampering. Dirty marker blocks subsequent operations until cleared.
+
+### Open decisions / deferred work
+
+- **PROPRIETORSHIP cardinality**: Schema currently has UNIQUE (tenant_id, kind) which prevents multiple PROPRIETORSHIP BookSets. Requirement allows multiple for INDIVIDUAL tenant. Defer to trigger-based or application-level enforcement in later phase.
+- **SQLite lock semantics**: Advisory lock counter is per-process (one DB instance). True serialization requires PRAGMA locking_mode = EXCLUSIVE (blocks all readers during write) or lock table + serializable TX. Deferred pending production lock testing.
+- **PostgreSQL/MySQL live testing**: Adapters structurally complete; live integration testing (schema creation, locking, transactions) deferred pending CI environment setup or local containerized tests.
+- **Legal identity HMAC**: Schema defines fingerprint + key_id columns for PAN/CIN fingerprinting. No key management or HMAC implementation yet; deferred to legal-identity service in Phase 1B.
+- **Backup service**: BackupService port defined; SQLiteBackupService (WAL-consistent snapshots) and PostgreSQL/MySQL UNAVAILABLE handlers deferred to Phase 2.
+
+### Migration paths
+
+1. **Adapt SQLite schema**: No schema changes required for COMPANY/PERSONAL enforcement (already UNIQUE). To support multiple PROPRIETORSHIP: remove UNIQUE, add trigger `BEFORE INSERT ON book_sets FOR EACH ROW CHECK(kind != 'PROPRIETORSHIP' OR NOT EXISTS(SELECT 1 FROM book_sets WHERE tenant_id=NEW.tenant_id AND kind='PROPRIETORSHIP'))` — or defer to application-level upsert + explicit create.
+
+2. **Test PostgreSQL/MySQL**: Integration tests using local docker-compose or testcontainers. Verify pg_advisory_lock/GET_LOCK behavior, schema DDL compatibility, idempotent re-apply, dirty recovery.
+
+3. **Add rule/compliance services**: Legal-identity HMAC signing, GST registration validation, evidence content-addressing. Reuse repository ports; add new ports for RuleProvider, etc.
+
 ---
 
 **Blocking conditions for PostgreSQL/MySQL proofs:**
