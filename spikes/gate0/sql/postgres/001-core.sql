@@ -242,9 +242,11 @@ EXECUTE FUNCTION prevent_journal_change_when_posted();
 CREATE OR REPLACE FUNCTION prevent_journal_delete_when_posted() RETURNS TRIGGER AS $$
 BEGIN
   IF OLD.status = 'POSTED' THEN
-    RAISE EXCEPTION 'posted journal entry cannot be deleted';
+    RAISE EXCEPTION USING
+      ERRCODE = 'AB001',
+      MESSAGE = 'posted journal entry cannot be deleted';
   END IF;
-  RETURN NEW;
+  RETURN OLD;
 END;
 $$ LANGUAGE plpgsql;
 -- statement-breakpoint

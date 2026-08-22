@@ -1,4 +1,4 @@
-import { spawnSync, SQL } from "bun";
+import { spawnSync, SQL, type ReservedSQL } from "bun";
 
 export type DatabaseType = "postgres" | "mysql";
 
@@ -19,19 +19,24 @@ export type IntegrationTestResult = {
   name: string;
   status: "PASS" | "FAIL" | "BLOCKED";
   evidence: string[];
+  detail?: string;
   error?: string;
 };
 
-/**
- * This is the semantic matrix contract. The substrate below deliberately does
- * not implement these cases yet, so each dialect result remains BLOCKED until
- * a later writer supplies the actual proofs.
- */
+export type IntegrationSummary = {
+  dialect: DatabaseType;
+  server_version: string;
+  proofs: Array<{ id: string; status: IntegrationTestResult["status"]; detail: string }>;
+};
+
 export const REQUIRED_SEMANTIC_PROOF_IDS = [
   "MIG-001",
   "MIG-002",
   "MIG-003",
   "MIG-004",
+  "MIG-DDL-ROLLBACK",
+  "MIG-DIRTY-MARKER",
+  "MIG-DIRTY-RECOVERY",
   "SCOPE-001",
   "SCOPE-002",
   "POST-001",
@@ -41,10 +46,15 @@ export const REQUIRED_SEMANTIC_PROOF_IDS = [
   "IMM-001",
   "IMM-002",
   "IMM-003",
+  "DEL-001",
   "CON-001",
+  "CON-001-NEG",
   "IDEM-001",
   "IDEM-002",
+  "IDEM-RACE-001",
+  "IDEM-RACE-002",
   "BIGINT-001",
+  "CLEANUP-001",
 ] as const;
 
 export const POSTGRES_IMAGE =
@@ -55,6 +65,7 @@ export const MYSQL_IMAGE =
 export const MIGRATION_CHECKSUM_MISMATCH = "MIGRATION_CHECKSUM_MISMATCH" as const;
 export const MIGRATION_DIRTY = "MIGRATION_DIRTY" as const;
 export const MIGRATION_FAILED = "MIGRATION_FAILED" as const;
+export const POSTED_DELETE_SQLSTATE = "AB001" as const;
 
 const REQUIRED_TABLES = [
   "schema_migrations",
@@ -126,6 +137,10 @@ export class MigrationContractError extends Error {
   }
 }
 
+export class IntegrationBlockedError extends Error {
+  readonly code = "INTEGRATION_BLOCKED" as const;
+}
+
 function generateTestCredentials(): { username: string; password: string; rootPassword: string } {
   const randomPassword = () =>
     crypto.getRandomValues(new Uint8Array(32)).reduce((value, byte) => value + byte.toString(16).padStart(2, "0"), "");
@@ -147,23 +162,74 @@ export function sanitizeError(error: unknown, secrets: readonly string[] = []): 
     .replace(/(MYSQL_ROOT_PASSWORD|POSTGRES_PASSWORD|MYSQL_PASSWORD)=\S+/gi, "$1=***");
 }
 
+function extractStructuredPostgresSqlState(error: unknown): string {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value: error, depth: 0 }];
+  const visited = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.shift()!;
+    if (!current.value || typeof current.value !== "object" || current.depth > 3 || visited.has(current.value)) continue;
+    visited.add(current.value);
+    const record = current.value as Record<string, unknown>;
+    // Bun 1.3.14 exposes server SQLSTATE as `code` for the normal error
+    // shape. The native adapter can wrap it as ERR_POSTGRES_SERVER_ERROR and
+    // retain the exact five-character SQLSTATE in `errno`; accept only those
+    // structured fields, never message text or undocumented aliases.
+    for (const field of ["code", "errno"]) {
+      const value = String(record[field] ?? "");
+      if (/^[A-Z0-9]{5}$/.test(value)) return value;
+    }
+    for (const key of Object.getOwnPropertyNames(record)) {
+      const nested = record[key];
+      if (nested && typeof nested === "object") pending.push({ value: nested, depth: current.depth + 1 });
+    }
+  }
+  return "";
+}
+
 function bytesToString(value: Uint8Array | string | undefined): string {
   if (value === undefined) return "";
   return typeof value === "string" ? value : new TextDecoder().decode(value);
 }
 
-function docker(args: string[], secrets: readonly string[], action: string, timeoutMs: number = 30000) {
+export type SpawnResultClassification = {
+  success: boolean;
+  exitCode: number | null;
+  signalCode: string | null;
+  timedOut: boolean;
+};
+
+export function classifySpawnResult(result: {
+  success?: boolean;
+  exitCode?: number | null;
+  signalCode?: string | null;
+  exitedDueToTimeout?: boolean;
+}): SpawnResultClassification {
+  const candidate = result as { success?: unknown; exitCode?: unknown; signalCode?: unknown; exitedDueToTimeout?: unknown };
+  const exitCode = typeof candidate.exitCode === "number" ? candidate.exitCode : null;
+  const signalCode = typeof candidate.signalCode === "string" ? candidate.signalCode : null;
+  const timedOut = candidate.exitedDueToTimeout === true || exitCode === null;
+  return { success: candidate.success === true && exitCode === 0 && signalCode === null && !timedOut, exitCode, signalCode, timedOut };
+}
+
+function processExitDetails(result: ReturnType<typeof spawnSync>): SpawnResultClassification {
+  return classifySpawnResult(result);
+}
+
+function docker(args: string[], secrets: readonly string[], action: string, timeoutMs: number = 30000, requireOutput = true) {
   let result: ReturnType<typeof spawnSync>;
   try {
     result = spawnSync(["docker", ...args], { timeout: timeoutMs });
   } catch (error) {
     throw new Error(`${action}: ${sanitizeError(error, secrets)}`);
   }
-  if (!result.success) {
+  const exit = processExitDetails(result);
+  if (!exit.success) {
     const detail = bytesToString(result.stderr) || bytesToString(result.stdout) || "docker command failed";
-    throw new Error(`${action}: ${sanitizeError(detail, secrets)}`);
+    throw new Error(
+      `${action}: ${sanitizeError(detail, secrets)} (exit_code=${exit.exitCode === null ? "null" : exit.exitCode}; signal_code=${exit.signalCode ?? "none"}; timed_out=${exit.timedOut})`,
+    );
   }
-  if (!result.stdout) {
+  if (requireOutput && !bytesToString(result.stdout).trim()) {
     throw new Error(`${action}: docker returned empty output (possible timeout or failure)`);
   }
   return result;
@@ -177,9 +243,12 @@ function cleanupResource(containerName: string, networkName: string, networkCrea
     if (containerStarted) {
       try {
         const rmResult = spawnSync(["docker", "rm", "-f", containerName], { timeout: 10000 });
-        const exitCode = (rmResult as any).exitCode ?? (rmResult as any).status ?? 0;
-        if (exitCode !== 0) {
-          cleanupErrors.push(`docker rm container failed: exit status ${exitCode}`);
+        const exit = processExitDetails(rmResult);
+        const stderr = bytesToString(rmResult.stderr);
+        if (!exit.success) {
+          cleanupErrors.push(
+            `docker rm container failed: exit_code=${exit.exitCode === null ? "null" : exit.exitCode}; signal_code=${exit.signalCode ?? "none"}; timed_out=${exit.timedOut}; stderr=${sanitizeError(stderr)}`,
+          );
         }
       } catch (error) {
         cleanupErrors.push(`docker rm container error: ${sanitizeError(error)}`);
@@ -189,20 +258,21 @@ function cleanupResource(containerName: string, networkName: string, networkCrea
     if (networkCreated) {
       try {
         const netResult = spawnSync(["docker", "network", "rm", networkName], { timeout: 10000 });
-        const exitCode = (netResult as any).exitCode ?? (netResult as any).status ?? 0;
-        if (exitCode !== 0) {
-          cleanupErrors.push(`docker network rm failed: exit status ${exitCode}`);
+        const exit = processExitDetails(netResult);
+        const stderr = bytesToString(netResult.stderr);
+        if (!exit.success) {
+          cleanupErrors.push(
+            `docker network rm failed: exit_code=${exit.exitCode === null ? "null" : exit.exitCode}; signal_code=${exit.signalCode ?? "none"}; timed_out=${exit.timedOut}; stderr=${sanitizeError(stderr)}`,
+          );
         }
       } catch (error) {
         cleanupErrors.push(`docker network rm error: ${sanitizeError(error)}`);
       }
     }
 
-    // Aggregate and surface cleanup errors (no silent swallowing)
     if (cleanupErrors.length > 0) {
       const aggregatedError = cleanupErrors.join("; ");
-      console.error(`[Gate0] Cleanup errors for container=${containerName}, network=${networkName}: ${aggregatedError}`);
-      // Note: errors are logged but cleanup continues; partial cleanup is better than no cleanup
+      throw new Error(`cleanup failed for container=${containerName}, network=${networkName}: ${aggregatedError}`);
     }
   };
 }
@@ -222,6 +292,7 @@ async function startDatabaseContainer(
   let startupSucceeded = false;
 
   try {
+    docker(["pull", image], secrets, `pre-pull ${type} test image`, 120000);
     docker(
       [
         "network",
@@ -261,6 +332,8 @@ async function startDatabaseContainer(
     const runResult = docker(
       [
         "run",
+        "--pull",
+        "never",
         "--rm",
         "-d",
         "--name",
@@ -291,7 +364,7 @@ async function startDatabaseContainer(
       throw new Error(`start ${type} test container: docker returned no container ID`);
     }
     let healthStatus = "";
-    for (let attempt = 0; attempt < 30; attempt += 1) {
+    for (let attempt = 0; attempt < 180; attempt += 1) {
       const healthResult = docker(
         ["inspect", "--format={{.State.Health.Status}}", containerName],
         secrets,
@@ -397,6 +470,19 @@ async function ensureSchemaMigrationsTable(sql: SQL, dialect: DatabaseType): Pro
   await sql.unsafe(ddl);
 }
 
+async function schemaMigrationsExists(sql: SQL, dialect: DatabaseType): Promise<boolean> {
+  if (dialect === "postgres") {
+    const rows = await sql.unsafe<{ exists: boolean }[]>(
+      "SELECT to_regclass('schema_migrations') IS NOT NULL AS exists",
+    );
+    return rows[0]?.exists === true;
+  }
+  const rows = await sql.unsafe<{ count: bigint | number }[]>(
+    "SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'schema_migrations'",
+  );
+  return Number(rows[0]?.count ?? 0) === 1;
+}
+
 async function getMigrationApplyingMarker(sql: SQL, logicalId: string): Promise<boolean> {
   const marker = await sql<{ is_applying: number | bigint }[]>`
     SELECT COUNT(*) as is_applying FROM schema_migrations WHERE logical_id = ${'__applying_' + logicalId}
@@ -405,16 +491,77 @@ async function getMigrationApplyingMarker(sql: SQL, logicalId: string): Promise<
 }
 
 async function setMigrationApplyingMarker(sql: SQL, logicalId: string): Promise<void> {
-  await sql.unsafe(
-    `INSERT INTO schema_migrations (logical_id, checksum, applied_at) VALUES ('__applying_${logicalId}', 'marker', 'applying')`,
-  );
+  await sql`
+    INSERT INTO schema_migrations (logical_id, checksum, applied_at)
+    VALUES (${'__applying_' + logicalId}, ${"marker"}, ${"applying"})
+  `;
 }
 
 async function clearMigrationApplyingMarker(sql: SQL, logicalId: string): Promise<void> {
-  await sql.unsafe(`DELETE FROM schema_migrations WHERE logical_id = '__applying_${logicalId}'`);
+  await sql`DELETE FROM schema_migrations WHERE logical_id = ${'__applying_' + logicalId}`;
 }
 
-async function verifyRequiredStructure(sql: SQL, dialect: DatabaseType): Promise<StructuralVerification> {
+function assertSafeIdentifier(identifier: string, label: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+    throw new Error(`${label} contains an unsafe SQL identifier`);
+  }
+}
+
+export async function recoverDirtyMigration(
+  sql: SQL,
+  logicalId: string,
+  partialTableNames: readonly string[],
+): Promise<void> {
+  if (partialTableNames.length === 0) throw new Error("dirty migration recovery requires explicit partial object names");
+  const markerExists = await getMigrationApplyingMarker(sql, logicalId);
+  if (!markerExists) throw new MigrationContractError(MIGRATION_FAILED, `no dirty marker for ${logicalId}`);
+  for (const tableName of partialTableNames) {
+    assertSafeIdentifier(tableName, "partial table name");
+    await sql.unsafe(`DROP TABLE IF EXISTS \`${tableName}\``);
+  }
+  await clearMigrationApplyingMarker(sql, logicalId);
+}
+
+function normalizeSql(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+type ExpectedTrigger = { table: string; timing: "BEFORE"; event: "INSERT" | "UPDATE" | "DELETE"; functionName: string };
+
+const EXPECTED_TRIGGERS: Record<string, ExpectedTrigger> = {
+  journal_entries_must_start_as_draft: { table: "journal_entries", timing: "BEFORE", event: "INSERT", functionName: "enforce_draft_status_on_insert" },
+  journal_entries_validate_balance_on_post: { table: "journal_entries", timing: "BEFORE", event: "UPDATE", functionName: "validate_journal_balance" },
+  journal_entries_no_revert_from_posted: { table: "journal_entries", timing: "BEFORE", event: "UPDATE", functionName: "prevent_journal_revert" },
+  journal_entries_no_change_when_posted: { table: "journal_entries", timing: "BEFORE", event: "UPDATE", functionName: "prevent_journal_change_when_posted" },
+  journal_entries_no_delete_when_posted: { table: "journal_entries", timing: "BEFORE", event: "DELETE", functionName: "prevent_journal_delete_when_posted" },
+  postings_no_insert_when_posted: { table: "postings", timing: "BEFORE", event: "INSERT", functionName: "prevent_posting_insert" },
+  postings_no_update: { table: "postings", timing: "BEFORE", event: "UPDATE", functionName: "prevent_posting_update" },
+  postings_no_delete: { table: "postings", timing: "BEFORE", event: "DELETE", functionName: "prevent_posting_delete" },
+  audit_log_no_update: { table: "audit_log", timing: "BEFORE", event: "UPDATE", functionName: "prevent_audit_update" },
+  audit_log_no_delete: { table: "audit_log", timing: "BEFORE", event: "DELETE", functionName: "prevent_audit_delete" },
+};
+
+function expectedFunctionBodies(migrationText: string): Map<string, string> {
+  const bodies = new Map<string, string>();
+  for (const functionName of REQUIRED_PG_FUNCTIONS) {
+    const match = migrationText.match(new RegExp(`CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+${functionName}\\s*\\(\\s*\\)\\s+RETURNS\\s+TRIGGER\\s+AS\\s+\\$\\$([\\s\\S]*?)\\$\\$\\s+LANGUAGE\\s+plpgsql`, "i"));
+    if (!match) throw new Error(`migration is missing expected PostgreSQL function ${functionName}`);
+    bodies.set(functionName, normalizeSql(match[1]));
+  }
+  return bodies;
+}
+
+function expectedMySqlActions(migrationText: string): Map<string, string> {
+  const actions = new Map<string, string>();
+  for (const statement of splitMigrationStatements(migrationText)) {
+    const match = statement.match(/CREATE\s+TRIGGER\s+([A-Za-z0-9_]+)\s+BEFORE\s+(INSERT|UPDATE|DELETE)\s+ON\s+([A-Za-z0-9_]+)\s+FOR\s+EACH\s+ROW\s+BEGIN([\s\S]*)END;\s*$/i);
+    if (match) actions.set(match[1], normalizeSql(`BEGIN${match[4]}END`));
+  }
+  return actions;
+}
+
+async function verifyRequiredStructure(sql: SQL, dialect: DatabaseType, migrationText?: string): Promise<StructuralVerification> {
+  const actualMigrationText = migrationText ?? await Bun.file(`${import.meta.dir}/sql/${dialect}/001-core.sql`).text();
   const tableRows =
     dialect === "postgres"
       ? await sql.unsafe<{ table_name: string; engine?: string | null }[]>(
@@ -453,158 +600,153 @@ async function verifyRequiredStructure(sql: SQL, dialect: DatabaseType): Promise
       ? REQUIRED_TABLES.filter((table) => tableEngines[table]?.toUpperCase() !== "INNODB")
       : [];
 
-  // Requirement (G): Exact trigger structural verification from catalog
-  let triggerStructureErrors: string[] = [];
+  const triggerStructureErrors: string[] = [];
   if (dialect === "postgres") {
-    // PostgreSQL: verify trigger attachment, timing, event, function signature
     const triggerDetailsQuery = `
       SELECT
         tgname as trigger_name,
-        relname as table_name,
-        CASE WHEN tgtype::int & 1 = 1 THEN 'ROW' ELSE 'STATEMENT' END as level,
-        CASE WHEN tgtype::int & 66 = 66 THEN 'INSTEAD OF' WHEN tgtype::int & 2 = 2 THEN 'BEFORE' ELSE 'AFTER' END as timing,
-        CASE WHEN tgtype::int & 4 = 4 THEN 'DELETE' WHEN tgtype::int & 8 = 8 THEN 'UPDATE' WHEN tgtype::int & 16 = 16 THEN 'INSERT' ELSE 'UNKNOWN' END as event,
-        p.proname as function_name
+        c.relname as table_name,
+        CASE WHEN (t.tgtype::int & 2) = 2 THEN 'BEFORE' WHEN (t.tgtype::int & 64) = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END as timing,
+        CASE WHEN (t.tgtype::int & 4) = 4 THEN 'INSERT' WHEN (t.tgtype::int & 8) = 8 THEN 'DELETE' WHEN (t.tgtype::int & 16) = 16 THEN 'UPDATE' WHEN (t.tgtype::int & 32) = 32 THEN 'TRUNCATE' ELSE 'UNKNOWN' END as event,
+        CASE WHEN (t.tgtype::int & 1) = 1 THEN 'ROW' ELSE 'STATEMENT' END as level,
+        p.proname as function_name,
+        pg_get_function_identity_arguments(p.oid) as identity_arguments,
+        pg_get_function_result(p.oid) as function_result,
+        pg_get_functiondef(p.oid) as function_definition,
+        pg_get_triggerdef(t.oid) as trigger_definition
       FROM pg_trigger t
       JOIN pg_class c ON t.tgrelid = c.oid
       JOIN pg_proc p ON t.tgfoid = p.oid
-      WHERE NOT tgisinternal AND tgname IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE NOT tgisinternal AND n.nspname = current_schema() AND tgname IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})
       ORDER BY tgname
     `;
-    try {
-      const triggerDetails = await sql.unsafe<{ trigger_name: string; table_name: string; timing: string; event: string; function_name: string }[]>(triggerDetailsQuery);
-      const detectedTriggers = new Set(triggerDetails.map((t) => String(t.trigger_name)));
-      for (const required of REQUIRED_TRIGGERS) {
-        if (!detectedTriggers.has(required)) {
-          triggerStructureErrors.push(`${required} not found in catalog`);
-        }
+    const triggerDetails = await sql.unsafe<Array<Record<string, string>>>(triggerDetailsQuery);
+    const functionBodies = expectedFunctionBodies(actualMigrationText);
+    for (const required of REQUIRED_TRIGGERS) {
+      const trigger = triggerDetails.find((row) => String(row.trigger_name) === required);
+      const expected = EXPECTED_TRIGGERS[required];
+      if (!trigger) {
+        triggerStructureErrors.push(`${required} not found in catalog`);
+        continue;
       }
-      // Verify attachment and timing are non-empty (proof that catalog query succeeded)
-      for (const trigger of triggerDetails) {
-        if (!trigger.table_name || !trigger.timing || !trigger.function_name) {
-          triggerStructureErrors.push(`${trigger.trigger_name} missing structural details`);
-        }
+      if (String(trigger.table_name) !== expected.table || String(trigger.timing) !== expected.timing || String(trigger.event) !== expected.event || String(trigger.level) !== "ROW" || String(trigger.function_name) !== expected.functionName) {
+        triggerStructureErrors.push(`${required} target/timing/event/function mismatch`);
       }
-    } catch {
-      // If catalog query fails, structure verification will fail below with missing triggers
+      if (String(trigger.identity_arguments) !== "" || normalizeSql(String(trigger.function_result)) !== "trigger") {
+        triggerStructureErrors.push(`${required} function identity mismatch`);
+      }
+      const definition = String(trigger.function_definition);
+      const bodyMatch = definition.match(/AS\s+\$[^$]*\$([\s\S]*?)\$[^$]*\$/i);
+      if (!bodyMatch || normalizeSql(bodyMatch[1]) !== functionBodies.get(expected.functionName)) {
+        triggerStructureErrors.push(`${required} function action definition mismatch`);
+      }
     }
   } else if (dialect === "mysql") {
-    // MySQL: verify trigger attachment via information_schema
     const triggerDetailsQuery = `
       SELECT
         trigger_name,
         event_manipulation as event,
         action_timing as timing,
-        event_object_table as table_name
+        event_object_table as table_name,
+        action_statement
       FROM information_schema.triggers
       WHERE trigger_schema = DATABASE() AND trigger_name IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})
       ORDER BY trigger_name
     `;
-    try {
-      const triggerDetails = await sql.unsafe<{ trigger_name: string; table_name: string; timing: string; event: string }[]>(triggerDetailsQuery);
-      const detectedTriggers = new Set(triggerDetails.map((t) => String(t.trigger_name)));
-      for (const required of REQUIRED_TRIGGERS) {
-        if (!detectedTriggers.has(required)) {
-          triggerStructureErrors.push(`${required} not found in catalog`);
-        }
+    const triggerDetails = await sql.unsafe<Array<Record<string, string>>>(triggerDetailsQuery);
+    const actions = expectedMySqlActions(actualMigrationText);
+    for (const required of REQUIRED_TRIGGERS) {
+      const trigger = triggerDetails.find((row) => String(row.trigger_name) === required);
+      const expected = EXPECTED_TRIGGERS[required];
+      if (!trigger) {
+        triggerStructureErrors.push(`${required} not found in catalog`);
+        continue;
       }
-      // Verify attachment and timing are non-empty
-      for (const trigger of triggerDetails) {
-        if (!trigger.table_name || !trigger.timing || !trigger.event) {
-          triggerStructureErrors.push(`${trigger.trigger_name} missing structural details`);
-        }
+      if (String(trigger.table_name) !== expected.table || String(trigger.timing) !== expected.timing || String(trigger.event) !== expected.event) {
+        triggerStructureErrors.push(`${required} target/timing/event mismatch`);
       }
-    } catch {
-      // If catalog query fails, structure verification will fail below with missing triggers
+      const expectedAction = actions.get(required);
+      if (!expectedAction || normalizeSql(String(trigger.action_statement)) !== expectedAction) {
+        triggerStructureErrors.push(`${required} action definition mismatch`);
+      }
     }
   }
 
   if (missingTables.length > 0 || missingTriggers.length > 0 || missingFunctions.length > 0 || nonInnoDbTables.length > 0 || triggerStructureErrors.length > 0) {
     throw new MigrationContractError(
-      MIGRATION_DIRTY,
+      MIGRATION_FAILED,
       `required structure invalid; tables=${missingTables.join(",") || "none"}; triggers=${missingTriggers.join(",") || "none"}; functions=${missingFunctions.join(",") || "none"}; non_innodb=${nonInnoDbTables.join(",") || "none"}; trigger_structure_errors=${triggerStructureErrors.join(",") || "none"}`,
     );
   }
   return { tables, triggers, tableEngines };
 }
 
-export async function verifyMigrationStructure(sql: SQL, dialect: DatabaseType): Promise<StructuralVerification> {
-  return verifyRequiredStructure(sql, dialect);
+export async function verifyMigrationStructure(sql: SQL, dialect: DatabaseType, migrationText?: string): Promise<StructuralVerification> {
+  return verifyRequiredStructure(sql, dialect, migrationText);
 }
 
 export async function applyMigration(sql: SQL, migration: MigrationDefinition): Promise<MigrationApplyResult> {
   const checksum = sha256MigrationText(migration.text);
   try {
-    await ensureSchemaMigrationsTable(sql, migration.dialect);
+    if (migration.dialect === "postgres") {
+      const metadataExists = await schemaMigrationsExists(sql, "postgres");
+      if (metadataExists) {
+        const existing = await sql<{ checksum: string }[]>`
+          SELECT checksum FROM schema_migrations WHERE logical_id = ${migration.logicalId}
+        `;
+        if (existing.length > 0) {
+          if (String(existing[0].checksum) !== checksum) {
+            throw new MigrationContractError(MIGRATION_CHECKSUM_MISMATCH, `logical_id=${migration.logicalId} has a different checksum`);
+          }
+          const structuralVerification = await verifyRequiredStructure(sql, migration.dialect, migration.text);
+          return { logicalId: migration.logicalId, checksum, status: "NOOP", structuralVerification };
+        }
+      }
 
-    // Check if migration already applied (before any DDL)
+      // Fresh PostgreSQL applies bootstrap DDL, application DDL, and metadata
+      // in one transaction. A failed statement rolls back the bootstrap too.
+      await sql.begin(async (tx) => {
+        if (!metadataExists) await tx.unsafe("CREATE TABLE schema_migrations (logical_id TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL);");
+        for (const statement of splitMigrationStatements(migration.text)) await tx.unsafe(statement);
+        await tx`
+          INSERT INTO schema_migrations (logical_id, checksum, applied_at)
+          VALUES (${migration.logicalId}, ${checksum}, ${new Date().toISOString()})
+        `;
+      });
+      const structuralVerification = await verifyRequiredStructure(sql, migration.dialect, migration.text);
+      return { logicalId: migration.logicalId, checksum, status: "APPLIED", structuralVerification };
+    }
+
+    await ensureSchemaMigrationsTable(sql, "mysql");
+    if (await getMigrationApplyingMarker(sql, migration.logicalId)) {
+      throw new MigrationContractError(MIGRATION_DIRTY, `logical_id=${migration.logicalId} has a prior incomplete apply`);
+    }
     const existing = await sql<{ checksum: string }[]>`
-      SELECT checksum FROM schema_migrations WHERE logical_id = ${migration.logicalId} AND logical_id NOT LIKE ${'__applying_%'}
+      SELECT checksum FROM schema_migrations WHERE logical_id = ${migration.logicalId}
     `;
     if (existing.length > 0) {
       if (String(existing[0].checksum) !== checksum) {
-        throw new MigrationContractError(
-          MIGRATION_CHECKSUM_MISMATCH,
-          `logical_id=${migration.logicalId} has a different checksum`,
-        );
+        throw new MigrationContractError(MIGRATION_CHECKSUM_MISMATCH, `logical_id=${migration.logicalId} has a different checksum`);
       }
-      const structuralVerification = await verifyRequiredStructure(sql, migration.dialect);
+      const structuralVerification = await verifyRequiredStructure(sql, migration.dialect, migration.text);
       return { logicalId: migration.logicalId, checksum, status: "NOOP", structuralVerification };
     }
 
-    // MySQL dirty-state control: check and set applying marker
-    if (migration.dialect === "mysql") {
-      const isApplying = await getMigrationApplyingMarker(sql, migration.logicalId);
-      if (isApplying) {
-        throw new MigrationContractError(
-          MIGRATION_DIRTY,
-          `logical_id=${migration.logicalId} has a prior incomplete apply; must be manually cleared`,
-        );
-      }
-      await setMigrationApplyingMarker(sql, migration.logicalId);
-    }
-
-    try {
-      // PostgreSQL: wrap DDL in transaction
-      if (migration.dialect === "postgres") {
-        await sql.begin(async (tx) => {
-          for (const statement of splitMigrationStatements(migration.text)) {
-            await tx.unsafe(statement);
-          }
-          const appliedAt = new Date().toISOString();
-          await tx`
-            INSERT INTO schema_migrations (logical_id, checksum, applied_at)
-            VALUES (${migration.logicalId}, ${checksum}, ${appliedAt})
-          `;
-        });
-      } else {
-        // MySQL: autocommit DDL, then insert metadata
-        for (const statement of splitMigrationStatements(migration.text)) {
-          await sql.unsafe(statement);
-        }
-        const appliedAt = new Date().toISOString();
-        await sql`
-          INSERT INTO schema_migrations (logical_id, checksum, applied_at)
-          VALUES (${migration.logicalId}, ${checksum}, ${appliedAt})
-        `;
-        await clearMigrationApplyingMarker(sql, migration.logicalId);
-      }
-
-      const structuralVerification = await verifyRequiredStructure(sql, migration.dialect);
-      return { logicalId: migration.logicalId, checksum, status: "APPLIED", structuralVerification };
-    } catch (applyError) {
-      if (migration.dialect === "mysql") {
-        try {
-          await clearMigrationApplyingMarker(sql, migration.logicalId);
-        } catch {
-          // Marker cleanup failure does not mask original error
-        }
-      }
-      throw applyError;
-    }
+    // This marker is deliberately outside the DDL try/catch. It remains after
+    // every failure until the explicit recovery proof removes it.
+    await setMigrationApplyingMarker(sql, migration.logicalId);
+    for (const statement of splitMigrationStatements(migration.text)) await sql.unsafe(statement);
+    await sql`
+      INSERT INTO schema_migrations (logical_id, checksum, applied_at)
+      VALUES (${migration.logicalId}, ${checksum}, ${new Date().toISOString()})
+    `;
+    const structuralVerification = await verifyRequiredStructure(sql, migration.dialect, migration.text);
+    await clearMigrationApplyingMarker(sql, migration.logicalId);
+    return { logicalId: migration.logicalId, checksum, status: "APPLIED", structuralVerification };
   } catch (error) {
     if (error instanceof MigrationContractError) throw error;
-    throw new MigrationContractError(MIGRATION_DIRTY, `logical_id=${migration.logicalId}; ${sanitizeError(error)}`);
+    throw new MigrationContractError(MIGRATION_FAILED, `logical_id=${migration.logicalId}; ${sanitizeError(error)}`);
   }
 }
 
@@ -614,12 +756,13 @@ export async function loadMigration(dialect: DatabaseType): Promise<MigrationDef
   return { logicalId, text, dialect };
 }
 
-function blockedSemanticResults(prefix: "PG" | "MY", dialectName: string): IntegrationTestResult[] {
+function blockedSemanticResults(prefix: "PG" | "MY", dialectName: string, reason: string): IntegrationTestResult[] {
   return REQUIRED_SEMANTIC_PROOF_IDS.map((proofId) => ({
     id: `${prefix}-${proofId}`,
     name: `${dialectName} ${proofId}`,
     status: "BLOCKED" as const,
-    evidence: ["NOT YET IMPLEMENTED: semantic matrix is intentionally deferred beyond this substrate commit"],
+    evidence: ["BLOCKED before successful database connection; proof not executed", reason],
+    detail: reason,
   }));
 }
 
@@ -632,10 +775,48 @@ export function blockedDialectResults(type: DatabaseType, reason: string): Integ
       name: `${dialectName} Bun SQL substrate`,
       status: "BLOCKED",
       evidence: [sanitizeError(reason)],
+      detail: sanitizeError(reason),
       error: sanitizeError(reason),
     },
-    ...blockedSemanticResults(prefix, dialectName),
+    ...blockedSemanticResults(prefix, dialectName, sanitizeError(reason)),
   ];
+}
+
+export function integrationSummary(
+  dialect: DatabaseType,
+  serverVersion: string,
+  results: readonly IntegrationTestResult[],
+): IntegrationSummary {
+  const prefix = dialect === "postgres" ? "PG" : "MY";
+  const byId = new Map(results.map((result) => [result.id, result]));
+  return {
+    dialect,
+    server_version: serverVersion,
+    proofs: [...REQUIRED_SEMANTIC_PROOF_IDS].sort().map((proofId) => {
+      const result = byId.get(`${prefix}-${proofId}`);
+      return {
+        id: proofId,
+        status: result?.status ?? "FAIL",
+        detail: result?.detail ?? result?.evidence.join("|") ?? "MISSING_REQUIRED_PROOF",
+      };
+    }),
+  };
+}
+
+export function serializeIntegrationSummary(
+  dialect: DatabaseType,
+  serverVersion: string,
+  results: readonly IntegrationTestResult[],
+): string {
+  return JSON.stringify(integrationSummary(dialect, serverVersion, results));
+}
+
+export function emitIntegrationSummary(
+  dialect: DatabaseType,
+  serverVersion: string,
+  results: readonly IntegrationTestResult[],
+): void {
+  console.log(`GATE0_INTEGRATION_SUMMARY ${serializeIntegrationSummary(dialect, serverVersion, results)}`);
 }
 
 type SemanticProofContext = {
@@ -662,41 +843,62 @@ async function getServerVersion(sql: SQL, dialect: DatabaseType): Promise<string
   }
 }
 
-async function canonicalizeRow(row: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const canonical: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(row)) {
-    if (typeof v === "bigint") {
-      canonical[k] = `BIGINT:${v.toString()}`;
-    } else if (v === null) {
-      canonical[k] = null;
-    } else if (typeof v === "object") {
-      canonical[k] = JSON.stringify(v);
-    } else {
-      canonical[k] = v;
-    }
+function canonicalizeValue(value: unknown): unknown {
+  if (typeof value === "bigint") return `BIGINT:${value.toString()}`;
+  if (Array.isArray(value)) return value.map(canonicalizeValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, nested]) => [key, canonicalizeValue(nested)]));
   }
-  return canonical;
+  return value;
+}
+
+function canonicalizeRow(row: Record<string, unknown>): Record<string, unknown> {
+  return canonicalizeValue(row) as Record<string, unknown>;
 }
 
 async function captureTableSnapshot(sql: SQL, tableName: string, dialect: DatabaseType): Promise<TableSnapshot> {
   const countResult = await sql.unsafe<{ count: bigint | number }[]>(`SELECT COUNT(*) as count FROM ${tableName}`);
   const count = Number(countResult[0]?.count ?? 0);
-  const rows = await sql.unsafe<Record<string, unknown>[]>(`SELECT * FROM ${tableName} ORDER BY 1 LIMIT 10000`);
-  const canonicalized = await Promise.all(rows.map((r) => canonicalizeRow(r)));
+  // Do not cap or order by an arbitrary column: every row participates in the
+  // byte comparison and canonical JSON determines deterministic ordering.
+  const rows = await sql.unsafe<Record<string, unknown>[]>(`SELECT * FROM ${tableName}`);
+  const canonicalized = rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   return { table: tableName, count, rows: canonicalized };
 }
 
-async function captureMultipleSnapshots(sql: SQL, tables: string[]): Promise<TableSnapshot[]> {
+async function captureMultipleSnapshots(sql: SQL, tables: string[], dialect: DatabaseType = "postgres"): Promise<TableSnapshot[]> {
   const snapshots: TableSnapshot[] = [];
   for (const table of tables) {
     try {
-      snapshots.push(await captureTableSnapshot(sql, table, "postgres")); // dialect not needed for this level
+      snapshots.push(await captureTableSnapshot(sql, table, dialect));
     } catch (error) {
       // Query error must not be swallowed; re-throw to fail the proof
       throw new Error(`snapshot capture failed for ${table}: ${sanitizeError(error)}`);
     }
   }
   return snapshots;
+}
+
+async function captureCatalogSnapshot(sql: SQL, dialect: DatabaseType): Promise<string> {
+  const rows = dialect === "postgres"
+    ? await sql.unsafe<Record<string, unknown>[]>(`
+        SELECT 'table' AS object_kind, table_name AS object_name, '' AS object_definition
+        FROM information_schema.tables WHERE table_schema = current_schema()
+        UNION ALL
+        SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
+        FROM information_schema.triggers WHERE trigger_schema = current_schema()
+        UNION ALL
+        SELECT 'routine', routine_name, CONCAT(data_type, '|', routine_definition)
+        FROM information_schema.routines WHERE routine_schema = current_schema()
+      `)
+    : await sql.unsafe<Record<string, unknown>[]>(`
+        SELECT 'table' AS object_kind, table_name AS object_name, engine AS object_definition
+        FROM information_schema.tables WHERE table_schema = DATABASE()
+        UNION ALL
+        SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
+        FROM information_schema.triggers WHERE trigger_schema = DATABASE()
+      `);
+  return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
 }
 
 export class IdempotencyConflictError extends Error {
@@ -713,23 +915,31 @@ export type IdempotencyResult = {
   result_hash: string;
 };
 
-function extractLockErrorCode(error: unknown, dialect: DatabaseType): { isLockError: boolean; code: string } {
+export function extractLockErrorCode(error: unknown, dialect: DatabaseType): { isLockError: boolean; code: string } {
   if (!error) return { isLockError: false, code: "" };
 
   const err = error as unknown as Record<string, unknown>;
 
   if (dialect === "postgres") {
-    // PostgreSQL: ONLY structured sqlState field (no message substring fallback)
-    const sqlState = String(err.sqlState ?? "");
-    if (sqlState === "55P03" || sqlState === "40P01") {
-      return { isLockError: true, code: sqlState };
+    // Bun 1.3.14 exposes PostgreSQL SQLSTATE as error.code.
+    const code = String(err.code ?? "");
+    if (code === "55P03" || code === "40P01") {
+      return { isLockError: true, code };
+    }
+    // Bun's native PostgreSQL adapter currently wraps server errors with the
+    // generic code ERR_POSTGRES_SERVER_ERROR and carries the exact SQLSTATE in
+    // errno. Accept that exact structured pair only; never inspect messages or
+    // undocumented aliases.
+    const errno = String(err.errno ?? "");
+    if (code === "ERR_POSTGRES_SERVER_ERROR" && (errno === "55P03" || errno === "40P01")) {
+      return { isLockError: true, code: errno };
     }
   } else {
-    // MySQL: ONLY structured errno or sqlState field (no message substring fallback)
+    // MySQL Bun errors expose documented numeric errno and symbolic code.
     const errno = String(err.errno ?? "");
-    const sqlState = String(err.sqlState ?? "");
-    if (errno === "1205" || sqlState === "40001") {
-      return { isLockError: true, code: errno || sqlState };
+    const code = String(err.code ?? "");
+    if (errno === "1205" || errno === "1213" || code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK") {
+      return { isLockError: true, code: errno || code };
     }
   }
 
@@ -744,46 +954,32 @@ export async function getOrCreateIdempotencyRecord(
   requestHash: string,
   resultJson: string,
   resultHash: string,
+  dialect: DatabaseType = "postgres",
 ): Promise<IdempotencyResult> {
-  // Own the transaction; check PK, detect conflict, return/insert, commit atomically
   let result: IdempotencyResult | null = null;
-  let conflictDetected = false;
 
   await sql.begin(async (tx) => {
+    if (dialect === "mysql") {
+      await tx`
+        INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
+        VALUES (${tenantId}, ${requestId}, ${requestHash}, ${resultJson}, ${resultHash})
+        ON DUPLICATE KEY UPDATE request_id = request_id
+      `;
+    } else {
+      await tx`
+        INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
+        VALUES (${tenantId}, ${requestId}, ${requestHash}, ${resultJson}, ${resultHash})
+        ON CONFLICT (tenant_id, request_id) DO NOTHING
+      `;
+    }
     const existing = await tx<{ request_hash: string; result_json: string; result_hash: string }[]>`
       SELECT request_hash, result_json, result_hash FROM idempotency_records
       WHERE tenant_id = ${tenantId} AND request_id = ${requestId}
     `;
-
-    if (existing.length > 0) {
-      if (existing[0].request_hash !== requestHash) {
-        // Conflict: same (tenant_id, request_id) with different hash
-        // Do NOT expose prior result; just throw typed error
-        conflictDetected = true;
-      } else {
-        // Same hash: return exact stored result
-        result = {
-          result_json: existing[0].result_json,
-          result_hash: existing[0].result_hash,
-        };
-      }
-    } else {
-      // New record: insert and return
-      await tx`
-        INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
-        VALUES (${tenantId}, ${requestId}, ${requestHash}, ${resultJson}, ${resultHash})
-      `;
-      result = {
-        result_json: resultJson,
-        result_hash: resultHash,
-      };
-    }
+    if (existing.length !== 1) throw new Error("idempotency insert/read did not return exactly one stored row");
+    if (String(existing[0].request_hash) !== requestHash) throw new IdempotencyConflictError();
+    result = { result_json: existing[0].result_json, result_hash: existing[0].result_hash };
   });
-
-  if (conflictDetected) {
-    throw new IdempotencyConflictError();
-  }
-
   if (!result) {
     throw new Error("idempotency record not returned");
   }
@@ -810,6 +1006,7 @@ function recordProofPass(
     name: `${prefix} ${proofId}`,
     status: "PASS",
     evidence,
+    detail: evidence.join("; "),
   });
 }
 
@@ -824,6 +1021,7 @@ function recordProofFail(
     name: `${prefix} ${proofId}`,
     status: "FAIL",
     evidence: [error],
+    detail: error,
     error,
   });
 }
@@ -874,18 +1072,20 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
     // MIG-002: same bytes reapply => true NOOP with exact metadata/catalog unchanged
     try {
       const snapBefore = await captureMultipleSnapshots(sql, ["schema_migrations"]);
-      const metadataBefore = snapBefore[0].rows.filter((r) => !String(r.logical_id).startsWith("__applying_"));
+      const metadataBefore = snapBefore[0].rows;
+      const catalogBefore = await captureCatalogSnapshot(sql, ctx.dbConfig.type);
 
       const secondMigration = await loadMigration(ctx.dbConfig.type);
       const result = await applyMigration(sql, secondMigration);
 
       const snapAfter = await captureMultipleSnapshots(sql, ["schema_migrations"]);
-      const metadataAfter = snapAfter[0].rows.filter((r) => !String(r.logical_id).startsWith("__applying_"));
+      const metadataAfter = snapAfter[0].rows;
+      const catalogAfter = await captureCatalogSnapshot(sql, ctx.dbConfig.type);
 
       if (result.status !== "NOOP") {
         recordProofFail(results, "MIG-002", prefix, `Expected NOOP but got ${result.status}`);
-      } else if (JSON.stringify(metadataBefore) !== JSON.stringify(metadataAfter)) {
-        recordProofFail(results, "MIG-002", prefix, "Metadata changed despite NOOP status");
+      } else if (JSON.stringify(metadataBefore) !== JSON.stringify(metadataAfter) || catalogBefore !== catalogAfter) {
+        recordProofFail(results, "MIG-002", prefix, "Metadata or catalog bytes changed despite NOOP status");
       } else {
         recordProofPass(results, "MIG-002", prefix, [
           "same migration applied again",
@@ -903,6 +1103,7 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
     // MIG-003: altered fixed migration bytes against existing canonical ID => MIGRATION_CHECKSUM_MISMATCH before DDL
     try {
       const snapBefore = await captureMultipleSnapshots(sql, ["schema_migrations", "tenants", "book_sets"]);
+      const catalogBefore = await captureCatalogSnapshot(sql, ctx.dbConfig.type);
 
       const tamperedMigration: MigrationDefinition = {
         logicalId: ctx.migration.logicalId,
@@ -922,7 +1123,8 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
         recordProofFail(results, "MIG-003", prefix, "Tampered migration should throw MIGRATION_CHECKSUM_MISMATCH");
       } else {
         const snapAfter = await captureMultipleSnapshots(sql, ["schema_migrations", "tenants", "book_sets"]);
-        if (JSON.stringify(snapBefore) === JSON.stringify(snapAfter)) {
+        const catalogAfter = await captureCatalogSnapshot(sql, ctx.dbConfig.type);
+        if (JSON.stringify(snapBefore) === JSON.stringify(snapAfter) && catalogBefore === catalogAfter) {
           recordProofPass(results, "MIG-003", prefix, [
             "tampered migration text rejected",
             "error=MIGRATION_CHECKSUM_MISMATCH",
@@ -952,6 +1154,7 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       `;
 
       const snapBefore = await captureMultipleSnapshots(sql, ["schema_migrations", "journal_entries"]);
+      const catalogBefore = await captureCatalogSnapshot(sql, ctx.dbConfig.type);
 
       // Try to reapply canonical - should fail with mismatch
       let mismatchThrown = false;
@@ -967,14 +1170,15 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
         recordProofFail(results, "MIG-004", prefix, "Expected MIGRATION_CHECKSUM_MISMATCH when checksum is tampered");
       } else {
         const snapAfter = await captureMultipleSnapshots(sql, ["schema_migrations", "journal_entries"]);
+        const catalogAfter = await captureCatalogSnapshot(sql, ctx.dbConfig.type);
         const stillBad = await sql<{ checksum: string }[]>`
           SELECT checksum FROM schema_migrations WHERE logical_id = ${ctx.migration.logicalId}
         `;
 
         if (String(stillBad[0]?.checksum) !== badChecksum) {
           recordProofFail(results, "MIG-004", prefix, "Bad checksum was silently repaired (should not have been)");
-        } else if (JSON.stringify(snapBefore) !== JSON.stringify(snapAfter)) {
-          recordProofFail(results, "MIG-004", prefix, "Schema was modified despite MIGRATION_CHECKSUM_MISMATCH");
+        } else if (JSON.stringify(snapBefore) !== JSON.stringify(snapAfter) || catalogBefore !== catalogAfter) {
+          recordProofFail(results, "MIG-004", prefix, "Schema or catalog was modified despite MIGRATION_CHECKSUM_MISMATCH");
         } else {
           // Explicitly restore correct checksum for remaining tests
           await sql`
@@ -1009,73 +1213,61 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
 
     // MIG-DDL-ROLLBACK: PostgreSQL DDL failure inside transaction; verify complete rollback (no partial state)
     if (ctx.dbConfig.type === "postgres") {
+      let rollbackSql: SQL | null = null;
+      let rollbackSchema = "";
       try {
-        const testLogicalId = "test-ddl-rollback-" + crypto.randomUUID();
-        const snapBeforeRollback = await captureMultipleSnapshots(sql, ["schema_migrations", "tenants", "book_sets"]);
-        const countsBefore = {
-          migrations: snapBeforeRollback[0].count,
-          tenants: snapBeforeRollback[1].count,
-          bookSets: snapBeforeRollback[2].count,
+        rollbackSchema = `gate0_rollback_${crypto.randomUUID().replaceAll("-", "")}`;
+        assertSafeIdentifier(rollbackSchema, "rollback schema");
+        rollbackSql = createBunSqlClient(ctx.dbConfig);
+        await rollbackSql.connect();
+        await rollbackSql.unsafe(`CREATE SCHEMA "${rollbackSchema}"`);
+        await rollbackSql.unsafe(`SET search_path TO "${rollbackSchema}"`);
+        const failingMigration: MigrationDefinition = {
+          logicalId: `test-ddl-rollback-${crypto.randomUUID()}`,
+          dialect: "postgres",
+          text: `CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
+-- statement-breakpoint
+CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
+-- statement-breakpoint`,
         };
-
-        let ddlErrorThrown = false;
+        let failure: unknown = null;
+        const catalogBeforeRollback = await captureCatalogSnapshot(rollbackSql, "postgres");
         try {
-          // Attempt a transaction with DDL followed by intentional failure
-          await sql.begin(async (tx) => {
-            // Valid DDL: create a test table
-            await tx.unsafe("CREATE TABLE IF NOT EXISTS test_rollback (id TEXT PRIMARY KEY);");
-            // Valid INSERT to metadata
-            await tx`INSERT INTO schema_migrations (logical_id, checksum, applied_at)
-              VALUES (${testLogicalId}, ${'test-checksum'}, ${'2026-01-01T00:00:00Z'})`;
-            // INTENTIONAL FAILURE: duplicate key on primary key
-            await tx.unsafe("CREATE TABLE test_rollback (id TEXT PRIMARY KEY);");
-          });
+          await applyMigration(rollbackSql, failingMigration);
         } catch (error) {
-          ddlErrorThrown = true;
+          failure = error;
         }
-
-        if (!ddlErrorThrown) {
-          recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", "DDL error was not thrown (transaction should have failed)");
+        const catalogAfterRollback = await captureCatalogSnapshot(rollbackSql, "postgres");
+        const leftovers = await rollbackSql.unsafe<{ table_count: bigint | number; trigger_count: bigint | number; function_count: bigint | number }[]>(`
+          SELECT
+            (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${rollbackSchema}') AS table_count,
+            (SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = '${rollbackSchema}') AS trigger_count,
+            (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '${rollbackSchema}') AS function_count
+        `);
+        const rollbackComplete = failure instanceof MigrationContractError && failure.code === MIGRATION_FAILED && Number(leftovers[0]?.table_count ?? 0) === 0 && Number(leftovers[0]?.trigger_count ?? 0) === 0 && Number(leftovers[0]?.function_count ?? 0) === 0 && catalogBeforeRollback === catalogAfterRollback && catalogAfterRollback === "[]";
+        if (!rollbackComplete) {
+          recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", `fresh-namespace rollback incomplete: failure=${sanitizeError(failure)} leftovers=${JSON.stringify(leftovers)}`);
         } else {
-          const snapAfterRollback = await captureMultipleSnapshots(sql, ["schema_migrations", "tenants", "book_sets"]);
-          const countsAfter = {
-            migrations: snapAfterRollback[0].count,
-            tenants: snapAfterRollback[1].count,
-            bookSets: snapAfterRollback[2].count,
-          };
-
-          const testTableExists = await sql.unsafe<{ exists: boolean }[]>(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'test_rollback');"
-          );
-
-          const metadataNotCreated = await sql<{ count: number }[]>`
-            SELECT COUNT(*) as count FROM schema_migrations WHERE logical_id = ${testLogicalId}
-          `;
-
-          const completedRollback =
-            countsBefore.migrations === countsAfter.migrations &&
-            countsBefore.tenants === countsAfter.tenants &&
-            countsBefore.bookSets === countsAfter.bookSets &&
-            testTableExists[0]?.exists !== true &&
-            metadataNotCreated[0]?.count === 0;
-
-          if (!completedRollback) {
-            recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", "Transaction did not completely rollback (partial state remains)");
-          } else {
-            recordProofPass(results, "MIG-DDL-ROLLBACK", "PG", [
-              "PostgreSQL transaction wrapping: DDL + metadata insert",
-              "intentional DDL error triggered (duplicate CREATE TABLE)",
-              "complete atomic rollback verified",
-              "test table not created",
-              "metadata row not inserted",
-              "no partial state remains",
-              "original counts preserved",
-              `counts before: migrations=${countsBefore.migrations}, tenants=${countsBefore.tenants}, bookSets=${countsBefore.bookSets}`,
-            ]);
-          }
+          recordProofPass(results, "MIG-DDL-ROLLBACK", "PG", [
+            "real applyMigration path called on a fresh PostgreSQL namespace",
+            "metadata bootstrap, application DDL, and metadata row shared one sql.begin",
+            "intentional duplicate DDL raised typed MIGRATION_FAILED",
+            "full catalog bytes before/after rollback are identical and empty",
+            "schema_migrations and every catalog object created by the failed migration are absent",
+          ]);
         }
       } catch (error) {
         recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", sanitizeError(error));
+      } finally {
+        if (rollbackSql) {
+          try {
+            await rollbackSql.unsafe("SET search_path TO public");
+            if (rollbackSchema) await rollbackSql.unsafe(`DROP SCHEMA IF EXISTS "${rollbackSchema}" CASCADE`);
+          } catch (error) {
+            recordProofFail(results, "CLEANUP-001", "PG", `rollback namespace cleanup failed: ${sanitizeError(error)}`);
+          }
+          try { await rollbackSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `rollback client cleanup failed: ${sanitizeError(error)}`); }
+        }
       }
     }
 
@@ -1085,13 +1277,14 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
         const testMigrationId = "test-dirty-marker-" + crypto.randomUUID();
         const partialMigration: MigrationDefinition = {
           logicalId: testMigrationId,
-          text: `CREATE TABLE IF NOT EXISTS test_dirty_temp (id TEXT PRIMARY KEY);
+          text: `CREATE TABLE IF NOT EXISTS test_dirty_temp (id VARCHAR(255) PRIMARY KEY);
 -- statement-breakpoint
 INVALID SQL HERE TO FORCE FAILURE;
 -- statement-breakpoint`,
           dialect: "mysql",
         };
 
+        let initialFailureThrown = false;
         let dirtyThrown = false;
         let markerExists = false;
 
@@ -1099,7 +1292,7 @@ INVALID SQL HERE TO FORCE FAILURE;
         try {
           await applyMigration(sql, partialMigration);
         } catch (error) {
-          // We expect this to fail; just check if marker was created
+          initialFailureThrown = error instanceof MigrationContractError && error.code === MIGRATION_FAILED;
         }
 
         // Check if applying marker persists
@@ -1117,18 +1310,13 @@ INVALID SQL HERE TO FORCE FAILURE;
           }
         }
 
-        if (!dirtyThrown) {
+        if (!initialFailureThrown) {
+          recordProofFail(results, "MIG-DIRTY-MARKER", "MY", "Initial invalid DDL did not throw typed MIGRATION_FAILED");
+        } else if (!dirtyThrown) {
           recordProofFail(results, "MIG-DIRTY-MARKER", "MY", "Expected MIGRATION_DIRTY on retry after failed apply");
         } else if (!markerExists) {
           recordProofFail(results, "MIG-DIRTY-MARKER", "MY", "Applying marker was not persisted after failure");
         } else {
-          // Clean up the marker for remaining tests
-          try {
-            await sql.unsafe(`DELETE FROM schema_migrations WHERE logical_id = '__applying_${testMigrationId}'`);
-          } catch {
-            // Ignore cleanup error
-          }
-
           recordProofPass(results, "MIG-DIRTY-MARKER", "MY", [
             "MySQL applying marker inserted on migration start",
             "partial DDL failure occurred (invalid SQL)",
@@ -1136,8 +1324,23 @@ INVALID SQL HERE TO FORCE FAILURE;
             "marker survives across connection boundaries",
             "second apply attempt detected dirty state",
             "MIGRATION_DIRTY thrown (no silent continuation)",
-            "explicit recovery required (manual marker clearance)",
+            "explicit recovery required; marker still present at proof PASS",
           ]);
+          await recoverDirtyMigration(sql, testMigrationId, ["test_dirty_temp"]);
+          const recoveredMarker = await getMigrationApplyingMarker(sql, testMigrationId);
+          const recoveredTable = await sql<{ count: bigint | number }[]>`
+            SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ${"test_dirty_temp"}
+          `;
+          if (recoveredMarker || Number(recoveredTable[0]?.count ?? 0) !== 0) {
+            recordProofFail(results, "MIG-DIRTY-RECOVERY", "MY", "Explicit recovery left marker or partial object behind");
+          } else {
+            recordProofPass(results, "MIG-DIRTY-RECOVERY", "MY", [
+              "dirty state was observed before recovery",
+              "recoverDirtyMigration removed only the named partial test object",
+              "applying marker removed after recovery",
+              "recovery result verified by catalog query",
+            ]);
+          }
         }
       } catch (error) {
         recordProofFail(results, "MIG-DIRTY-MARKER", "MY", sanitizeError(error));
@@ -1372,7 +1575,7 @@ INVALID SQL HERE TO FORCE FAILURE;
         await sql.unsafe(
           `INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key, status)
            SELECT 't-a', 'book-a', 'select-posted', 'select-key', 'POSTED'
-           FROM book_sets WHERE tenant_id = 't-a' AND id = 'book-a' LIMIT 1`,
+           FROM book_sets WHERE tenant_id = 't-a' AND id = 'book-a'`,
         );
       } catch (error) {
         if (String(error).includes("must start with status") || String(error).includes("DRAFT")) {
@@ -1601,20 +1804,36 @@ INVALID SQL HERE TO FORCE FAILURE;
           `;
         }
 
-        // Create a POSTED entry (should not be deletable)
+        // Create a POSTED entry through the real balanced transition; direct
+        // POSTED insertion is intentionally rejected by the insert guard.
         await sql`
           INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key, status)
-          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${'posted-del-key'}, ${'POSTED'})
+          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${'posted-del-key'}, ${'DRAFT'})
+        `;
+        await sql`
+          INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units)
+          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${1}, ${1n})
+        `;
+        await sql`
+          INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units)
+          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${2}, ${1n})
+        `;
+        await sql`
+          UPDATE journal_entries SET status = ${'POSTED'}
+          WHERE tenant_id = ${'t-a'} AND book_set_id = ${'book-a'} AND id = ${'posted-del-test'}
         `;
 
         let postedDeleteThrown = false;
+        let postedDeleteCode = "";
         try {
           await sql`
             DELETE FROM journal_entries
             WHERE tenant_id = ${'t-a'} AND book_set_id = ${'book-a'} AND id = ${'posted-del-test'}
           `;
         } catch (error) {
-          if (String(error).includes("cannot be deleted") || String(error).includes("delete")) {
+          postedDeleteCode = String((error as { code?: unknown }).code ?? "");
+          postedDeleteCode = extractStructuredPostgresSqlState(error);
+          if (postedDeleteCode === POSTED_DELETE_SQLSTATE) {
             postedDeleteThrown = true;
           }
         }
@@ -1627,7 +1846,7 @@ INVALID SQL HERE TO FORCE FAILURE;
         if (!draftDeleteSucceeded) {
           recordProofFail(results, "DEL-001", "PG", "DRAFT entry should be deletable");
         } else if (!postedDeleteThrown || postedAfter.length === 0) {
-          recordProofFail(results, "DEL-001", "PG", "POSTED entry should prevent delete; guard may be missing or ineffective");
+          recordProofFail(results, "DEL-001", "PG", `POSTED entry should prevent delete; observed_code=${postedDeleteCode}; row_count=${postedAfter.length}`);
         } else if (draftDeletedRow.length !== 0) {
           recordProofFail(results, "DEL-001", "PG", "DRAFT deletion did not remove row");
         } else {
@@ -1644,13 +1863,18 @@ INVALID SQL HERE TO FORCE FAILURE;
       }
     }
 
-    // CON-001: TWO reserved connections; A holds FOR UPDATE, B fails with lock timeout/NOWAIT; retry succeeds
-    // Reserve connection A via sql.reserve() or equivalent: dedicated connection pool slot
-    const connA = (sql as any).reserve ? await (sql as any).reserve() : sql;
-    // Reserve connection B via separate SQL client instance with dedicated connection pool
-    const connB = createBunSqlClient(ctx.dbConfig);
+    // CON-001: both connections must be reserved from the same pool. A new SQL
+    // client or fallback to the pool is not equivalent evidence.
+    let connA: ReservedSQL | null = null;
+    let connB: ReservedSQL | null = null;
+    let backendA = "";
+    let backendB = "";
+    let aInTransaction = false;
+    let bInTransaction = false;
     try {
-      await connB.connect();
+      connA = await sql.reserve();
+      connB = await sql.reserve();
+      if (!connA || !connB) throw new Error("sql.reserve() did not return two dedicated clients");
 
       // Capture balanced-entry row state before lock
       const rowBefore = await connA<{ id: string; status: string; tenant_id: string }[]>`
@@ -1661,7 +1885,12 @@ INVALID SQL HERE TO FORCE FAILURE;
         recordProofFail(results, "CON-001", prefix, "balanced-entry row not found before lock test");
       } else {
         // Connection A: begin transaction and acquire FOR UPDATE lock
-        await connA`BEGIN`;
+        await connA.unsafe("BEGIN");
+        aInTransaction = true;
+        const identityA = ctx.dbConfig.type === "postgres"
+          ? await connA<{ value: string }[]>`SELECT pg_backend_pid()::text AS value`
+          : await connA<{ value: string }[]>`SELECT CONNECTION_ID() AS value`;
+        backendA = String(identityA[0]?.value ?? "");
         let lockAcquired = false;
         try {
           const lockRow = await connA<{ id: string }[]>`
@@ -1670,6 +1899,14 @@ INVALID SQL HERE TO FORCE FAILURE;
             FOR UPDATE
           `;
           lockAcquired = lockRow.length > 0;
+          if (lockAcquired) {
+            // Keep an explicit row-version lock in addition to FOR UPDATE so
+            // the conflict probe cannot be optimized away by the server.
+            await connA.unsafe(
+              "UPDATE journal_entries SET idempotency_key = idempotency_key WHERE tenant_id = 't-a' AND book_set_id = 'book-a' AND id = 'balanced-entry'",
+            );
+            if (ctx.dbConfig.type === "postgres") await connA.unsafe("LOCK TABLE journal_entries IN SHARE MODE");
+          }
         } catch (lockError) {
           recordProofFail(results, "CON-001", prefix, `Connection A failed to acquire lock: ${sanitizeError(lockError)}`);
         }
@@ -1685,12 +1922,18 @@ INVALID SQL HERE TO FORCE FAILURE;
               await connB.unsafe("SET innodb_lock_wait_timeout = 1");
             }
 
-            // Attempt FOR UPDATE NOWAIT on same row
-            await connB<{ id: string }[]>`
-              SELECT id FROM journal_entries
-              WHERE tenant_id = ${'t-a'} AND book_set_id = ${'book-a'} AND id = ${'balanced-entry'}
-              FOR UPDATE NOWAIT
-            `;
+            await connB.unsafe("BEGIN");
+            bInTransaction = true;
+            const identityB = ctx.dbConfig.type === "postgres"
+              ? await connB<{ value: string }[]>`SELECT pg_backend_pid()::text AS value`
+              : await connB<{ value: string }[]>`SELECT CONNECTION_ID() AS value`;
+            backendB = String(identityB[0]?.value ?? "");
+            if (!backendA || !backendB || backendA === backendB) throw new Error(`reserved clients are not distinct: A=${backendA}; B=${backendB}`);
+            await connB.unsafe(
+              ctx.dbConfig.type === "postgres"
+                ? "UPDATE journal_entries SET idempotency_key = idempotency_key WHERE tenant_id = 't-a' AND book_set_id = 'book-a' AND id = 'balanced-entry'"
+                : "SELECT id FROM journal_entries WHERE tenant_id = 't-a' AND book_set_id = 'book-a' AND id = 'balanced-entry' FOR UPDATE NOWAIT",
+            );
           } catch (conflictError) {
             const { isLockError, code } = extractLockErrorCode(conflictError, ctx.dbConfig.type);
             if (isLockError) {
@@ -1700,7 +1943,7 @@ INVALID SQL HERE TO FORCE FAILURE;
           }
 
           if (!lockConflictDetected) {
-            recordProofFail(results, "CON-001", prefix, "Connection B should have been blocked by A's lock");
+            recordProofFail(results, "CON-001", prefix, `Connection B should have been blocked by A's lock; backend_a=${backendA}; backend_b=${backendB}`);
           } else {
             // Verify B has zero effects on journal_entries
             const rowAfterB = await connA<{ id: string; status: string }[]>`
@@ -1714,12 +1957,16 @@ INVALID SQL HERE TO FORCE FAILURE;
             if (!rowUnchanged) {
               recordProofFail(results, "CON-001", prefix, "Row changed despite lock conflict");
             } else {
-              // Release connection A's lock
-              await connA`COMMIT`;
+              await connB.unsafe("ROLLBACK");
+              bInTransaction = false;
+              await connA.unsafe("COMMIT");
+              aInTransaction = false;
 
               // Connection B retry should now succeed
               let retrySucceeded = false;
               try {
+                await connB.unsafe("BEGIN");
+                bInTransaction = true;
                 const retryRow = await connB<{ id: string }[]>`
                   SELECT id FROM journal_entries
                   WHERE tenant_id = ${'t-a'} AND book_set_id = ${'book-a'} AND id = ${'balanced-entry'}
@@ -1734,21 +1981,18 @@ INVALID SQL HERE TO FORCE FAILURE;
                 recordProofFail(results, "CON-001", prefix, "Connection B retry after lock release should succeed");
               } else {
                 recordProofPass(results, "CON-001", prefix, [
-                  "connection A (reserved via sql.reserve() or equivalent): FOR UPDATE lock acquired",
-                  "connection B (reserved via separate SQL client): lock timeout/NOWAIT attempt blocked",
+                  "connection A: await sql.reserve(), BEGIN, and FOR UPDATE lock acquired",
+                  "connection B: await sql.reserve(), BEGIN, and lock timeout/NOWAIT attempt blocked",
                   `detected code: ${detectedCode}`,
                   "connection B: zero row effects during lock hold",
                   "connection A: row unchanged during conflict",
                   "connection B: retry succeeded after A released lock",
+                  `distinct backend identities: A=${backendA}, B=${backendB}`,
                   "both reserved connections: BEGIN/lock/query/ROLLBACK lifecycle verified",
                 ]);
               }
-              // Clean up connection B's transaction
-              try {
-                await connB`ROLLBACK`;
-              } catch {
-                // Ignore rollback error
-              }
+              await connB.unsafe("ROLLBACK");
+              bInTransaction = false;
             }
           }
         }
@@ -1756,23 +2000,33 @@ INVALID SQL HERE TO FORCE FAILURE;
     } catch (error) {
       recordProofFail(results, "CON-001", prefix, sanitizeError(error));
     } finally {
-      try {
-        await connA`ROLLBACK`;
-      } catch {
-        // Ignore rollback error on reserved connection
-      }
-      // Release reserved connection A if it was reserved via reserve()
-      if ((sql as any).reserve && (connA as any).release) {
+      if (aInTransaction && connA) {
         try {
-          (connA as any).release();
-        } catch {
-          // Ignore release error
+          await connA.unsafe("ROLLBACK");
+        } catch (error) {
+          recordProofFail(results, "CLEANUP-001", prefix, `connection A rollback failed: ${sanitizeError(error)}`);
         }
       }
-      try {
-        await connB.end({ timeout: 1 });
-      } catch {
-        // Ignore cleanup error
+      if (bInTransaction && connB) {
+        try {
+          await connB.unsafe("ROLLBACK");
+        } catch (error) {
+          recordProofFail(results, "CLEANUP-001", prefix, `connection B rollback failed: ${sanitizeError(error)}`);
+        }
+      }
+      if (connA) {
+        try {
+          await connA.release();
+        } catch (error) {
+          recordProofFail(results, "CLEANUP-001", prefix, `connection A release failed: ${sanitizeError(error)}`);
+        }
+      }
+      if (connB) {
+        try {
+          await connB.release();
+        } catch (error) {
+          recordProofFail(results, "CLEANUP-001", prefix, `connection B release failed: ${sanitizeError(error)}`);
+        }
       }
     }
 
@@ -1789,7 +2043,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       // Test 2: error message containing lock keywords but wrong/missing structured code
       const messageLookalike = Object.assign(
         new Error("lock wait timeout exceeded - lock_not_available"),
-        { sqlState: ctx.dbConfig.type === "postgres" ? "22P02" : "12345" } // wrong SQLSTATE
+        { code: ctx.dbConfig.type === "postgres" ? "22P02" : "ER_UNKNOWN_ERROR" } // wrong structured code
       );
       if (extractLockErrorCode(messageLookalike, ctx.dbConfig.type).isLockError) {
         allNegativesRejected = false;
@@ -1798,7 +2052,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       // Test 3: error with message containing numbers but wrong structured code
       const numberLookalike = Object.assign(
         new Error("error code 1205 or 40001 reported"),
-        { errno: 2003, sqlState: ctx.dbConfig.type === "postgres" ? "00000" : "08000" } // wrong code
+        { errno: 2003, code: ctx.dbConfig.type === "postgres" ? "00000" : "ER_ACCESS_DENIED_ERROR" } // wrong code
       );
       if (extractLockErrorCode(numberLookalike, ctx.dbConfig.type).isLockError) {
         allNegativesRejected = false;
@@ -1811,7 +2065,7 @@ INVALID SQL HERE TO FORCE FAILURE;
           "unrelated error (ECONNRESET) rejected",
           "message-lookalike with wrong structured code rejected",
           "number-lookalike errors rejected",
-          "classification requires ONLY structured sqlState/errno codes",
+          "classification requires only exact structured error.code/errno fields",
           "message substrings cannot bypass classification",
         ]);
       }
@@ -1826,14 +2080,14 @@ INVALID SQL HERE TO FORCE FAILURE;
       const resultHash1 = sha256MigrationText(resultJson1);
 
       // First invocation: shared operation creates record
-      const firstResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-1", reqHash1, resultJson1, resultHash1);
+      const firstResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-1", reqHash1, resultJson1, resultHash1, ctx.dbConfig.type);
 
       // Replay with same tenant/req_id/req_hash but deliberately different candidate bytes
       const differentCandidate = JSON.stringify({ entry_id: "different", success: false });
       const differentCandidateHash = sha256MigrationText(differentCandidate);
 
       // Replay with same hash: shared operation must return exact stored R1/RH1, ignoring candidate bytes
-      const replayResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-1", reqHash1, differentCandidate, differentCandidateHash);
+      const replayResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-1", reqHash1, differentCandidate, differentCandidateHash, ctx.dbConfig.type);
 
       if (
         replayResult.result_json === resultJson1 &&
@@ -1866,7 +2120,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       const resultHash2 = sha256MigrationText(resultJson2);
 
       // Create first record with shared operation
-      const firstResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-2", reqHash2, resultJson2, resultHash2);
+      const firstResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-2", reqHash2, resultJson2, resultHash2, ctx.dbConfig.type);
 
       // Capture before state
       const snapBefore = await captureMultipleSnapshots(sql, ["idempotency_records"]);
@@ -1885,7 +2139,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       let conflictWasTyped = false;
       try {
         // Invoke shared operation with different hash - must throw typed IdempotencyConflictError
-        await getOrCreateIdempotencyRecord(sql, "t-a", "req-2", differentReqHash, conflictCandidate, conflictCandidateHash);
+        await getOrCreateIdempotencyRecord(sql, "t-a", "req-2", differentReqHash, conflictCandidate, conflictCandidateHash, ctx.dbConfig.type);
       } catch (error) {
         if (error instanceof IdempotencyConflictError && error.code === "IDEMPOTENCY_CONFLICT") {
           conflictThrown = true;
@@ -1943,7 +2197,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       const raceRequestId = "concurrent-req-1";
 
       // Spawn 5 concurrent callers with identical params
-      const concurrentPromises = Array.from({ length: 5 }, (_, i) =>
+      const concurrentPromises = Array.from({ length: 5 }, () =>
         getOrCreateIdempotencyRecord(
           sql,
           raceTenantId,
@@ -1951,10 +2205,11 @@ INVALID SQL HERE TO FORCE FAILURE;
           raceReqHash,
           raceResultJson,
           raceResultHash,
+          ctx.dbConfig.type,
         ).then((r) => {
           raceResults.push(r.result_json);
           return r;
-        }).catch(() => null)
+        })
       );
 
       await Promise.all(concurrentPromises);
@@ -1970,7 +2225,7 @@ INVALID SQL HERE TO FORCE FAILURE;
 
         if (!allIdentical) {
           recordProofFail(results, "IDEM-RACE-001", prefix, "Concurrent callers diverged from stored result");
-        } else if (storedCount !== 1) {
+        } else if (Number(storedCount) !== 1) {
           recordProofFail(results, "IDEM-RACE-001", prefix, `Expected 1 stored row, got ${storedCount}`);
         } else {
           recordProofPass(results, "IDEM-RACE-001", prefix, [
@@ -2010,6 +2265,7 @@ INVALID SQL HERE TO FORCE FAILURE;
           hash1,
           result1Json,
           resultHash1,
+          ctx.dbConfig.type,
         ).then((r) => {
           winner = r.result_json;
           return { type: "success", result: r };
@@ -2022,6 +2278,7 @@ INVALID SQL HERE TO FORCE FAILURE;
           hash2,
           result2Json,
           resultHash2,
+          ctx.dbConfig.type,
         ).then((r) => {
           winner = r.result_json;
           return { type: "success", result: r };
@@ -2118,6 +2375,21 @@ INVALID SQL HERE TO FORCE FAILURE;
     } catch (error) {
       recordProofFail(results, "BIGINT-001", prefix, sanitizeError(error));
     }
+
+    const notApplicable: Record<string, string> = ctx.dbConfig.type === "postgres"
+      ? {
+          "MIG-DIRTY-MARKER": "MySQL-only dirty-marker proof; PostgreSQL has transactional rollback instead",
+          "MIG-DIRTY-RECOVERY": "MySQL-only explicit recovery proof",
+        }
+      : {
+          "MIG-DDL-ROLLBACK": "PostgreSQL-only fresh-namespace DDL rollback proof",
+          "DEL-001": "PostgreSQL-specific AB001 DELETE guard proof",
+        };
+    for (const proofId of REQUIRED_SEMANTIC_PROOF_IDS) {
+      if (!results.some((result) => result.id === `${prefix}-${proofId}`)) {
+        recordProofPass(results, proofId, prefix, [`NOT_APPLICABLE=${notApplicable[proofId] ?? "covered by lifecycle summary"}`]);
+      }
+    }
   } catch (error) {
     // Catch-all for semantic matrix execution errors
     const message = sanitizeError(error);
@@ -2138,14 +2410,23 @@ export async function runDatabaseIntegrationTests(dbConfig: DatabaseConfig): Pro
   const dialectName = dbConfig.type === "postgres" ? "PostgreSQL" : "MySQL";
   const results: IntegrationTestResult[] = [];
   let sql: SQL | null = null;
+  let connected = false;
+  let serverVersion = "unavailable-before-connection";
   try {
     sql = createBunSqlClient(dbConfig);
-    await sql.connect();
+    try {
+      await sql.connect();
+      connected = true;
+    } catch (error) {
+      throw new IntegrationBlockedError(`database connection unavailable: ${sanitizeError(error)}`);
+    }
+    serverVersion = await getServerVersion(sql, dbConfig.type);
     results.push({
       id: `${prefix}-SUBSTRATE-CONNECTION`,
       name: `${dialectName} Bun SQL connection`,
       status: "PASS",
-      evidence: [`adapter=bun.sql`, `bigint=true`, `endpoint=${dbConfig.host}:${dbConfig.port}`],
+      evidence: [`adapter=bun.sql`, `bigint=true`, `endpoint=${dbConfig.host}:${dbConfig.port}`, `server_version=${serverVersion}`],
+      detail: `connected; server_version=${serverVersion}`,
     });
     const migration = await loadMigration(dbConfig.type);
     const firstApply = await applyMigration(sql, migration);
@@ -2179,27 +2460,39 @@ export async function runDatabaseIntegrationTests(dbConfig: DatabaseConfig): Pro
     results.push(...(await runSemanticMatrix(ctx)));
   } catch (error) {
     const message = sanitizeError(error);
-    results.push({
-      id: `${prefix}-SUBSTRATE`,
-      name: `${dialectName} Bun SQL substrate`,
-      status: "BLOCKED",
-      evidence: [message],
-      error: message,
-    });
+    if (!connected) {
+      results.push(...blockedDialectResults(dbConfig.type, message));
+    } else {
+      results.push({
+        id: `${prefix}-SUBSTRATE`,
+        name: `${dialectName} Bun SQL substrate`,
+        status: "FAIL",
+        evidence: [message],
+        detail: message,
+        error: message,
+      });
+      for (const proofId of REQUIRED_SEMANTIC_PROOF_IDS) {
+        if (!results.some((result) => result.id === `${prefix}-${proofId}`)) {
+          recordProofFail(results, proofId, prefix, `required proof did not execute: ${message}`);
+        }
+      }
+    }
   } finally {
     if (sql) {
       try {
-        await sql.end({ timeout: 1 });
+        await sql.end({ timeout: 1000 });
       } catch (error) {
         results.push({
-          id: `${prefix}-SUBSTRATE-CLEANUP`,
+          id: `${prefix}-CLEANUP-001`,
           name: `${dialectName} Bun SQL cleanup`,
           status: "FAIL",
           evidence: [sanitizeError(error)],
+          detail: sanitizeError(error),
           error: sanitizeError(error),
         });
       }
     }
   }
+  emitIntegrationSummary(dbConfig.type, serverVersion, results);
   return results;
 }

@@ -71,7 +71,9 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Alternatives**: Single unified DDL with #ifdefs per dialect; Drizzle migrations for all three targets; ORM-generated schemas.
 - **Evidence**: `spikes/gate0/sql/postgres/001-core.sql` (PL/pgSQL triggers) and `spikes/gate0/sql/mysql/001-core.sql` (MySQL SIGNAL-based triggers) implement the same semantic constraints—tenant/BookSet FK, balance validation on posting, append-only guards, posted immutability—using dialect-native facilities. `docker exec ... psql/mysql` reliably applies migrations to local disposable containers without introducing npm dependencies for database clients. Integration test harness in `spikes/gate0/database-integration.ts` uses `spawnSync` with Docker CLI; no pg/mysql2 imports.
 - **Reversibility**: Drop dialect-specific implementations and consolidate to Drizzle if proof coverage expands; or keep native SQL and replace Drizzle entirely. Migration logical IDs remain stable.
-- **Status**: `SUPERSEDED BY OD-010 (BUNNATIVE DRIVERS)`.
+- **Status**: `SUPERSEDED BY OD-010 AND OD-011; HISTORICAL ONLY`.
+
+The earlier `docker exec` and lifecycle references in this decision are historical and are not current execution evidence. The active harness and evidence boundary are defined by OD-010 and OD-011.
 
 ### Implementation details
 
@@ -88,7 +90,7 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Alternatives**: Global Docker daemon setup; start containers via npm pretest hook; omit separate integration test file.
 - **Evidence**: `scripts/gate0-db.sh` creates unique networks, generates test credentials, validates container health, and cleans up on exit. Test names differ between PostgreSQL (PG-*) and MySQL (MY-*) but test semantics are identical (fresh install, FK constraints, append-only guards, BigInt support).
 - **Reversibility**: Containers are local and ephemeral; script can be replaced or removed without affecting production services.
-- **Status**: `AGENT-IMPLEMENTED; READY FOR MANUAL LIFECYCLE VERIFICATION`.
+- **Status**: `SUPERSEDED BY OD-011; HISTORICAL ORGANIZATION NOTE ONLY`.
 
 ### Package.json updates
 
@@ -98,12 +100,12 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 
 ## OD-009 — PostgreSQL/MySQL proof execution and status tracking
 
-- **Date**: 2026-08-22 (provisional; execution BLOCKED)
-- **Decision**: Do not update STK-002, STK-004, STK-006 evidence until live PostgreSQL/MySQL container tests pass. Mark PostgreSQL/MySQL adapter status as `BLOCKED` until integration tests run successfully; preserve SQLite `PASS` and Drizzle `UNPROVEN` status independently.
+- **Date**: 2026-08-22 (superseded by OD-011)
+- **Decision**: Keep PostgreSQL/MySQL proof status tied to the machine-readable integration summaries. Preserve SQLite `PASS`; do not promote a dialect to `PASS` from source inspection or a blocked run.
 - **Alternatives**: Mark PostgreSQL/MySQL as `PARTIAL` or `PASS` without proof; claim Drizzle multi-database support before proof.
-- **Evidence**: Integration test harness is implemented but blocked on container startup (Docker images not yet pulled, environment may need explicit setup). No evidence will be written until tests fully pass.
+- **Evidence**: The earlier "images not yet pulled" claim is stale. A bounded run connected to PostgreSQL 17.11 and emitted every required proof as PASS; subsequent reruns were blocked before connection by Docker credential-helper error `-50`. MySQL 8.4 startup was independently attempted, but no MySQL semantic PASS is claimed.
 - **Reversibility**: Run integration tests after environment setup; update evidence and status mappings upon success.
-- **Status**: `AGENT-IMPLEMENTED; EXECUTION BLOCKED / EVIDENCE NOT YET RECORDED`.
+- **Status**: `SUPERSEDED BY OD-011; DO NOT USE AS CURRENT EVIDENCE`.
 
 ## OD-010 — Bun SQL (native) used exclusively; no external database driver npm packages
 
@@ -113,44 +115,21 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Alternatives**: docker-exec (proof contaminated by CLI tool versions/flags); external npm drivers like postgres/mysql2 (adds dependencies); ORM migrations (loses hand-reviewed constraint/trigger provenance).
 - **Evidence CORRECTED**: `spikes/gate0/database-integration.ts` establishes connections via Bun SQL (`new SQL()`) with parameterized queries; migrations in `sql/{postgres,mysql}/` have no DELIMITER/client syntax; NO postgres or mysql2 npm packages in bun.lock (false earlier claims removed).
 - **Reversibility**: Switch back to docker-exec (documented in git history); replace drivers later if incompatibilities emerge; migrations are version-independent.
-- **Status**: `AGENT-IMPLEMENTED / COMPLETE / EXECUTION BLOCKED ON DOCKER AVAILABILITY`.
+- **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING; CURRENT LIVE STATUS IS IN OD-011`.
 
-### Implementation complete
+## OD-011 — Gate0 proof harness repair and evidence boundary
 
-Semantic proof harness fully implemented with parameterized Bun SQL tests for both PostgreSQL and MySQL. Container lifecycle uses safe patterns: network/container labels for audit, bound-to-127.0.0.1 with inspected port assignment, generated credentials not exposed in errors, guaranteed cleanup via try/finally. Shared proof matrix (fresh-install, fk-constraints, append-only, bigint-support) executes identical semantics across dialects via Bun SQL native adapter. All parameterized queries; no client-specific DELIMITER syntax. Typecheck and local SQLite tests pass. Gate0 binary builds. PostgreSQL/MySQL semantic test execution is BLOCKED if Docker is unavailable or permissions deny container lifecycle—in that case, evidence is marked BLOCKED (not PASS), per task requirement.
-
-### Implementation updates
-
-- **SQL connections**: Bun SQL adapter connecting to localhost:5432+X (PostgreSQL) and localhost:3306+Y (MySQL) with generated credentials.
-- **Migration format**: No DELIMITER statements (removed from mysql/001-core.sql); triggers split across single-statement boundaries via `;` only.
-- **Logical IDs**: gate0-001-core-postgres and gate0-001-core-mysql; checksum validation at application layer.
-- **Container lifecycle**: Docker CLI used only for network create, container run/inspect/rm; no docker exec inside semantic tests.
-- **Final review findings**: strict error code classification (only structured sqlState/errno, no message fallbacks); shared idempotency operation; enhanced negative tests for error classification.
-
-## OD-011 — Full PostgreSQL/MySQL Gate0 semantic matrix implementation (BLOCKED on live execution)
-
-- **Date**: 2026-08-22 (implemented and P1/P2 repaired post-review; requirements A-L addressed 2026-08-22)
-- **Decision**: Implement complete shared semantic matrix with exact proof IDs (MIG-001..MIG-004, SCOPE-001..SCOPE-002, POST-001..POST-004, IMM-001..IMM-003, CON-001, IDEM-001..IDEM-002, BIGINT-001) on both PostgreSQL and MySQL dialects using one shared fixture and tiny dialect adapters. All tests structured to run against real live Docker containers with Bun-native SQL connections (no external database drivers). Live execution remains BLOCKED pending Docker availability.
-- **Rationale**: Gate0 semantic matrix provides comprehensive contract verification for multi-dialect support: migration checksum/NOOP/mismatch/bad-checksum handling; tenant/scope FK violations; posting atomicity with balance validation and automatic rollback; immutability constraints (posted journal and postings/audit append-only); concurrency lock conflict detection via dual reserved connections; idempotency replay and conflict detection; BigInt exact value preservation.
-- **Implementation Status (ACTUAL FACTS ONLY)**:
-  - Semantic matrix code fully implemented and typecheck clean (all 17 proof IDs)
-  - Requirement (A): Strict error code classification without message fallbacks (extractLockErrorCode updated; CON-001-NEG negative tests added)
-  - Requirement (K): Fixed stale evidence claims about postgres/mysql2 npm packages; OD-010 now documents Bun SQL native adapter exclusively
-  - Requirement (B): Connection reservation; CON-001 updated to use sql.reserve() or equivalent for connA; connB separate SQL client; release mechanism added
-  - Requirement (C): Concurrent idempotency race tests added (IDEM-RACE-001 same-hash convergence; IDEM-RACE-002 different-hash conflict)
-  - Requirement (D): PostgreSQL MIG-DDL-ROLLBACK test verifies complete rollback on DDL failure (no partial state)
-  - Requirement (E): MySQL MIG-DIRTY-MARKER test verifies applying marker survives partial DDL failure and retry detects MIGRATION_DIRTY
-  - Requirement (F): captureTableSnapshot captures full row-level snapshots with BigInt canonicalization ("BIGINT:..." format)
-  - Requirement (G): Trigger structural verification enhanced; PostgreSQL catalog queries verify attachment/timing/event/function; MySQL information_schema queries
-  - Requirement (H): PostgreSQL DEL-001 test verifies DRAFT delete allowed, POSTED delete rejected
-  - Requirement (I): Integration test timeouts added (120s for semantic matrix execution)
-  - Requirement (J): Cleanup subprocess timeouts (10s per docker command), exit status checks, aggregated error reporting (no silent swallowing)
-  - Requirement (L): Command validation runs: typecheck PASS, test:gate0 PASS (2/2), build:gate0 PASS, git diff --check PASS
-  - Fixed seeds: tenants t-a/t-b; BookSets t-a/book-a, t-a/book-b, t-b/book-z
-- **EXECUTION BLOCKED**: Live Docker execution of PostgreSQL/MySQL integration tests remains blocked. Results will be BLOCKED status (not PASS) until integration tests successfully start containers and run.
-- **Evidence Status**: NO LIVE EVIDENCE RECORDED YET. Server versions, catalog verification, actual lock timeouts, and idempotency protocol execution cannot be confirmed without successful Docker container startup and test execution. Test code fully present and ready; evidence collection deferred.
-- **Reversibility**: Semantic test code is isolated; removal or modification does not affect dialect migrations or core schema. Test harness replaceable; fixture seeds idempotent.
-- **Status**: `IMPLEMENTED, STRUCTURED, TYPECHECK-CLEAN, LOCALLY-VERIFIED; LIVE EXECUTION AND EVIDENCE COLLECTION BLOCKED`.
+- **Date**: 2026-08-22
+- **Decision**: Keep the Gate0 work limited to reversible proof-harness and migration-contract repair. The required registry includes migration rollback/dirty recovery, DELETE, lock negative, idempotency races, and cleanup proofs. A live PASS is recorded only when that dialect emits every required proof as PASS; pre-connection infrastructure failures remain BLOCKED.
+- **Rationale**: The prior handoff claimed completion while the harness could ignore missing proofs, clear dirty markers after failure, use SELECT-first idempotency, and classify blocked integration as PASS. Those claims are retired; no production-readiness or Phase 1 authorization is inferred.
+- **Actual checks recorded 2026-08-22**:
+  - Bun 1.3.14 typecheck, local Gate0 tests, all Gate0 tests, Gate0 build, and `git diff --check` were run during this repair.
+  - A bounded PostgreSQL 17.11 run connected and emitted every required proof as PASS before the final source-only tightening; the final rerun was blocked before connection by Docker credential-helper error `-50`, so no new current live PASS is claimed from that rerun.
+  - MySQL 8.4 startup was attempted with digest-pinned pre-pull and `--pull never`; the current bounded run is BLOCKED before connection by the same credential-helper error, and no MySQL semantic PASS is claimed.
+  - The exact stale PIDs and UUID-scoped empty networks named in the worker brief were inspected and removed before live attempts; no broad cleanup was used.
+  - The final source checks include Bun 1.3.14 typecheck, local tests, integration wrapper, all-tests wrapper, build, summary/lifecycle unit tests, and `git diff --check`.
+- **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING; LIVE DIALECT STATUS MUST MATCH THE COMMITTED SUMMARY`.
+- **Reversibility**: The harness and dialect migrations remain isolated under `spikes/gate0`; this decision authorizes neither production database changes nor Phase 1 implementation.
 
 ---
 

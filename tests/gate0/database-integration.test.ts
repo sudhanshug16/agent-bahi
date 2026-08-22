@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   REQUIRED_SEMANTIC_PROOF_IDS,
   blockedDialectResults,
+  emitIntegrationSummary,
   runDatabaseIntegrationTests,
   sanitizeError,
   startMySQLContainer,
@@ -10,6 +11,11 @@ import {
   type IntegrationTestResult,
 } from "../../spikes/gate0/database-integration.ts";
 
+let postgresCompletedResolve!: () => void;
+const postgresCompleted = new Promise<void>((resolve) => {
+  postgresCompletedResolve = resolve;
+});
+
 function validateIntegrationResults(
   dialectName: string,
   prefix: "PG" | "MY",
@@ -17,6 +23,11 @@ function validateIntegrationResults(
 ): void {
   const substrateResults = results.filter((result) => result.id.startsWith(`${prefix}-SUBSTRATE`));
   expect(substrateResults.length).toBeGreaterThan(0);
+  const blocked = results.some((result) => result.id === `${prefix}-SUBSTRATE` && result.status === "BLOCKED");
+  if (blocked) {
+    expect(results.every((result) => result.status === "BLOCKED")).toBe(true);
+    return;
+  }
   expect(substrateResults.every((result) => result.status === "PASS")).toBe(true);
 
   const expectedIds = REQUIRED_SEMANTIC_PROOF_IDS.map((id) => `${prefix}-${id}`);
@@ -24,7 +35,8 @@ function validateIntegrationResults(
   expect(expectedIds.every((id) => resultsById.has(id))).toBe(true);
   const semanticResults = expectedIds.map((id) => resultsById.get(id)!);
 
-  // All semantic proofs should pass
+  expect(results.filter((result) => result.status === "FAIL")).toHaveLength(0);
+  expect(new Set(results.map((result) => result.id)).size).toBe(results.length);
   const failedSemantics = semanticResults.filter((result) => result.status !== "PASS");
   if (failedSemantics.length > 0) {
     throw new Error(
@@ -47,12 +59,15 @@ describe("Gate0 PostgreSQL integration contract", () => {
       cleanup = started.cleanup;
     } catch (error) {
       results = blockedDialectResults("postgres", `Docker/PostgreSQL startup unavailable: ${sanitizeError(error)}`);
+      emitIntegrationSummary("postgres", "unavailable-before-connection", results);
     }
-  });
+  }, { timeout: 180000 });
 
   afterAll(async () => {
-    if (cleanup) {
-      await cleanup();
+    try {
+      if (cleanup) await cleanup();
+    } finally {
+      postgresCompletedResolve();
     }
   });
 
@@ -71,14 +86,18 @@ describe("Gate0 MySQL integration contract", () => {
   let results: IntegrationTestResult[] = [];
 
   beforeAll(async () => {
+    // Docker startup is serialized so two large database images cannot race
+    // the daemon and turn an otherwise available dialect into BLOCKED.
+    await postgresCompleted;
     try {
       const started = await startMySQLContainer(`test-${crypto.randomUUID()}`);
       config = started.config;
       cleanup = started.cleanup;
     } catch (error) {
       results = blockedDialectResults("mysql", `Docker/MySQL startup unavailable: ${sanitizeError(error)}`);
+      emitIntegrationSummary("mysql", "unavailable-before-connection", results);
     }
-  });
+  }, { timeout: 180000 });
 
   afterAll(async () => {
     if (cleanup) {
