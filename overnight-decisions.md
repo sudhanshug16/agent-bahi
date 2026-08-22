@@ -105,27 +105,27 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Reversibility**: Run integration tests after environment setup; update evidence and status mappings upon success.
 - **Status**: `AGENT-IMPLEMENTED; EXECUTION BLOCKED / EVIDENCE NOT YET RECORDED`.
 
-## OD-010 — Bun-native SQL drivers supersede docker-exec for PostgreSQL/MySQL Gate0
+## OD-010 — Bun SQL (native) used exclusively; no external database driver npm packages
 
-- **Date**: 2026-08-22 (updated)
-- **Decision**: Replace `docker exec psql/mysql` with Bun-native SQL connections via postgres@3.4.9 and mysql2@3.23.4 drivers. Application logic runs in Bun process; Docker CLI used only for container/network lifecycle (create, run, inspect, rm). All SQL uses parameterized/tagged queries; no DELIMITER client assumptions in migrations.
-- **Rationale (supersedes OD-007)**: The docker-exec approach leaks container internals (psql/mysql CLI behavior) into the semantic proof. The Bun-native approach executes the actual proof logic in the target application runtime (Bun) over TCP, eliminating docker-specific command leakage and proving portable database-neutral semantics. Parameterized queries prevent SQL injection and ensure dialect portability.
-- **Alternatives**: Keep docker-exec (proof contaminated by CLI tool versions/flags); use ORM migrations (loses hand-reviewed constraint/trigger provenance); use Node.js pg/mysql drivers (not Bun-native).
-- **Evidence**: `spikes/gate0/database-integration.ts` establishes connections via postgres/mysql2 drivers with parameterized queries; migrations in `sql/{postgres,mysql}/` have no DELIMITER/client syntax; bun.lock records postgres@3.4.9, mysql2@3.23.4.
+- **Date**: 2026-08-22 (updated; corrected stale claims about postgres/mysql2 npm packages)
+- **Decision**: Use Bun SQL native adapter (` new SQL({adapter: "postgres"/"mysql", ...})`) exclusively for PostgreSQL/MySQL connections. Application logic runs in Bun process; Docker CLI used only for container/network lifecycle (create, run, inspect, rm). All SQL uses parameterized/tagged queries; no DELIMITER client assumptions in migrations.
+- **Rationale (supersedes OD-007)**: Bun SQL provides native connection management without external npm dependencies. The approach executes proof logic in the target application runtime (Bun) over TCP, eliminating docker-exec CLI leakage and proving portable database-neutral semantics. Parameterized queries prevent SQL injection and ensure dialect portability.
+- **Alternatives**: docker-exec (proof contaminated by CLI tool versions/flags); external npm drivers like postgres/mysql2 (adds dependencies); ORM migrations (loses hand-reviewed constraint/trigger provenance).
+- **Evidence CORRECTED**: `spikes/gate0/database-integration.ts` establishes connections via Bun SQL (`new SQL()`) with parameterized queries; migrations in `sql/{postgres,mysql}/` have no DELIMITER/client syntax; NO postgres or mysql2 npm packages in bun.lock (false earlier claims removed).
 - **Reversibility**: Switch back to docker-exec (documented in git history); replace drivers later if incompatibilities emerge; migrations are version-independent.
 - **Status**: `AGENT-IMPLEMENTED / COMPLETE / EXECUTION BLOCKED ON DOCKER AVAILABILITY`.
 
 ### Implementation complete
 
-Semantic proof harness fully implemented with parameterized native-SQL tests for both PostgreSQL and MySQL. Container lifecycle uses safe patterns: network/container labels for audit, bound-to-127.0.0.1 with inspected port assignment, generated credentials not exposed in errors, guaranteed cleanup via try/finally. Shared proof matrix (fresh-install, fk-constraints, append-only, bigint-support) executes identical semantics across dialects via postgres and mysql2 native drivers. All parameterized queries; no client-specific DELIMITER syntax. Typecheck and local SQLite tests pass. Gate0 binary builds. PostgreSQL/MySQL semantic test execution is BLOCKED if Docker is unavailable or permissions deny container lifecycle—in that case, evidence is marked BLOCKED (not PASS), per task requirement.
+Semantic proof harness fully implemented with parameterized Bun SQL tests for both PostgreSQL and MySQL. Container lifecycle uses safe patterns: network/container labels for audit, bound-to-127.0.0.1 with inspected port assignment, generated credentials not exposed in errors, guaranteed cleanup via try/finally. Shared proof matrix (fresh-install, fk-constraints, append-only, bigint-support) executes identical semantics across dialects via Bun SQL native adapter. All parameterized queries; no client-specific DELIMITER syntax. Typecheck and local SQLite tests pass. Gate0 binary builds. PostgreSQL/MySQL semantic test execution is BLOCKED if Docker is unavailable or permissions deny container lifecycle—in that case, evidence is marked BLOCKED (not PASS), per task requirement.
 
 ### Implementation updates
 
-- **Driver connections**: postgres pool connecting to localhost:5432+X with generated credentials; mysql2 pool to localhost:3306+Y.
+- **SQL connections**: Bun SQL adapter connecting to localhost:5432+X (PostgreSQL) and localhost:3306+Y (MySQL) with generated credentials.
 - **Migration format**: No DELIMITER statements (removed from mysql/001-core.sql); triggers split across single-statement boundaries via `;` only.
 - **Logical IDs**: gate0-001-core-postgres and gate0-001-core-mysql; checksum validation at application layer.
 - **Container lifecycle**: Docker CLI used only for network create, container run/inspect/rm; no docker exec inside semantic tests.
-- **ro284 findings applied**: getOrCreateIdempotencyRecord is race-safe via BEGIN IMMEDIATE; error.code='IDEMPOTENCY_CONFLICT'; replay/conflict/POSTED-guard proofs strengthened to verify stored row immutability and zero side effects.
+- **Final review findings**: strict error code classification (only structured sqlState/errno, no message fallbacks); shared idempotency operation; enhanced negative tests for error classification.
 
 ## OD-011 — Full PostgreSQL/MySQL Gate0 semantic matrix implementation (BLOCKED on live execution)
 

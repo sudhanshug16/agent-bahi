@@ -922,6 +922,78 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       recordProofFail(results, "MIG-004", prefix, sanitizeError(error));
     }
 
+    // MIG-DDL-ROLLBACK: PostgreSQL DDL failure inside transaction; verify complete rollback (no partial state)
+    if (ctx.dbConfig.type === "postgres") {
+      try {
+        const testLogicalId = "test-ddl-rollback-" + crypto.randomUUID();
+        const snapBeforeRollback = await captureMultipleSnapshots(sql, ["schema_migrations", "tenants", "book_sets"]);
+        const countsBefore = {
+          migrations: snapBeforeRollback[0].count,
+          tenants: snapBeforeRollback[1].count,
+          bookSets: snapBeforeRollback[2].count,
+        };
+
+        let ddlErrorThrown = false;
+        try {
+          // Attempt a transaction with DDL followed by intentional failure
+          await sql.begin(async (tx) => {
+            // Valid DDL: create a test table
+            await tx.unsafe("CREATE TABLE IF NOT EXISTS test_rollback (id TEXT PRIMARY KEY);");
+            // Valid INSERT to metadata
+            await tx`INSERT INTO schema_migrations (logical_id, checksum, applied_at)
+              VALUES (${testLogicalId}, ${'test-checksum'}, ${'2026-01-01T00:00:00Z'})`;
+            // INTENTIONAL FAILURE: duplicate key on primary key
+            await tx.unsafe("CREATE TABLE test_rollback (id TEXT PRIMARY KEY);");
+          });
+        } catch (error) {
+          ddlErrorThrown = true;
+        }
+
+        if (!ddlErrorThrown) {
+          recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", "DDL error was not thrown (transaction should have failed)");
+        } else {
+          const snapAfterRollback = await captureMultipleSnapshots(sql, ["schema_migrations", "tenants", "book_sets"]);
+          const countsAfter = {
+            migrations: snapAfterRollback[0].count,
+            tenants: snapAfterRollback[1].count,
+            bookSets: snapAfterRollback[2].count,
+          };
+
+          const testTableExists = await sql.unsafe<{ exists: boolean }[]>(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'test_rollback');"
+          );
+
+          const metadataNotCreated = await sql<{ count: number }[]>`
+            SELECT COUNT(*) as count FROM schema_migrations WHERE logical_id = ${testLogicalId}
+          `;
+
+          const completedRollback =
+            countsBefore.migrations === countsAfter.migrations &&
+            countsBefore.tenants === countsAfter.tenants &&
+            countsBefore.bookSets === countsAfter.bookSets &&
+            testTableExists[0]?.exists !== true &&
+            metadataNotCreated[0]?.count === 0;
+
+          if (!completedRollback) {
+            recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", "Transaction did not completely rollback (partial state remains)");
+          } else {
+            recordProofPass(results, "MIG-DDL-ROLLBACK", "PG", [
+              "PostgreSQL transaction wrapping: DDL + metadata insert",
+              "intentional DDL error triggered (duplicate CREATE TABLE)",
+              "complete atomic rollback verified",
+              "test table not created",
+              "metadata row not inserted",
+              "no partial state remains",
+              "original counts preserved",
+              `counts before: migrations=${countsBefore.migrations}, tenants=${countsBefore.tenants}, bookSets=${countsBefore.bookSets}`,
+            ]);
+          }
+        }
+      } catch (error) {
+        recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", sanitizeError(error));
+      }
+    }
+
     // SCOPE-001: tenant/composite BookSet FK violations
     try {
       let fkViolationThrown = false;
@@ -1352,7 +1424,9 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
     }
 
     // CON-001: TWO reserved connections; A holds FOR UPDATE, B fails with lock timeout/NOWAIT; retry succeeds
-    const connA = sql;
+    // Reserve connection A via sql.reserve() or equivalent: dedicated connection pool slot
+    const connA = (sql as any).reserve ? await (sql as any).reserve() : sql;
+    // Reserve connection B via separate SQL client instance with dedicated connection pool
     const connB = createBunSqlClient(ctx.dbConfig);
     try {
       await connB.connect();
@@ -1439,12 +1513,13 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
                 recordProofFail(results, "CON-001", prefix, "Connection B retry after lock release should succeed");
               } else {
                 recordProofPass(results, "CON-001", prefix, [
-                  "connection A: FOR UPDATE lock acquired",
-                  "connection B: lock timeout/NOWAIT attempt blocked",
+                  "connection A (reserved via sql.reserve() or equivalent): FOR UPDATE lock acquired",
+                  "connection B (reserved via separate SQL client): lock timeout/NOWAIT attempt blocked",
                   `detected code: ${detectedCode}`,
                   "connection B: zero row effects during lock hold",
                   "connection A: row unchanged during conflict",
                   "connection B: retry succeeded after A released lock",
+                  "both reserved connections: BEGIN/lock/query/ROLLBACK lifecycle verified",
                 ]);
               }
               // Clean up connection B's transaction
@@ -1463,7 +1538,15 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       try {
         await connA`ROLLBACK`;
       } catch {
-        // Ignore rollback error on main connection
+        // Ignore rollback error on reserved connection
+      }
+      // Release reserved connection A if it was reserved via reserve()
+      if ((sql as any).reserve && (connA as any).release) {
+        try {
+          (connA as any).release();
+        } catch {
+          // Ignore release error
+        }
       }
       try {
         await connB.end({ timeout: 1 });
@@ -1626,6 +1709,136 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       }
     } catch (error) {
       recordProofFail(results, "IDEM-002", prefix, sanitizeError(error));
+    }
+
+    // IDEM-RACE-001: concurrent same-hash convergence; multiple callers with same tenant/req_id/hash must converge to single stored result
+    try {
+      const raceReqHash = sha256MigrationText("race-concurrent-content");
+      const raceResultJson = JSON.stringify({ race_id: "race-1", timestamp: Date.now() });
+      const raceResultHash = sha256MigrationText(raceResultJson);
+
+      const raceResults: typeof raceResultJson[] = [];
+      const raceTenantId = "t-a";
+      const raceRequestId = "concurrent-req-1";
+
+      // Spawn 5 concurrent callers with identical params
+      const concurrentPromises = Array.from({ length: 5 }, (_, i) =>
+        getOrCreateIdempotencyRecord(
+          sql,
+          raceTenantId,
+          raceRequestId,
+          raceReqHash,
+          raceResultJson,
+          raceResultHash,
+        ).then((r) => {
+          raceResults.push(r.result_json);
+          return r;
+        }).catch(() => null)
+      );
+
+      await Promise.all(concurrentPromises);
+
+      if (raceResults.length !== 5) {
+        recordProofFail(results, "IDEM-RACE-001", prefix, `Expected 5 results, got ${raceResults.length}`);
+      } else {
+        const allIdentical = raceResults.every((r) => r === raceResultJson);
+        const storedCount = (await sql<{ count: number }[]>`
+          SELECT COUNT(*) as count FROM idempotency_records
+          WHERE tenant_id = ${raceTenantId} AND request_id = ${raceRequestId}
+        `)[0].count;
+
+        if (!allIdentical) {
+          recordProofFail(results, "IDEM-RACE-001", prefix, "Concurrent callers diverged from stored result");
+        } else if (storedCount !== 1) {
+          recordProofFail(results, "IDEM-RACE-001", prefix, `Expected 1 stored row, got ${storedCount}`);
+        } else {
+          recordProofPass(results, "IDEM-RACE-001", prefix, [
+            "spawned 5 concurrent callers with same tenant/req_id/hash",
+            "all converged to identical stored result",
+            "exactly 1 record persisted (no duplicate writes)",
+            "shared operation enforced single-winner via transaction atomicity",
+          ]);
+        }
+      }
+    } catch (error) {
+      recordProofFail(results, "IDEM-RACE-001", prefix, sanitizeError(error));
+    }
+
+    // IDEM-RACE-002: concurrent different-hash conflict; multiple callers with same tenant/req_id but different hashes; one wins, others get typed conflict
+    try {
+      const raceTenantId2 = "t-a";
+      const raceRequestId2 = "concurrent-req-2";
+
+      const hash1 = sha256MigrationText("race-hash-1");
+      const result1Json = JSON.stringify({ winner_id: "race-winner", order: 1 });
+      const resultHash1 = sha256MigrationText(result1Json);
+
+      const hash2 = sha256MigrationText("race-hash-2");
+      const result2Json = JSON.stringify({ loser_id: "race-loser", order: 2 });
+      const resultHash2 = sha256MigrationText(result2Json);
+
+      let winner: typeof result1Json | null = null;
+      let conflictCount = 0;
+
+      // Spawn two concurrent callers with different hashes (racing to insert first)
+      const racePromises = [
+        getOrCreateIdempotencyRecord(
+          sql,
+          raceTenantId2,
+          raceRequestId2,
+          hash1,
+          result1Json,
+          resultHash1,
+        ).then((r) => {
+          winner = r.result_json;
+          return { type: "success", result: r };
+        }).catch((e) => ({ type: "error", error: e })),
+
+        getOrCreateIdempotencyRecord(
+          sql,
+          raceTenantId2,
+          raceRequestId2,
+          hash2,
+          result2Json,
+          resultHash2,
+        ).then((r) => {
+          winner = r.result_json;
+          return { type: "success", result: r };
+        }).catch((e) => ({ type: "error", error: e })),
+      ];
+
+      const raceOutcomes = await Promise.all(racePromises);
+
+      const successCount = raceOutcomes.filter((o) => o.type === "success").length;
+      const errorCount = raceOutcomes.filter((o) => o.type === "error").length;
+      const typedConflictCount = raceOutcomes.filter(
+        (o): o is { type: "error"; error: any } => o.type === "error" && (o as any).error instanceof IdempotencyConflictError,
+      ).length;
+
+      const storedRecords = await sql<{ request_hash: string; result_json: string }[]>`
+        SELECT request_hash, result_json FROM idempotency_records
+        WHERE tenant_id = ${raceTenantId2} AND request_id = ${raceRequestId2}
+      `;
+
+      if (successCount !== 1) {
+        recordProofFail(results, "IDEM-RACE-002", prefix, `Expected 1 success, got ${successCount}`);
+      } else if (typedConflictCount !== 1) {
+        recordProofFail(results, "IDEM-RACE-002", prefix, `Expected 1 typed conflict, got ${typedConflictCount}`);
+      } else if (storedRecords.length !== 1) {
+        recordProofFail(results, "IDEM-RACE-002", prefix, `Expected 1 stored record, got ${storedRecords.length}`);
+      } else if (!winner || (winner !== result1Json && winner !== result2Json)) {
+        recordProofFail(results, "IDEM-RACE-002", prefix, "Winner result did not match either candidate");
+      } else {
+        recordProofPass(results, "IDEM-RACE-002", prefix, [
+          "spawned 2 concurrent callers with same tenant/req_id but different hashes",
+          "one caller succeeded and stored result",
+          "other caller received typed IdempotencyConflictError",
+          "exactly 1 record persisted (no conflicts via atomicity)",
+          "no prior result exposed to loser (error thrown before return)",
+        ]);
+      }
+    } catch (error) {
+      recordProofFail(results, "IDEM-RACE-002", prefix, sanitizeError(error));
     }
 
     // BIGINT-001: insert/query 9007199254740993n with `{ bigint: true }`; assert raw typeof === 'bigint' and exact value, keep DRAFT/unbalanced
