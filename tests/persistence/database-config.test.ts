@@ -44,6 +44,7 @@ describe("database configuration", () => {
     for (const url of [
       "",
       "sqlite://%",
+      "sqlite:///tmp/agent-bahi%ZZ.sqlite",
       "sqlite://localhost",
       "sqlite:///",
       "sqlite://remote.example/tmp/agent-bahi.sqlite",

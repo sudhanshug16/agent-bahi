@@ -34,7 +34,7 @@ export function parseDatabaseUrl(url: string): DatabaseConfig {
         }
 
         // sqlite:///path/to/db.sqlite → pathname is /path/to/db.sqlite
-        let path = parsed.pathname;
+        let path = decodeURIComponent(parsed.pathname);
         if (!path.startsWith("/")) {
           path = "/" + path;
         }
