@@ -201,7 +201,7 @@ Create one **NON-POSTING** TaxCase per taxpayer, year, and filing sequence. It a
 An immutable FilingSnapshot is created when needed and references:
 - Exact BookSet ledger versions and event cursors (as-of date alone is insufficient)
 - Source artifact hashes and parser versions
-- AuthorityPack binding
+- The TaxCase's exact immutable applicability/rule/pack/schema candidate: `(authority_pack_id, authority_pack_content_hash, governing_act, period_key, filing_trigger, rule_snapshot_id, schema_artifact_id, schema_artifact_hash)`; the snapshot cannot supply a substitutable pack or schema
 - Frozen eligibility facts
 - Tax computation version and hash
 - `as_of_instant` timestamp
@@ -213,15 +213,15 @@ The TaxCase membership snapshot is one sealed normalized set created at case cre
 
 **TaxComputation and ExportRuns:**
 
-TaxComputation derives from exactly one FilingSnapshot and never posts to the books. Multiple immutable ExportRuns are allowed; one explicitly selected export may be marked submission-bound only when its immutable `validation_outcome` is exactly `PASSED`, its integrity status is `CURRENT`, and its FilingSnapshot is `CURRENT`. `FAILED`, `INCOMPLETE`, `UNKNOWN`, `REVIEW`, `STALE`, and `DRIFTED` exports are structurally ineligible. SubmissionAttempt records the exact selected ExportRun binding; it cannot be created for any other outcome or status.
+TaxComputation derives from exactly one FilingSnapshot and never posts to the books. Multiple immutable ExportRuns are allowed; each inherits the snapshot's exact ID/hash and TaxCase-bound pack/rule/schema chain. An immutable SubmissionBinding records one exact snapshot ID/hash plus export ID/hash and the `PASSED` validation outcome. Its current validity is represented only by append-only binding-state events; SubmissionAttempt has one composite FK to that immutable binding candidate and no FK to mutable binding status or a separately supplied export tuple. An attempt may be inserted only when the latest binding event is `ACTIVE`, the bound export and snapshot are `CURRENT`, and validation is exactly `PASSED`. `FAILED`, `INCOMPLETE`, `UNKNOWN`, `REVIEW`, `STALE`, and `DRIFTED` exports are structurally ineligible.
 
 **Pre-Submission Changes:**
 
-Before submission, when books or sources change, a new FilingSnapshot and ExportRun are created in the same live TaxCase. This allows the case to reflect current state without destroying prior work.
+Before submission, when books or sources change, an immutable replacement FilingSnapshot, ExportRun, SubmissionBinding, and initial `ACTIVE` binding-state event are created in the same live TaxCase. The old binding is revoked by an append-only event; no old identity is updated. This allows the case to reflect current state without destroying prior work.
 
 **Post-Submission Lineage:**
 
-Post-submission correction/revised/updated/rectification work follows PT-016 semantics: a linked successor TaxCase with independent FilingSnapshot and ExportRun.
+Post-submission correction/revised/updated/rectification work follows PT-016 semantics: a linked successor TaxCase with independent FilingSnapshot, ExportRun, SubmissionBinding, and binding-state event stream. The successor is a different exact case with sequence +1 and matching PAN, period, and filing trigger.
 
 **Broker Evidence Scope:**
 
@@ -346,11 +346,11 @@ AIS/26AS/books differences may be marked READY only with explicit reconciliation
 
 The fact of reconciliation (not acknowledgement alone) is the requirement; unresolved conflict cannot be overridden by user checkbox or CA acknowledgement.
 
-`READY` and `DECLARED_NOT_APPLICABLE` are fail-closed states, not prose labels. `READY` requires a non-null exact source/evidence binding plus an immutable hash of the complete, nonempty required catalog and its ordered evidence bindings. `DECLARED_NOT_APPLICABLE` requires a non-null exact source/evidence binding, actor, reason, and scope. A missing or mismatched binding, hash, or conditional field leaves the source unresolved and blocks the affected action.
+`READY` and `DECLARED_NOT_APPLICABLE` are fail-closed states, not prose labels. `READY` requires a sealed nonempty catalog snapshot with immutable ordinal/`requirement_key` entries, one normalized readiness evidence-set entry for every required catalog entry, exact FKs from each entry to that catalog entry and its source artifact/hash, equal catalog/evidence counts, and a deferred exact set-equality assertion. The evidence-set and catalog hashes cover those ordered identities; a caller-supplied hash cannot make a partial set complete. If role multiplicity is needed, it is a separate normalized child under one catalog entry. `DECLARED_NOT_APPLICABLE` requires a non-null exact source/evidence binding, actor, reason, and scope. A missing, duplicated, mismatched, or partial binding leaves the source unresolved and blocks the affected action.
 
 **Failure mode:** A missing artifact is treated as optional because a user acknowledged a checklist. An optional source is hidden because it is unresolved. A conflict is marked READY without explicit reconciliation reason/amount/evidence/actor/date.
 
-**Control:** Before readiness evaluation, the complete required source catalog is deterministically enumerated from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. An empty or not-yet-enumerated catalog can never pass `READY`. Required unresolved states block only the affected computation, export, or filing action; they do not block unrelated BookSet work. Optional unresolved sources remain visible and do not silently disappear.
+**Control:** Before readiness evaluation, the complete required source catalog is deterministically enumerated from taxpayer facts, applicable BookSets, tax heads, the governing rule snapshot, and the selected official schema. A catalog snapshot is sealed with its count and exact ordinal/`requirement_key` rows before evidence is evaluated. An empty or not-yet-enumerated catalog, an internally consistent partial evidence set, a duplicate coverage row, or a count/set mismatch can never pass `READY`. Required unresolved states block only the affected computation, export, or filing action; they do not block unrelated BookSet work. Optional unresolved sources remain visible and do not silently disappear.
 
 **Open choice:** Exact prompt and review mechanics remain part of the canonical contract migration and Gate0.
 
@@ -390,7 +390,7 @@ Missing mandatory rule or evidence returns REVIEW/BLOCK. A ledger label, vendor 
 
 **Status:** OWNER-APPROVED; NOT ARCHITECT-REVIEWED
 
-**Decision (Issue #1):** Local lifecycle (`PREPARED`, `EXPORTED`, `UNKNOWN`) is separate from portal/government status. Validation results are recorded only as the ExportRun `validation_outcome`, never as a local lifecycle state. Export never implies upload/submission/verification/processing. Only an ExportRun whose validation outcome is exactly `PASSED` and whose FilingSnapshot/ExportRun integrity status is `CURRENT` may be selected, bound, or receive a SubmissionAttempt; all other outcomes, stale exports, and drifted exports fail closed. A government status such as submitted is recorded only by an explicit action and bound filing-specific receipt/acknowledgement/evidence; preserve exact raw label/evidence and do not infer later states from elapsed time. Every export creates an immutable activity/audit event. Configurable automation may create a reminder/activity asking whether it was submitted. User may dismiss/remind later; dismissal never means submitted and does not delete audit history.
+**Decision (Issue #1):** Local lifecycle (`PREPARED`, `EXPORTED`, `UNKNOWN`) is separate from portal/government status. Validation results are recorded only as the ExportRun `validation_outcome`, never as a local lifecycle state. Export never implies upload/submission/verification/processing. Only an immutable SubmissionBinding whose exact snapshot ID/hash and export ID/hash identify a `PASSED` export with `CURRENT` snapshot/export integrity may receive an attempt; the attempt uses one composite FK to that binding and never includes mutable binding status. Current binding validity and later invalidation are append-only state events. A government status such as submitted is recorded only by an explicit action and bound filing-specific receipt/acknowledgement/evidence; preserve exact raw label/evidence and do not infer later states from elapsed time. Every export creates an immutable activity/audit event. Configurable automation may create a reminder/activity asking whether it was submitted. User may dismiss/remind later; dismissal never means submitted and does not delete audit history.
 
 Separate internal filing lifecycle from external portal status/evidence. Internal lifecycle states are exactly `PREPARED`, `EXPORTED`, and `UNKNOWN` (never confuse them with government/portal states). External portal status uses exactly these five normalized labels: `SUBMITTED`, `VERIFIED`, `PROCESSED`, `DEFECTIVE`, `CASE_TRANSFERRED_TO_ASSESSING_OFFICER`. They correspond to the exact raw labels in the current [ITD ITR Status FAQ](https://www.incometax.gov.in/iec/foportal/help/e-filing-know-itr-status-faq), which must be retained with filing-specific bound evidence.
 
@@ -454,15 +454,17 @@ There is no blanket local-SQLite exemption, India-only claim, automatic Signific
 
 **Pre-Submission Behavior:**
 
-Before submission evidence binds a FilingSnapshot/ExportRun, changes to books or sources create a new FilingSnapshot and ExportRun within the same live TaxCase (see PT-005). The original case remains the authoritative container; prior snapshots and exports are preserved as immutable history.
+Before any actual SubmissionAttempt exists, changes to books or sources use `PRE_SUBMISSION_REPLACEMENT`: create a different current FilingSnapshot/ExportRun and immutable SubmissionBinding in the same live TaxCase, then append a revocation/invalidation event for the old binding and mark old artifacts invalid. The original case remains the authoritative container; prior snapshots, exports, bindings, and events are preserved as immutable history. Same-case replacement is forbidden once an attempt exists.
 
 **Post-Submission Behavior:**
 
-Once submission evidence binds snapshot/export to receipt/raw portal status, those original submission artifacts and states are immutable. Correction/revised/rectification/defect-response work uses:
+Once any actual SubmissionAttempt exists, those original submission artifacts and states are immutable. Correction/revised/rectification/defect-response work uses `POST_SUBMISSION_SUCCESSOR` and:
 - A linked successor TaxCase (same taxpayer, same period, new filing sequence)
 - Independent FilingSnapshot
 - Independent ExportRun
 - Independent SubmissionAttempt and filing evidence
+
+The deferred invalidation assertion checks the actual attempt table, not a copied status label: the superseding case must be a different exact `tax_case_lineage` successor with sequence +1 and matching PAN, period, and filing trigger. Self replacement, same-case post-submission replacement, non-adjacent sequence, and route mismatch are rejected. The replacement/successor snapshot, export, binding, and initial state event are created and checked before old artifacts are marked `STALE`/`DRIFTED`; all steps commit atomically or roll back.
 
 **Current Books Independence:**
 
@@ -472,7 +474,7 @@ Current books continue to update independently throughout. The successor case re
 
 The exact official correction route (revised, rectification, defect-response, etc.) is year/rule/portal-specific and must be verified by the applicable AuthorityPack and official evidence. The mechanism is never guessed from a user label or elapsed time; verification happens before marking the successor READY.
 
-Correction metadata is structurally bound to the actual successor TaxCase's exact successor sequence, AuthorityPack ID/content hash, governing Act, period, filing trigger, and `rule_snapshot_id`. Its route FK repeats that exact tuple and the same `rule_snapshot_id`; an independently supplied route from another AuthorityPack cannot satisfy the successor metadata. When a correction invalidates prior filing work, the affected FilingSnapshots and ExportRuns are atomically and durably marked `STALE` or `DRIFTED` with reason, source, and superseding TaxCase; they remain immutable and cannot be reused, exported, or submitted.
+Correction metadata is structurally bound to the actual successor TaxCase's exact successor sequence, AuthorityPack ID/content hash, schema artifact ID/hash, governing Act, period, filing trigger, and `rule_snapshot_id`. Its route FK repeats the exact pack/applicability/rule tuple and the same `rule_snapshot_id`; an independently supplied route from another AuthorityPack cannot satisfy the successor metadata. When a correction invalidates prior filing work, the affected FilingSnapshots and ExportRuns are atomically and durably marked `STALE` or `DRIFTED` with typed replacement/successor kind, reason, source, and exact replacement identities; they remain immutable and cannot be reused, exported, or submitted.
 
 **Failure mode:** A filed case is edited in place. A correction route is inferred without verifying the governing period and portal route. Original submission artifacts are not preserved as immutable records.
 
