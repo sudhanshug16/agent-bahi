@@ -128,22 +128,22 @@ export const BOOKSET_V3_MIGRATION = {
     probes: [
       {
         id: "v3-schema-exists",
-        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='book_sets' AND sql LIKE '%display_name%'",
+        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='book_sets' AND sql LIKE '%display_name%' LIMIT 1",
         expectedRows: [{ count: 1 }],
       },
       {
         id: "v3-index-company-unique",
-        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='index' AND name='uq_book_set_tenant_company'",
+        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='index' AND name='uq_book_set_tenant_company' LIMIT 1",
         expectedRows: [{ count: 1 }],
       },
       {
         id: "v3-index-personal-unique",
-        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='index' AND name='uq_book_set_tenant_personal'",
+        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='index' AND name='uq_book_set_tenant_personal' LIMIT 1",
         expectedRows: [{ count: 1 }],
       },
       {
         id: "v3-no-old-unique",
-        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='index' AND name='uq_book_set_tenant_kind'",
+        sql: "SELECT COUNT(*) as count FROM sqlite_master WHERE type='index' AND name='uq_book_set_tenant_kind' LIMIT 1",
         expectedRows: [{ count: 0 }],
       },
     ],

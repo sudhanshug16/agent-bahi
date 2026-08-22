@@ -304,18 +304,19 @@ export class DatabaseControlService {
       ) VALUES (${Array.from({ length: 17 }, () => builder.placeholder()).join(", ")})
     `;
 
+    const lastMigration = this.expectedManifest.migrations.at(-1)!;
     await session.execute(insertSql, [
       1, // id
-      2, // schema_version
-      1, // data_format_version
-      1, // reader_compatibility_min
-      1, // reader_compatibility_max
-      1, // required_writer_protocol
+      this.expectedManifest.schemaVersion,
+      this.expectedManifest.dataFormatVersion,
+      this.expectedManifest.readerCompatibilityMin,
+      this.expectedManifest.readerCompatibilityMax,
+      this.expectedManifest.writerProtocol,
       "READY", // state
-      1, // revision
-      1, // generation
-      "0002-database-control", // last_migration_id
-      DATABASE_CONTROL_CHECKSUM, // last_migration_checksum
+      this.expectedManifest.revision,
+      this.expectedManifest.generation,
+      lastMigration.id, // last_migration_id
+      lastMigration.checksum, // last_migration_checksum
       params.cliVersion, // last_writer_cli_version
       params.buildId, // last_writer_build_id
       now, // last_writer_at
