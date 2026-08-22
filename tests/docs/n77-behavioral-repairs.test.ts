@@ -10,11 +10,11 @@ import { MigrationService } from "../../src/infrastructure/services/migration-se
 
 describe("N77 Behavioral Repairs - Real service behavior", () => {
   describe("DEFECT 4: Legacy schema upgrade preserves dirty state", () => {
-    it("should preserve legacy dirty=1 as DIRTY status with reason", async () => {
-      const dbPath = `/tmp/legacy-dirty-${randomUUID()}.sqlite`;
+    it("should fail closed on unknown id/version/dirty schema (not a committed historical shape)", async () => {
+      const dbPath = `/tmp/legacy-dirty-unknown-${randomUUID()}.sqlite`;
       const db = new SqliteAdapter({ path: dbPath });
 
-      // Create legacy schema with dirty column
+      // Create unknown schema (id/version/dirty is NOT a committed historical shape)
       await db.executeRaw(`
         CREATE TABLE schema_migrations (
           id TEXT PRIMARY KEY,
@@ -23,7 +23,7 @@ describe("N77 Behavioral Repairs - Real service behavior", () => {
         )
       `);
 
-      // Insert both clean and dirty legacy rows
+      // Insert rows
       const cleanId = `clean-${randomUUID()}`;
       const dirtyId = `dirty-${randomUUID()}`;
       await db.execute(
@@ -35,31 +35,29 @@ describe("N77 Behavioral Repairs - Real service behavior", () => {
         [dirtyId, 1, 1]
       );
 
-      // Upgrade schema
+      // Upgrade should fail on unknown schema
       const migrationService = new MigrationService(db, "sqlite");
-      await migrationService.upgradeControlSchema();
 
-      // Verify clean row is APPLIED
-      const cleanRow = await db.querySingle(
-        "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
-        [cleanId]
-      );
-      expect((cleanRow as any).status).toBe("APPLIED");
-      expect((cleanRow as any).dirty_reason).toBeNull();
+      try {
+        await migrationService.upgradeControlSchema();
+        throw new Error("Should have rejected unknown schema");
+      } catch (err: any) {
+        expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+      }
 
-      // Verify dirty row is DIRTY with legacy reason
-      const dirtyRow = await db.querySingle(
-        "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
-        [dirtyId]
-      );
-      expect((dirtyRow as any).status).toBe("DIRTY");
-      expect((dirtyRow as any).dirty_reason).toContain("legacy");
+      // Verify schema unchanged: still 3 columns
+      const tableInfo = await db.query("PRAGMA table_info(schema_migrations)");
+      expect(tableInfo.rowCount).toBe(3);
+
+      // Verify rows unchanged
+      const rowCount = await db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+      expect(Number((rowCount as any).count)).toBe(2);
 
       await db.close();
     });
 
-    it("should preserve row count and identity across upgrade", async () => {
-      const dbPath = `/tmp/legacy-preserve-${randomUUID()}.sqlite`;
+    it("should fail closed on unknown schema (id/version/dirty), rows unchanged", async () => {
+      const dbPath = `/tmp/legacy-unknown-${randomUUID()}.sqlite`;
       const db = new SqliteAdapter({ path: dbPath });
 
       await db.executeRaw(`
@@ -83,9 +81,20 @@ describe("N77 Behavioral Repairs - Real service behavior", () => {
       );
       expect(Number((beforeCount as any).count)).toBe(5);
 
-      // Upgrade
+      // Upgrade should fail on unknown schema
       const migrationService = new MigrationService(db, "sqlite");
-      await migrationService.upgradeControlSchema();
+
+      try {
+        await migrationService.upgradeControlSchema();
+        throw new Error("Should have rejected unknown schema");
+      } catch (err: any) {
+        expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+        expect(err.message).toContain("unknown");
+      }
+
+      // Verify table unchanged: still 3 columns, still has 5 rows
+      const tableInfo = await db.query("PRAGMA table_info(schema_migrations)");
+      expect(tableInfo.rowCount).toBe(3);
 
       const afterCount = await db.querySingle(
         "SELECT COUNT(*) as count FROM schema_migrations"

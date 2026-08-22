@@ -14,7 +14,7 @@ export { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
  */
 const MIGRATION_SCHEMA_SQLITE = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL PRIMARY KEY,
   dialect TEXT NOT NULL,
   checksum TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 const MIGRATION_SCHEMA_POSTGRES = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL PRIMARY KEY,
   dialect TEXT NOT NULL,
   checksum TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 const MIGRATION_SCHEMA_MYSQL = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
-  id VARCHAR(255) PRIMARY KEY,
+  id VARCHAR(255) NOT NULL PRIMARY KEY,
   dialect VARCHAR(50) NOT NULL,
   checksum VARCHAR(64) NOT NULL,
   status VARCHAR(20) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
@@ -326,22 +326,10 @@ export class MigrationService {
 
   /**
    * Upgrade legacy schema_migrations to current schema.
-   * Acquires migration lease and delegates to private helper.
+   * Acquires migration lease BEFORE any probe; delegates to private helper.
    * Idempotent: detects schema type and applies upgrade only if needed.
    */
   async upgradeControlSchema(timeoutMs: number = 30000): Promise<void> {
-    // First check without lease if table exists and if upgrade is needed
-    let tableMetadata: TableMetadata | null = null;
-    try {
-      // Quick probe outside lease to avoid unnecessary lock
-      const row = await this.db.querySingle("SELECT 1 FROM schema_migrations LIMIT 1");
-      if (!row) return; // Table is empty, no upgrade needed
-    } catch {
-      // Table doesn't exist; will be created on first migrate() call
-      return;
-    }
-
-    // Upgrade requires lease (table exists but may be in legacy format)
     await this.db.withMigrationLease(
       async (session: MigrationSession) => {
         await this.upgradeControlSchemaOnSession(session);
@@ -354,6 +342,7 @@ export class MigrationService {
    * Private helper for schema upgrade, called within migration lease.
    * Detects legacy schema type, validates data, and upgrades to current schema.
    * All operations use session (pinned connection), never raw db.*.
+   * Empty legacy tables are upgraded; unknown/hybrid/view/malformed schemas fail unchanged.
    */
   private async upgradeControlSchemaOnSession(session: MigrationSession): Promise<void> {
     try {
@@ -362,18 +351,37 @@ export class MigrationService {
       // Table doesn't exist yet; will be created on first migrate()
       if (metadata === null) return;
 
+      // Reject VIEWs: cannot upgrade views, only base tables
+      if (metadata.kind === "VIEW") {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          "schema_migrations is a VIEW, not a BASE TABLE; cannot upgrade"
+        );
+      }
+
       // If already in current format (has 11 required columns), validate and no-op
       if (this.isCurrentSchema(metadata)) {
         await this.validateCurrentSchema(session, metadata);
         return;
       }
 
-      // Detect legacy schema type and upgrade
+      // Detect legacy schema type using exact equality
       const schemaType = this.detectLegacySchemaType(metadata);
+
+      // Unknown/hybrid/malformed schemas fail closed, leave table unchanged
+      if (!schemaType) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          `schema_migrations table has unknown/hybrid/partial schema that cannot be safely upgraded; no mutation performed`
+        );
+      }
+
       const canonicalRows = await this.extractCanonicalRows(session, metadata, schemaType);
 
       // Create staging table with current schema
-      const stagingTable = `schema_migrations_stage_${randomUUID().replace(/-/g, "_")}`;
+      const stagingTable = this.dialect === "mysql"
+        ? `schema_migrations_stage_v1`
+        : `schema_migrations_stage_${randomUUID().replace(/-/g, "_")}`;
       await this.createStagingTable(session, stagingTable);
 
       // Copy canonical rows to staging
@@ -383,8 +391,8 @@ export class MigrationService {
       await this.validateRowCount(session, stagingTable, canonicalRows.length);
       await this.validateExactRows(session, stagingTable, canonicalRows);
 
-      // For SQLite/PostgreSQL: drop original and rename staging
-      // For MySQL: atomic rename with backup
+      // For SQLite/PostgreSQL: drop original and rename staging within lease transaction
+      // For MySQL: atomic rename with backup, pinned GET_LOCK already held by session
       if (this.dialect === "sqlite" || this.dialect === "postgresql") {
         await session.executeRaw("DROP TABLE schema_migrations");
         const renameCmd = this.dialect === "sqlite"
@@ -392,17 +400,13 @@ export class MigrationService {
           : `ALTER TABLE ${stagingTable} RENAME TO schema_migrations`;
         await session.executeRaw(renameCmd);
       } else if (this.dialect === "mysql") {
-        // MySQL atomic rename: original to backup, staging to original
-        const backupTable = `schema_migrations_backup_${randomUUID().replace(/-/g, "_")}`;
+        // MySQL atomic rename with fixed versioned names
+        const backupTable = `schema_migrations_backup_v1`;
         await session.executeRaw(
           `RENAME TABLE schema_migrations TO ${backupTable}, ${stagingTable} TO schema_migrations`
         );
-        // Clean up backup after successful swap
-        try {
-          await session.executeRaw(`DROP TABLE ${backupTable}`);
-        } catch {
-          // Cleanup error is non-fatal; backup is preserved
-        }
+        // Cleanup is atomic within lease; failure aborts entire upgrade transaction
+        await session.executeRaw(`DROP TABLE ${backupTable}`);
       }
 
       // Validate schema and rows after swap
@@ -433,80 +437,147 @@ export class MigrationService {
   }
 
   private isCurrentSchema(metadata: TableMetadata): boolean {
-    const requiredColumns = new Set(["id", "dialect", "checksum", "status", "executed_at", "duration_ms"]);
-    const metadataColumns = new Set(metadata.columns.map(c => c.name));
+    // Must be a BASE TABLE, not a VIEW or other kind
+    if (metadata.kind !== "TABLE") return false;
 
-    // Check if all required columns exist
-    for (const col of requiredColumns) {
-      if (!metadataColumns.has(col)) return false;
-    }
-
-    // Check if exactly 11 columns (current schema)
+    // Verify exactly 11 columns in current schema
     if (metadata.columns.length !== 11) return false;
 
-    // Verify exact column order and types for current schema
-    const expectedOrder = [
-      "id", "dialect", "checksum", "status", "executed_at", "duration_ms",
-      "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json"
+    // Expected column names and nullability
+    const expectedColumns: Array<{ name: string; nullable: boolean }> = [
+      { name: "id", nullable: false },
+      { name: "dialect", nullable: false },
+      { name: "checksum", nullable: false },
+      { name: "status", nullable: false },
+      { name: "executed_at", nullable: false },
+      { name: "duration_ms", nullable: false },
+      { name: "dirty_reason", nullable: true },
+      { name: "lease_token", nullable: true },
+      { name: "manifest_version", nullable: true },
+      { name: "verification_manifest_hash", nullable: true },
+      { name: "manifest_json", nullable: true },
     ];
 
-    if (metadata.columns.length !== expectedOrder.length) return false;
+    // Verify exact order, names, and nullability
+    for (let i = 0; i < expectedColumns.length; i++) {
+      const expected = expectedColumns[i];
+      const actual = metadata.columns[i];
 
-    for (let i = 0; i < expectedOrder.length; i++) {
-      if (metadata.columns[i].name !== expectedOrder[i]) return false;
+      if (actual.name !== expected.name) return false;
+
+      // For nullable check: if column is PRIMARY KEY (col 0), SQLite might not mark it as NOT NULL
+      // in PRAGMA even though PRIMARY KEY implies NOT NULL. Accept either case for id.
+      if (i === 0 && actual.name === "id") {
+        // id can be reported as nullable or not-nullable (PRIMARY KEY is implicit NOT NULL)
+        // Accept either; both are valid current schema definitions
+      } else if (actual.nullable !== expected.nullable) {
+        return false;
+      }
     }
 
     return true;
   }
 
   private validateCurrentSchema(session: MigrationSession, metadata: TableMetadata): void {
-    // Validate required columns exist with correct nullability
-    const requiredColumns = {
-      id: { nullable: false },
-      dialect: { nullable: false },
-      checksum: { nullable: false },
-      status: { nullable: false },
-      executed_at: { nullable: false },
-      duration_ms: { nullable: false },
-    };
+    // Validate it is a BASE TABLE (not VIEW)
+    if (metadata.kind !== "TABLE") {
+      throw new DomainError(
+        "CONTROL_SCHEMA_UPGRADE_FAILED",
+        `schema_migrations must be a BASE TABLE, not ${metadata.kind}`
+      );
+    }
 
-    for (const [colName, props] of Object.entries(requiredColumns)) {
-      const col = metadata.columns.find(c => c.name === colName);
-      if (!col) {
+    // Validate exactly 11 columns in exact order
+    const expectedOrder = [
+      "id", "dialect", "checksum", "status", "executed_at", "duration_ms",
+      "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json"
+    ];
+
+    if (metadata.columns.length !== expectedOrder.length) {
+      throw new DomainError(
+        "CONTROL_SCHEMA_UPGRADE_FAILED",
+        `schema_migrations has ${metadata.columns.length} columns, expected ${expectedOrder.length}`
+      );
+    }
+
+    for (let i = 0; i < expectedOrder.length; i++) {
+      if (metadata.columns[i].name !== expectedOrder[i]) {
         throw new DomainError(
           "CONTROL_SCHEMA_UPGRADE_FAILED",
-          `Required column ${colName} missing from schema_migrations`
+          `Column ${i} is named ${metadata.columns[i].name}, expected ${expectedOrder[i]}`
         );
       }
-      if (col.nullable !== props.nullable) {
+    }
+
+    // Validate required columns have correct nullability
+    const nullabilitySpec: Record<string, boolean> = {
+      id: false,
+      dialect: false,
+      checksum: false,
+      status: false,
+      executed_at: false,
+      duration_ms: false,
+      dirty_reason: true,
+      lease_token: true,
+      manifest_version: true,
+      verification_manifest_hash: true,
+      manifest_json: true,
+    };
+
+    for (const col of metadata.columns) {
+      const expectedNullable = nullabilitySpec[col.name];
+
+      // Special case: if this is the PRIMARY KEY column (id), SQLite may or may not report it as NOT NULL
+      // in PRAGMA even though PRIMARY KEY implies NOT NULL. Accept either nullable or not-nullable for id.
+      if (col.name === "id" && col.primaryKey) {
+        // Accept either nullable=false (explicit NOT NULL) or nullable=true (implicit from PRIMARY KEY)
+        continue;
+      }
+
+      if (col.nullable !== expectedNullable) {
         throw new DomainError(
           "CONTROL_SCHEMA_UPGRADE_FAILED",
-          `Column ${colName} has incorrect nullability`
+          `Column ${col.name} nullable=${col.nullable}, expected ${expectedNullable}`
         );
       }
     }
   }
 
-  private detectLegacySchemaType(metadata: TableMetadata): string {
-    const columns = new Set(metadata.columns.map(c => c.name));
+  private detectLegacySchemaType(metadata: TableMetadata): string | null {
+    const columnSet = new Set(metadata.columns.map(c => c.name));
+    const columnCount = metadata.columns.length;
 
-    // Gate0: logical_id, checksum, applied_at
-    if (columns.has("logical_id") && columns.has("checksum") && columns.has("applied_at")) {
+    // Gate0: EXACTLY 3 columns: logical_id, checksum, applied_at
+    if (columnCount === 3 && columnSet.has("logical_id") && columnSet.has("checksum") && columnSet.has("applied_at")) {
       return "gate0";
     }
 
-    // Dirty flag: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason
-    if (columns.has("dirty") && columns.has("dirty_reason")) {
+    // Dirty flag: EXACTLY 7 columns: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason
+    if (columnCount === 7 &&
+        columnSet.has("id") && columnSet.has("dialect") && columnSet.has("checksum") &&
+        columnSet.has("executed_at") && columnSet.has("duration_ms") &&
+        columnSet.has("dirty") && columnSet.has("dirty_reason")) {
       return "dirty_flag";
     }
 
-    // Nullable status: status column exists but may be NULL
-    if (columns.has("status")) {
+    // Strict status + lease: EXACTLY 7 columns: id, dialect, checksum, status, executed_at, duration_ms, lease_token (no manifest, no dirty)
+    if (columnCount === 7 &&
+        columnSet.has("id") && columnSet.has("dialect") && columnSet.has("checksum") &&
+        columnSet.has("status") && columnSet.has("executed_at") && columnSet.has("duration_ms") &&
+        columnSet.has("lease_token") && !columnSet.has("manifest_version") && !columnSet.has("dirty")) {
+      return "strict_status_lease";
+    }
+
+    // Nullable status: EXACTLY 6 columns: id, dialect, checksum, status, executed_at, duration_ms (status may be NULL)
+    if (columnCount === 6 &&
+        columnSet.has("id") && columnSet.has("dialect") && columnSet.has("checksum") &&
+        columnSet.has("status") && columnSet.has("executed_at") && columnSet.has("duration_ms") &&
+        !columnSet.has("lease_token")) {
       return "nullable_status";
     }
 
-    // Default: assume simple version-based legacy (id, version, dirty or similar)
-    return "simple_legacy";
+    // Unknown/hybrid/partial schema: fail closed, never upgrade
+    return null;
   }
 
   private async extractCanonicalRows(
@@ -520,32 +591,77 @@ export class MigrationService {
     return rows.map(row => {
       const canonical: Record<string, unknown> = {};
 
-      // Helper to normalize string values
+      // Helper to preserve string values exactly; never invent empty strings
       const asString = (value: unknown): string => {
-        if (value === null || value === undefined) return "";
-        if (typeof value === "string") return value;
+        if (typeof value === "string" && value.length > 0) return value;
+        if (value === null || value === undefined || value === "") {
+          throw new DomainError(
+            "CONTROL_SCHEMA_UPGRADE_FAILED",
+            "Cannot upgrade row with missing required string field"
+          );
+        }
         if (typeof value === "number" || typeof value === "bigint") return String(value);
         return String(value);
       };
 
-      // Helper to normalize numeric values as BigInt (SQLite with safeIntegers returns as BigInt)
-      const asBigInt = (value: unknown, defaultValue: bigint = BigInt(0)): bigint => {
-        if (value === null || value === undefined) return defaultValue;
+      // Helper to preserve exact integer values as BigInt (prevent Number precision loss)
+      const asBigInt = (value: unknown): bigint => {
+        if (value === null || value === undefined) {
+          throw new DomainError(
+            "CONTROL_SCHEMA_UPGRADE_FAILED",
+            "Cannot upgrade row with missing required numeric field"
+          );
+        }
         if (typeof value === "bigint") return value;
-        if (typeof value === "number") return BigInt(Math.floor(value));
-        const parsed = BigInt(Number(value));
-        return parsed;
+        if (typeof value === "number") {
+          if (!Number.isFinite(value)) {
+            throw new DomainError(
+              "CONTROL_SCHEMA_UPGRADE_FAILED",
+              `Cannot upgrade row with non-finite numeric value ${value}`
+            );
+          }
+          if (!Number.isInteger(value)) {
+            throw new DomainError(
+              "CONTROL_SCHEMA_UPGRADE_FAILED",
+              `Cannot upgrade row with non-integer numeric value ${value}`
+            );
+          }
+          return BigInt(value);
+        }
+        return BigInt(Number(value));
+      };
+
+      // Helper to handle nullable string fields (preserve null or exact value)
+      const asNullableString = (value: unknown): string | null => {
+        if (value === null || value === undefined) return null;
+        if (typeof value === "string") return value;
+        return String(value);
+      };
+
+      // Helper to validate exact enum values
+      const asStatus = (value: unknown): string => {
+        if (value === "APPLIED" || value === "APPLYING" || value === "DIRTY") return value;
+        if (value === null || value === undefined) {
+          throw new DomainError(
+            "CONTROL_SCHEMA_UPGRADE_FAILED",
+            "Cannot upgrade row with NULL status in legacy schema"
+          );
+        }
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          `Cannot upgrade row with invalid status value ${value}`
+        );
       };
 
       switch (schemaType) {
         case "gate0":
-          // Map: logical_id->id, checksum->checksum, applied_at->executed_at
-          canonical.id = asString(row.logical_id ?? row.id);
+          // Gate0 requires: logical_id, checksum, applied_at
+          canonical.id = asString(row.logical_id);
           canonical.dialect = this.dialect;
-          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
+          canonical.checksum = asString(row.checksum);
           canonical.status = "APPLIED";
-          canonical.executed_at = asString(row.applied_at ?? new Date().toISOString());
-          canonical.duration_ms = asBigInt(0, BigInt(0));
+          canonical.executed_at = asString(row.applied_at);
+          canonical.duration_ms = BigInt(0);
           canonical.dirty_reason = null;
           canonical.lease_token = null;
           canonical.manifest_version = null;
@@ -554,63 +670,88 @@ export class MigrationService {
           break;
 
         case "dirty_flag":
-          // Preserve existing dialect if present, otherwise use current
+          // Dirty flag requires: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason
           canonical.id = asString(row.id);
-          canonical.dialect = asString(row.dialect ?? this.dialect);
-          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
-          // Map: dirty=0 -> APPLIED, dirty=1 -> DIRTY
-          const dirtyVal = asBigInt(row.dirty, BigInt(0));
+          canonical.dialect = asString(row.dialect);
+          canonical.checksum = asString(row.checksum);
+          // Exact dirty=0 -> APPLIED, dirty=1 -> DIRTY (only these exact values)
+          const dirtyVal = asBigInt(row.dirty);
+          if (dirtyVal !== BigInt(0) && dirtyVal !== BigInt(1)) {
+            throw new DomainError(
+              "CONTROL_SCHEMA_UPGRADE_FAILED",
+              `Cannot upgrade row with invalid dirty value ${dirtyVal}; must be 0 or 1`
+            );
+          }
           canonical.status = dirtyVal === BigInt(1) ? "DIRTY" : "APPLIED";
-          canonical.executed_at = asString(row.executed_at ?? new Date().toISOString());
-          canonical.duration_ms = asBigInt(row.duration_ms, BigInt(0));
-          canonical.dirty_reason = dirtyVal === BigInt(1) ? (asString(row.dirty_reason ?? "legacy migration imported with dirty flag set")) : null;
+          canonical.executed_at = asString(row.executed_at);
+          canonical.duration_ms = asBigInt(row.duration_ms);
+          canonical.dirty_reason = dirtyVal === BigInt(1) ? asNullableString(row.dirty_reason) : null;
           canonical.lease_token = null;
+          canonical.manifest_version = null;
+          canonical.verification_manifest_hash = null;
+          canonical.manifest_json = null;
+          break;
+
+        case "strict_status_lease":
+          // Strict status + lease: preserve every value exactly
+          canonical.id = asString(row.id);
+          canonical.dialect = asString(row.dialect);
+          canonical.checksum = asString(row.checksum);
+          canonical.status = asStatus(row.status);
+          canonical.executed_at = asString(row.executed_at);
+          canonical.duration_ms = asBigInt(row.duration_ms);
+          canonical.dirty_reason = null; // Not present in this schema
+          canonical.lease_token = asNullableString(row.lease_token);
+          canonical.manifest_version = null;
+          canonical.verification_manifest_hash = null;
+          canonical.manifest_json = null;
+          break;
+
+        case "strict_status_lease":
+          // Strict status + lease: preserve every value exactly
+          canonical.id = asString(row.id);
+          canonical.dialect = asString(row.dialect);
+          canonical.checksum = asString(row.checksum);
+          canonical.status = asStatus(row.status);
+          canonical.executed_at = asString(row.executed_at);
+          canonical.duration_ms = asBigInt(row.duration_ms);
+          canonical.dirty_reason = null; // Not present in this schema
+          canonical.lease_token = asNullableString(row.lease_token);
           canonical.manifest_version = null;
           canonical.verification_manifest_hash = null;
           canonical.manifest_json = null;
           break;
 
         case "nullable_status":
-          // Preserve status if valid, otherwise DIRTY with reason
+          // Nullable status: preserve valid APPLIED/APPLYING/DIRTY; fail closed on NULL/unknown
           canonical.id = asString(row.id);
-          canonical.dialect = asString(row.dialect ?? this.dialect);
-          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
-          const status = row.status;
-          if (status === "APPLIED" || status === "APPLYING" || status === "DIRTY") {
-            canonical.status = status;
-          } else if (status === null || status === undefined) {
-            canonical.status = "DIRTY";
-            canonical.dirty_reason = "LEGACY_UNKNOWN_STATUS";
-          } else {
-            canonical.status = "DIRTY";
-            canonical.dirty_reason = `LEGACY_INVALID_STATUS: ${status}`;
-          }
-          canonical.executed_at = asString(row.executed_at ?? new Date().toISOString());
-          canonical.duration_ms = asBigInt(row.duration_ms, BigInt(0));
-          if (canonical.status === "DIRTY" && !canonical.dirty_reason) {
-            canonical.dirty_reason = asString(row.dirty_reason ?? "legacy migration with unknown dirty status");
-          } else if (canonical.status !== "DIRTY") {
+          canonical.dialect = asString(row.dialect);
+          canonical.checksum = asString(row.checksum);
+          const statusVal = row.status;
+          // Only preserve valid enum values
+          if (statusVal === "APPLIED" || statusVal === "APPLYING" || statusVal === "DIRTY") {
+            canonical.status = statusVal;
             canonical.dirty_reason = null;
+          } else {
+            // NULL, unknown, or invalid status: fail closed
+            throw new DomainError(
+              "CONTROL_SCHEMA_UPGRADE_FAILED",
+              `Cannot upgrade row with NULL or invalid status value ${statusVal}; must be APPLIED, APPLYING, or DIRTY`
+            );
           }
+          canonical.executed_at = asString(row.executed_at);
+          canonical.duration_ms = asBigInt(row.duration_ms);
           canonical.lease_token = null;
           canonical.manifest_version = null;
           canonical.verification_manifest_hash = null;
           canonical.manifest_json = null;
           break;
 
-        default: // simple_legacy
-          canonical.id = asString(row.id);
-          canonical.dialect = this.dialect;
-          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
-          const legacyDirty = asBigInt(row.dirty, BigInt(0));
-          canonical.status = legacyDirty === BigInt(1) ? "DIRTY" : "APPLIED";
-          canonical.executed_at = asString(row.executed_at ?? row.version ?? new Date().toISOString());
-          canonical.duration_ms = asBigInt(0, BigInt(0));
-          canonical.dirty_reason = legacyDirty === BigInt(1) ? "legacy migration imported with dirty flag set" : null;
-          canonical.lease_token = null;
-          canonical.manifest_version = null;
-          canonical.verification_manifest_hash = null;
-          canonical.manifest_json = null;
+        default:
+          throw new DomainError(
+            "CONTROL_SCHEMA_UPGRADE_FAILED",
+            `Unknown schema type ${schemaType}`
+          );
       }
 
       return canonical;
@@ -623,7 +764,7 @@ export class MigrationService {
     if (this.dialect === "sqlite") {
       createSql = `
         CREATE TABLE ${stagingTable} (
-          id TEXT PRIMARY KEY,
+          id TEXT NOT NULL PRIMARY KEY,
           dialect TEXT NOT NULL,
           checksum TEXT NOT NULL,
           status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
@@ -639,7 +780,7 @@ export class MigrationService {
     } else if (this.dialect === "postgresql") {
       createSql = `
         CREATE TABLE ${stagingTable} (
-          id TEXT PRIMARY KEY,
+          id TEXT NOT NULL PRIMARY KEY,
           dialect TEXT NOT NULL,
           checksum TEXT NOT NULL,
           status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
@@ -655,7 +796,7 @@ export class MigrationService {
     } else {
       createSql = `
         CREATE TABLE ${stagingTable} (
-          id VARCHAR(255) PRIMARY KEY,
+          id VARCHAR(255) NOT NULL PRIMARY KEY,
           dialect VARCHAR(50) NOT NULL,
           checksum VARCHAR(64) NOT NULL,
           status VARCHAR(20) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),

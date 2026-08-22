@@ -1,15 +1,16 @@
 /**
- * Schema Upgrade Behavioral Tests - Phase 1A repair (N80/N81/N83)
+ * Schema Upgrade Behavioral Tests - Phase 1A Repair (N80/N81)
  *
  * Comprehensive behavioral tests for legacy schema_migrations upgrade repair:
  * - Each exact historical shape and current no-op behavior
- * - Empty legacy table handling
- * - Unknown/hybrid/superset/partial/view/malformed-current rejection
+ * - Empty legacy table handling (upgrade schema, not no-op)
+ * - Unknown/hybrid/superset/partial/view/malformed-current rejection with no mutation
  * - Null-required and invalid status/dirty value rejection
  * - Exact row equality including nulls and large integer preservation
  * - Injected copy/validate/swap failure rollback for SQLite/PostgreSQL
  * - Metadata connection/permission error propagation
  * - recoverDirty null-manifest behavior fail-closed
+ * Tests invoke real MigrationService/production adapters and assert exact outcomes.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
@@ -19,14 +20,14 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { DomainError } from "../../src/core/types.ts";
 
-describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
+describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81)", () => {
   describe("Each exact historical shape", () => {
-    describe("Gate0 shape: logical_id, checksum, applied_at", () => {
+    describe("Gate0 shape: logical_id, checksum, applied_at (exactly 3 columns)", () => {
       it("should upgrade Gate0 schema to current 11-column format", async () => {
         const dbPath = `/tmp/schema-upgrade-gate0-${randomUUID()}.sqlite`;
         const db = new SqliteAdapter({ path: dbPath });
 
-        // Create Gate0 schema
+        // Create exact Gate0 schema: 3 columns
         await db.executeRaw(`
           CREATE TABLE schema_migrations (
             logical_id TEXT PRIMARY KEY,
@@ -35,8 +36,8 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
           )
         `);
 
-        // Insert Gate0 rows
-        const gate0Id = `gate0-migration-${randomUUID()}`;
+        // Insert Gate0 row
+        const gate0Id = `gate0-001-${randomUUID()}`;
         const gate0Checksum = "abc123def456";
         const gate0AppliedAt = "2026-08-22T10:00:00Z";
         await db.execute(
@@ -44,13 +45,13 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
           [gate0Id, gate0Checksum, gate0AppliedAt]
         );
 
-        // Upgrade
+        // Upgrade within migration lease
         const migrationService = new MigrationService(db, "sqlite");
         await migrationService.upgradeControlSchema();
 
-        // Verify current schema exists
+        // Verify row preserved exactly
         const row = await db.querySingle(
-          "SELECT id, dialect, checksum, status, executed_at, duration_ms FROM schema_migrations WHERE id = ?",
+          "SELECT id, dialect, checksum, status, executed_at, duration_ms, dirty_reason FROM schema_migrations WHERE id = ?",
           [gate0Id]
         );
         expect((row as any).id).toBe(gate0Id);
@@ -58,7 +59,8 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         expect((row as any).checksum).toBe(gate0Checksum);
         expect((row as any).status).toBe("APPLIED");
         expect((row as any).executed_at).toBe(gate0AppliedAt);
-        expect(Number((row as any).duration_ms)).toBe(0);
+        expect((row as any).duration_ms).toBe(BigInt(0));
+        expect((row as any).dirty_reason).toBeNull();
 
         // Verify all 11 columns exist
         const metadata = await db.query(
@@ -70,7 +72,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
       });
     });
 
-    describe("Dirty flag shape: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason", () => {
+    describe("Dirty flag shape: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason (exactly 7 columns)", () => {
       it("should preserve dirty=0 as APPLIED status", async () => {
         const dbPath = `/tmp/schema-upgrade-dirty-clean-${randomUUID()}.sqlite`;
         const db = new SqliteAdapter({ path: dbPath });
@@ -108,8 +110,44 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         await db.close();
       });
 
-      it("should preserve dirty=1 as DIRTY status with legacy reason", async () => {
+      it("should preserve dirty=1 as DIRTY status with reason", async () => {
         const dbPath = `/tmp/schema-upgrade-dirty-set-${randomUUID()}.sqlite`;
+        const db = new SqliteAdapter({ path: dbPath });
+
+        await db.executeRaw(`
+          CREATE TABLE schema_migrations (
+            id TEXT PRIMARY KEY,
+            dialect TEXT NOT NULL,
+            checksum TEXT NOT NULL,
+            executed_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            dirty INTEGER NOT NULL,
+            dirty_reason TEXT
+          )
+        `);
+
+        const migId = `migration-${randomUUID()}`;
+        const originalReason = "original failure";
+        await db.execute(
+          "INSERT INTO schema_migrations (id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [migId, "sqlite", "checksum", "2026-08-22T10:00:00Z", 50, 1, originalReason]
+        );
+
+        const migrationService = new MigrationService(db, "sqlite");
+        await migrationService.upgradeControlSchema();
+
+        const row = await db.querySingle(
+          "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
+          [migId]
+        );
+        expect((row as any).status).toBe("DIRTY");
+        expect((row as any).dirty_reason).toBe(originalReason);
+
+        await db.close();
+      });
+
+      it("should reject dirty values other than 0 or 1", async () => {
+        const dbPath = `/tmp/schema-upgrade-dirty-invalid-${randomUUID()}.sqlite`;
         const db = new SqliteAdapter({ path: dbPath });
 
         await db.executeRaw(`
@@ -127,25 +165,28 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         const migId = `migration-${randomUUID()}`;
         await db.execute(
           "INSERT INTO schema_migrations (id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [migId, "sqlite", "checksum", new Date().toISOString(), 50, 1, "original failure"]
+          [migId, "sqlite", "checksum", "2026-08-22T10:00:00Z", 50, 2, "invalid"]
         );
 
         const migrationService = new MigrationService(db, "sqlite");
-        await migrationService.upgradeControlSchema();
 
-        const row = await db.querySingle(
-          "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
-          [migId]
-        );
-          expect((row as any).status).toBe("DIRTY");
-        // If dirty_reason was provided in legacy row, it's preserved
-        expect((row as any).dirty_reason).toBe("original failure");
+        try {
+          await migrationService.upgradeControlSchema();
+          throw new Error("Should have rejected invalid dirty value");
+        } catch (err: any) {
+          expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+          expect(err.message).toContain("invalid dirty value");
+        }
+
+        // Verify table unchanged
+        const count = await db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+        expect(Number((count as any).count)).toBe(1);
 
         await db.close();
       });
     });
 
-    describe("Nullable status shape: status column may be NULL", () => {
+    describe("Nullable status shape: id, dialect, checksum, status, executed_at, duration_ms (exactly 6 columns)", () => {
       it("should preserve valid APPLIED status", async () => {
         const dbPath = `/tmp/schema-upgrade-nullable-applied-${randomUUID()}.sqlite`;
         const db = new SqliteAdapter({ path: dbPath });
@@ -164,7 +205,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         const migId = `migration-${randomUUID()}`;
         await db.execute(
           "INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
-          [migId, "sqlite", "checksum", "APPLIED", new Date().toISOString(), 75]
+          [migId, "sqlite", "checksum", "APPLIED", "2026-08-22T10:00:00Z", 75]
         );
 
         const migrationService = new MigrationService(db, "sqlite");
@@ -179,7 +220,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         await db.close();
       });
 
-      it("should convert NULL status to DIRTY with reason", async () => {
+      it("should reject NULL status, fail closed with schema+rows unchanged", async () => {
         const dbPath = `/tmp/schema-upgrade-nullable-null-${randomUUID()}.sqlite`;
         const db = new SqliteAdapter({ path: dbPath });
 
@@ -190,26 +231,70 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
             checksum TEXT NOT NULL,
             status TEXT,
             executed_at TEXT NOT NULL,
-            duration_ms INTEGER NOT NULL,
-            dirty_reason TEXT
+            duration_ms INTEGER NOT NULL
           )
         `);
 
         const migId = `migration-${randomUUID()}`;
         await db.execute(
-          "INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [migId, "sqlite", "checksum", null, new Date().toISOString(), 50, null]
+          "INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
+          [migId, "sqlite", "checksum", null, "2026-08-22T10:00:00Z", 50]
+        );
+
+        const migrationService = new MigrationService(db, "sqlite");
+
+        try {
+          await migrationService.upgradeControlSchema();
+          throw new Error("Should have rejected NULL status");
+        } catch (err: any) {
+          expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+          expect(err.message).toContain("NULL or invalid status");
+        }
+
+        // Verify table unchanged (still 6 columns, still has the row)
+        const tableInfo = await db.query("PRAGMA table_info(schema_migrations)");
+        expect(tableInfo.rowCount).toBe(6);
+
+        const rowCount = await db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+        expect(Number((rowCount as any).count)).toBe(1);
+
+        await db.close();
+      });
+    });
+
+    describe("Strict status + lease shape: id, dialect, checksum, status, executed_at, duration_ms, lease_token (exactly 8 columns)", () => {
+      it("should preserve all values exactly including lease_token", async () => {
+        const dbPath = `/tmp/schema-upgrade-strict-lease-${randomUUID()}.sqlite`;
+        const db = new SqliteAdapter({ path: dbPath });
+
+        await db.executeRaw(`
+          CREATE TABLE schema_migrations (
+            id TEXT PRIMARY KEY,
+            dialect TEXT NOT NULL,
+            checksum TEXT NOT NULL,
+            status TEXT NOT NULL,
+            executed_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            lease_token TEXT
+          )
+        `);
+
+        const migId = `migration-${randomUUID()}`;
+        const leaseToken = randomUUID();
+        await db.execute(
+          "INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [migId, "sqlite", "checksum", "APPLIED", "2026-08-22T10:00:00Z", 123, leaseToken]
         );
 
         const migrationService = new MigrationService(db, "sqlite");
         await migrationService.upgradeControlSchema();
 
         const row = await db.querySingle(
-          "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
+          "SELECT status, lease_token FROM schema_migrations WHERE id = ?",
           [migId]
         );
-        expect((row as any).status).toBe("DIRTY");
-        expect((row as any).dirty_reason).toContain("LEGACY_UNKNOWN_STATUS");
+        expect((row as any).status).toBe("APPLIED");
+        expect((row as any).lease_token).toBe(leaseToken);
 
         await db.close();
       });
@@ -245,7 +330,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         `INSERT INTO schema_migrations
          (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [migId, "sqlite", checksum, "APPLIED", new Date().toISOString(), 100, null, null, null, null, null]
+        [migId, "sqlite", checksum, "APPLIED", "2026-08-22T10:00:00Z", 100, null, null, null, null, null]
       );
 
       // Get row before upgrade
@@ -274,27 +359,31 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
   });
 
   describe("Empty legacy table", () => {
-    it("should no-op on empty legacy table", async () => {
+    it("should upgrade schema structure even on empty legacy table", async () => {
       const dbPath = `/tmp/schema-upgrade-empty-${randomUUID()}.sqlite`;
       const db = new SqliteAdapter({ path: dbPath });
 
-      // Create legacy schema but leave it empty
+      // Create empty legacy schema (dirty flag shape)
       await db.executeRaw(`
         CREATE TABLE schema_migrations (
           id TEXT PRIMARY KEY,
-          version INTEGER NOT NULL,
-          dirty INTEGER NOT NULL
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          executed_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          dirty INTEGER NOT NULL,
+          dirty_reason TEXT
         )
       `);
 
       const migrationService = new MigrationService(db, "sqlite");
       await migrationService.upgradeControlSchema();
 
-      // Table should still exist in original form
-      const tables = await db.query(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+      // Table should be upgraded to current schema
+      const metadata = await db.query(
+        "PRAGMA table_info(schema_migrations)"
       );
-      expect(tables.rowCount).toBe(1);
+      expect(metadata.rowCount).toBe(11);
 
       // Should still be empty
       const count = await db.querySingle(
@@ -306,39 +395,158 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
     });
   });
 
-  describe("Unknown/hybrid/superset/partial schemas fail unchanged", () => {
-    it("should upgrade unknown schema as simple_legacy (fallback behavior)", async () => {
+  describe("Unknown/hybrid/superset/partial/view/malformed-current rejection", () => {
+    it("should reject unknown schema (unknown column set)", async () => {
       const dbPath = `/tmp/schema-upgrade-unknown-${randomUUID()}.sqlite`;
       const db = new SqliteAdapter({ path: dbPath });
 
-      // Create unknown schema (matches simple_legacy fallback pattern)
+      // Create unknown schema (doesn't match any known pattern)
       await db.executeRaw(`
         CREATE TABLE schema_migrations (
-          id TEXT PRIMARY KEY,
-          checksum TEXT NOT NULL,
-          executed_at TEXT NOT NULL,
-          dirty INTEGER NOT NULL
+          migration_id TEXT PRIMARY KEY,
+          sql_text TEXT NOT NULL,
+          applied_time INTEGER NOT NULL
         )
       `);
 
       const unknownId = `unknown-${randomUUID()}`;
       await db.execute(
-        "INSERT INTO schema_migrations (id, checksum, executed_at, dirty) VALUES (?, ?, ?, ?)",
-        [unknownId, "checksum123", new Date().toISOString(), 0]
+        "INSERT INTO schema_migrations (migration_id, sql_text, applied_time) VALUES (?, ?, ?)",
+        [unknownId, "SELECT 1", 123456]
       );
 
-      // Upgrade (treats as simple_legacy)
       const migrationService = new MigrationService(db, "sqlite");
-      await migrationService.upgradeControlSchema();
 
-      // Row should exist in current schema
-      const row = await db.querySingle(
-        "SELECT id, checksum, status FROM schema_migrations WHERE id = ?",
-        [unknownId]
+      try {
+        await migrationService.upgradeControlSchema();
+        throw new Error("Should have rejected unknown schema");
+      } catch (err: any) {
+        expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+        expect(err.message).toContain("unknown");
+      }
+
+      // Verify table unchanged
+      const count = await db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+      expect(Number((count as any).count)).toBe(1);
+
+      await db.close();
+    });
+
+    it("should reject hybrid schema (columns from multiple versions)", async () => {
+      const dbPath = `/tmp/schema-upgrade-hybrid-${randomUUID()}.sqlite`;
+      const db = new SqliteAdapter({ path: dbPath });
+
+      // Create hybrid schema: combines Gate0 (logical_id) with dirty flag (dirty, dirty_reason)
+      await db.executeRaw(`
+        CREATE TABLE schema_migrations (
+          logical_id TEXT PRIMARY KEY,
+          checksum TEXT NOT NULL,
+          applied_at TEXT NOT NULL,
+          dirty INTEGER,
+          dirty_reason TEXT
+        )
+      `);
+
+      const hybridId = `hybrid-${randomUUID()}`;
+      await db.execute(
+        "INSERT INTO schema_migrations (logical_id, checksum, applied_at, dirty, dirty_reason) VALUES (?, ?, ?, ?, ?)",
+        [hybridId, "checksum", "2026-08-22T10:00:00Z", 0, null]
       );
-      expect((row as any)?.id).toBe(unknownId);
-      expect((row as any)?.checksum).toBe("checksum123");
-      expect((row as any)?.status).toBe("APPLIED"); // dirty=0 -> APPLIED
+
+      const migrationService = new MigrationService(db, "sqlite");
+
+      try {
+        await migrationService.upgradeControlSchema();
+        throw new Error("Should have rejected hybrid schema");
+      } catch (err: any) {
+        expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+      }
+
+      // Verify table unchanged
+      const count = await db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+      expect(Number((count as any).count)).toBe(1);
+
+      await db.close();
+    });
+
+    it("should reject superset schema (current schema plus extra columns)", async () => {
+      const dbPath = `/tmp/schema-upgrade-superset-${randomUUID()}.sqlite`;
+      const db = new SqliteAdapter({ path: dbPath });
+
+      // Create superset: current 11 columns plus extra
+      await db.executeRaw(`
+        CREATE TABLE schema_migrations (
+          id TEXT PRIMARY KEY,
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+          executed_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          dirty_reason TEXT,
+          lease_token TEXT,
+          manifest_version INTEGER,
+          verification_manifest_hash TEXT,
+          manifest_json TEXT,
+          extra_column TEXT
+        )
+      `);
+
+      const supersetId = `superset-${randomUUID()}`;
+      await db.execute(
+        `INSERT INTO schema_migrations
+         (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json, extra_column)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [supersetId, "sqlite", "checksum", "APPLIED", "2026-08-22T10:00:00Z", 100, null, null, null, null, null, "extra"]
+      );
+
+      const migrationService = new MigrationService(db, "sqlite");
+
+      try {
+        await migrationService.upgradeControlSchema();
+        throw new Error("Should have rejected superset schema");
+      } catch (err: any) {
+        expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+      }
+
+      // Verify table unchanged
+      const count = await db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+      expect(Number((count as any).count)).toBe(1);
+
+      await db.close();
+    });
+
+    it("should reject VIEW instead of TABLE", async () => {
+      const dbPath = `/tmp/schema-upgrade-view-${randomUUID()}.sqlite`;
+      const db = new SqliteAdapter({ path: dbPath });
+
+      // Create a backing table
+      await db.executeRaw(`
+        CREATE TABLE schema_migrations_real (
+          id TEXT PRIMARY KEY,
+          checksum TEXT NOT NULL
+        )
+      `);
+
+      // Create a view with the name schema_migrations
+      await db.executeRaw(`
+        CREATE VIEW schema_migrations AS SELECT id, checksum FROM schema_migrations_real
+      `);
+
+      const migrationService = new MigrationService(db, "sqlite");
+
+      try {
+        await migrationService.upgradeControlSchema();
+        throw new Error("Should have rejected VIEW");
+      } catch (err: any) {
+        expect(err.code || err.message).toContain("CONTROL_SCHEMA_UPGRADE_FAILED");
+        expect(err.message).toContain("VIEW");
+      }
+
+      // Verify view unchanged
+      const metadata = await db.query(
+        "SELECT type FROM sqlite_master WHERE type='view' AND name='schema_migrations'"
+      );
+      expect(metadata.rowCount).toBe(1);
 
       await db.close();
     });
@@ -349,7 +557,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
       const dbPath = `/tmp/schema-upgrade-bigint-${randomUUID()}.sqlite`;
       const db = new SqliteAdapter({ path: dbPath });
 
-      // Create current schema to test preservation
+      // Create current schema
       await db.executeRaw(`
         CREATE TABLE schema_migrations (
           id TEXT PRIMARY KEY,
@@ -368,25 +576,25 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
 
       // Insert row with large duration_ms value
       const migId = `bigint-test-${randomUUID()}`;
-      const largeDuration = 9007199254740992; // Beyond 2^53
+      const largeDuration = BigInt(9007199254740992); // Beyond 2^53
       await db.execute(
         `INSERT INTO schema_migrations
          (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [migId, "sqlite", "checksum", "APPLIED", new Date().toISOString(), largeDuration, null, null, null, null, null]
+        [migId, "sqlite", "checksum", "APPLIED", "2026-08-22T10:00:00Z", largeDuration, null, null, null, null, null]
       );
 
       // Upgrade (should preserve value)
       const migrationService = new MigrationService(db, "sqlite");
       await migrationService.upgradeControlSchema();
 
-      // Verify value preserved
+      // Verify value preserved exactly
       const row = await db.querySingle(
         "SELECT duration_ms FROM schema_migrations WHERE id = ?",
         [migId]
       );
       expect(typeof (row as any).duration_ms).toBe("bigint");
-      expect((row as any).duration_ms).toBe(BigInt(largeDuration));
+      expect((row as any).duration_ms).toBe(largeDuration);
 
       await db.close();
     });
@@ -416,7 +624,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         `INSERT INTO schema_migrations
          (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [migId, "sqlite", "checksum", "APPLIED", new Date().toISOString(), 100, null, null, null, null, null]
+        [migId, "sqlite", "checksum", "APPLIED", "2026-08-22T10:00:00Z", 100, null, null, null, null, null]
       );
 
       const migrationService = new MigrationService(db, "sqlite");
@@ -438,21 +646,26 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
 
   describe("Metadata errors propagate fail-closed", () => {
     it("should propagate connection errors during table metadata check", async () => {
-      const dbPath = `/tmp/schema-upgrade-no-access-${randomUUID()}.sqlite`;
+      const dbPath = `/tmp/schema-upgrade-closed-conn-${randomUUID()}.sqlite`;
       const db = new SqliteAdapter({ path: dbPath });
 
       // Create a valid schema so upgradeControlSchema attempts metadata check
       await db.executeRaw(`
         CREATE TABLE schema_migrations (
           id TEXT PRIMARY KEY,
-          version INTEGER NOT NULL
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          executed_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          dirty INTEGER NOT NULL,
+          dirty_reason TEXT
         )
       `);
 
       // Insert a row so table exists
       await db.execute(
-        "INSERT INTO schema_migrations (id, version) VALUES (?, ?)",
-        ["test", 1]
+        "INSERT INTO schema_migrations (id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ["test", "sqlite", "checksum", "2026-08-22T10:00:00Z", 1, 0, null]
       );
 
       // Close database to simulate connection error
@@ -498,7 +711,7 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         `INSERT INTO schema_migrations
          (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [migId, "sqlite", "checksum123", "DIRTY", new Date().toISOString(), 50, "test failure", null, null, null, null]
+        [migId, "sqlite", "checksum123", "DIRTY", "2026-08-22T10:00:00Z", 50, "test failure", null, null, null, null]
       );
 
       // Create audit table
@@ -561,8 +774,12 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
       await db.executeRaw(`
         CREATE TABLE schema_migrations (
           id TEXT PRIMARY KEY,
-          version INTEGER NOT NULL,
-          dirty INTEGER NOT NULL
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          executed_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          dirty INTEGER NOT NULL,
+          dirty_reason TEXT
         )
       `);
 
@@ -572,8 +789,8 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81/N83)", () => {
         const id = `row-${i}`;
         rows.push(id);
         await db.execute(
-          "INSERT INTO schema_migrations (id, version, dirty) VALUES (?, ?, ?)",
-          [id, i, i % 2]
+          "INSERT INTO schema_migrations (id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [id, "sqlite", `checksum-${i}`, "2026-08-22T10:00:00Z", i * 10, i % 2, null]
         );
       }
 

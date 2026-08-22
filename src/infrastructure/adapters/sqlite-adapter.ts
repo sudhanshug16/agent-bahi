@@ -78,21 +78,22 @@ class SqliteMigrationSession implements MigrationSession {
       const kind = tableExists.type === "view" ? "VIEW" : "TABLE";
 
       // Get column metadata via PRAGMA
+      // Note: with safeIntegers=true, notnull and pk are returned as bigint
       const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
-        cid: number;
+        cid: number | bigint;
         name: string;
         type: string;
-        notnull: number;
+        notnull: number | bigint;
         dflt_value: unknown;
-        pk: number;
+        pk: number | bigint;
       }>;
 
       const columnMetadata: ColumnMetadata[] = columns.map(col => ({
         name: col.name,
         type: col.type,
-        nullable: col.notnull === 0,
+        nullable: BigInt(col.notnull) === BigInt(0),
         default: col.dflt_value === null ? null : String(col.dflt_value),
-        primaryKey: col.pk > 0,
+        primaryKey: BigInt(col.pk) > BigInt(0),
       }));
 
       return {

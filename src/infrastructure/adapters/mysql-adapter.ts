@@ -68,51 +68,49 @@ class MysqlMigrationSession implements MigrationSession {
 
   async getTableMetadata(tableName: string): Promise<TableMetadata | null> {
     this.checkActive();
-    try {
-      // Get table type and check existence
-      const tableType = (await this.execute(
-        `SELECT TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
-        [tableName]
-      )).rows[0] as { TABLE_TYPE: string } | undefined;
+    // First check if table or view exists in catalog
+    // This query will succeed or fail based on permissions/connection, not table existence
+    const tableType = (await this.execute(
+      `SELECT TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+      [tableName]
+    )).rows[0] as { TABLE_TYPE: string } | undefined;
 
-      if (!tableType) return null;
+    // Only return null after a positive catalog result showing table is absent
+    if (!tableType) return null;
 
-      const kind = tableType.TABLE_TYPE === "VIEW" ? "VIEW" : "TABLE";
+    const kind = tableType.TABLE_TYPE === "VIEW" ? "VIEW" : "TABLE";
 
-      // Get column metadata
-      const columns = (await this.execute(
-        `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_KEY
-         FROM INFORMATION_SCHEMA.COLUMNS
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
-         ORDER BY ORDINAL_POSITION`,
-        [tableName]
-      )).rows as Array<{
-        COLUMN_NAME: string;
-        COLUMN_TYPE: string;
-        IS_NULLABLE: string;
-        COLUMN_DEFAULT: string | null;
-        ORDINAL_POSITION: number;
-        COLUMN_KEY: string;
-      }>;
+    // Get column metadata
+    // These queries should not fail if the catalog check succeeded
+    const columns = (await this.execute(
+      `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_KEY
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+       ORDER BY ORDINAL_POSITION`,
+      [tableName]
+    )).rows as Array<{
+      COLUMN_NAME: string;
+      COLUMN_TYPE: string;
+      IS_NULLABLE: string;
+      COLUMN_DEFAULT: string | null;
+      ORDINAL_POSITION: number;
+      COLUMN_KEY: string;
+    }>;
 
-      const columnMetadata: ColumnMetadata[] = columns.map(col => ({
-        name: col.COLUMN_NAME,
-        type: col.COLUMN_TYPE,
-        nullable: col.IS_NULLABLE === "YES",
-        default: col.COLUMN_DEFAULT,
-        primaryKey: col.COLUMN_KEY === "PRI",
-      }));
+    const columnMetadata: ColumnMetadata[] = columns.map(col => ({
+      name: col.COLUMN_NAME,
+      type: col.COLUMN_TYPE,
+      nullable: col.IS_NULLABLE === "YES",
+      default: col.COLUMN_DEFAULT,
+      primaryKey: col.COLUMN_KEY === "PRI",
+    }));
 
-      return {
-        name: tableName,
-        kind,
-        columns: columnMetadata,
-      };
-    } catch (error) {
-      // If table doesn't exist or can't be queried, return null
-      return null;
-    }
+    return {
+      name: tableName,
+      kind,
+      columns: columnMetadata,
+    };
   }
 
   setInactive(): void {
