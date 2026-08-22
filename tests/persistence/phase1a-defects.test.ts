@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { Database, BusinessSessionRunner } from "../../src/application/ports/persistence.ts";
+import type { Database, BusinessSessionRunner, Transaction } from "../../src/application/ports/persistence.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
@@ -349,12 +349,30 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
 
   describe("DEFECT-9: Raw SQLITE_BUSY error leaks", () => {
     it("should return typed error for SQLITE_BUSY, not raw error string", async () => {
-      // This is hard to test without forcing contention
-      // But we can verify error handling exists in SQLiteAdapter
-      
-      // For now, just verify the adapter has proper error classification
-      const errors = await db.query("SELECT 1");
-      expect(errors).toBeDefined();
+      const dbPath = `/tmp/defect-9-${randomUUID()}.sqlite`;
+      const db1 = new SqliteAdapter({ path: dbPath });
+      const db2 = new SqliteAdapter({ path: dbPath });
+      let tx1: Transaction | undefined;
+      let tx2: Transaction | undefined;
+
+      try {
+        tx1 = await db1.beginTransaction();
+
+        await expect(db2.beginTransaction()).rejects.toMatchObject({
+          code: "SQLITE_CONTENTION_BUSY",
+          message: "SQLite operation blocked by BUSY contention",
+        });
+
+        await tx1.rollback();
+
+        tx2 = await db2.beginTransaction();
+        await tx2.rollback();
+      } finally {
+        if (tx2?.isActive()) await tx2.rollback();
+        if (tx1?.isActive()) await tx1.rollback();
+        await db2.close();
+        await db1.close();
+      }
     });
   });
 
