@@ -1,8 +1,8 @@
 # Statutory Workflow Contracts — Verified Official Baseline
 
 **Research cutoff:** 21 August 2026  
-**Status:** Research baseline and workflow boundaries only; not legal advice and not implementation authority.  
-**TENTATIVE PROTOCOL**: This document remains NOT OWNER-APPROVED. No unapproved product default, gate, or auto-decision must reference this baseline; all must link to [tentative-decisions.md](tentative-decisions.md) and Sudhanshu's review.
+**Status:** Research baseline and workflow boundaries only; not legal advice and not implementation authority. It remains **NOT ARCHITECT-REVIEWED** and grants no direct filing, portal-submission, payment, or implementation authority.
+**OWNER DECISION BOUNDARY**: T-001 through T-011 and PT-001 through PT-016 are owner-approved decision frameworks as recorded in the [Owner Review Docket](owner-review-docket.md). This document records no new product decision and does not expand those approvals. Any tentative item beyond that docket remains **TENTATIVE - NOT OWNER-APPROVED** and must link to [tentative-decisions.md](tentative-decisions.md) and Sudhanshu's review.
 
 **CRITICAL**: Entries in [tentative-decisions.md](tentative-decisions.md) are planning proposals and working defaults only. They are **NOT authorization** for implemented legal behavior, tax computation, export, filing, payment, or submission. Until Sudhanshu explicitly approves a tentative entry, it remains a working hypothesis and must NOT authorize any ledger posting, tax liability calculation, deadline generation, export artifact, portal submission, or payment action. Every tentative choice must pass through owner review before implementation moves forward.
 

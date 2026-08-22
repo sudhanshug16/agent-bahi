@@ -32,6 +32,8 @@ T-001 through T-011 are owner-approved as settled decision frameworks, while rem
 
 A companion discovery packet, [Personal Tax Discovery Packet](personal-tax-scope.md), documents 16 core decisions for sole-proprietor personal income-tax expansion. Complete individual tax is **in product scope**; all 16 decisions now have owner approval. The table below is a compact index; full specifications and rationale are in the canonical packet.
 
+The owner approval covers the decision boundaries, not implementation authority: the current physical-schema RFC remains **NOT ARCHITECT-REVIEWED**, and its SEALED/current snapshot, exact candidate-key/FK, validation-run, form-eligibility, and dialect-guard clauses remain review and Gate0 obligations. The personal-tax contract grants no direct portal-filing authority; PT-013 lifecycle/status separation and human filing-evidence boundaries remain in force.
+
 | PT-ID | Title | Recommended Option | First Affected Gate/Phase | Link |
 |-------|-------|-------------------|--------------------------|------|
 | PT-001 | Individual/PAN Tenant Model with Multiple BookSets | One individual/PAN tenant may contain personal + multiple proprietorship BookSets; companies separate | Gate-0/readiness → Phase 1 (Setup) | [Personal Tax Packet § PT-001](personal-tax-scope.md#pt-001) |
