@@ -146,6 +146,7 @@ class SqliteMigrationSession implements MigrationSession {
         const hiddenNum = Number(col.hidden);
         const primaryKey = pkNum > 0;
         return {
+          cid: Number(col.cid),
           name: col.name,
           type: col.type,
           nullable: notnullNum === 0 && !primaryKey,

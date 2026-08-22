@@ -1,4 +1,4 @@
-import type { Database, MigrationSession } from "../../application/ports/persistence.ts";
+import type { ColumnMetadata, Database, MigrationSession, TableMetadata } from "../../application/ports/persistence.ts";
 import type { Dialect } from "../../core/types.ts";
 import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
@@ -8,6 +8,27 @@ import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema
  * Database control inspection status.
  */
 export type DatabaseControlStatus = "UNINITIALIZED" | "UNAVAILABLE" | "AVAILABLE";
+
+export type DatabaseControlInspectionReason =
+  | "TABLE_MISSING"
+  | "TABLE_KIND_MISMATCH"
+  | "TABLE_COLUMN_COUNT_MISMATCH"
+  | "TABLE_COLUMN_MISSING"
+  | "TABLE_COLUMN_NAME_MISMATCH"
+  | "TABLE_COLUMN_TYPE_MISMATCH"
+  | "TABLE_COLUMN_NULLABILITY_MISMATCH"
+  | "TABLE_COLUMN_PRIMARY_KEY_MISMATCH"
+  | "TABLE_COLUMN_CID_MISMATCH"
+  | "TABLE_COLUMN_NOTNULL_FIELD_MISMATCH"
+  | "TABLE_COLUMN_PK_FIELD_MISMATCH"
+  | "TABLE_COLUMN_HIDDEN_FIELD_MISMATCH"
+  | "TABLE_COLUMN_DEFAULT_MISMATCH"
+  | "TABLE_DDL_MISMATCH"
+  | "MIGRATION_HISTORY_MISMATCH"
+  | "TABLE_EMPTY"
+  | "ROW_COUNT_MISMATCH"
+  | "ROW_DATA_INVALID"
+  | "INSPECTION_FAILED";
 
 /**
  * Database control metadata record from database_control table.
@@ -38,7 +59,7 @@ export interface DatabaseControlRecord {
 export interface DatabaseControlInspection {
   status: DatabaseControlStatus;
   record?: DatabaseControlRecord;
-  reason?: string;
+  reason?: DatabaseControlInspectionReason;
 }
 
 /**
@@ -85,7 +106,7 @@ export class DatabaseControlService {
    * Returns status and optionally a complete record if AVAILABLE.
    *
    * Status mapping:
-   * - UNINITIALIZED: table missing or contains zero rows
+   * - UNINITIALIZED: table missing, or exact canonical table with valid history and zero rows
    * - UNAVAILABLE: table present but malformed, invalid data, partial schema,
    *                unexpected row count, unknown state, or mismatch to expected
    *                migration identity/checksum
@@ -93,15 +114,25 @@ export class DatabaseControlService {
    */
   async inspect(): Promise<DatabaseControlInspection> {
     try {
-      // Check if table exists
-      const result = await this.db.query(
-        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='database_control'",
-        [],
-      );
+      // Validate sqlite_schema and table_xinfo before reading rows. A malformed
+      // empty object is unavailable; emptiness is not an escape hatch.
+      const tableMetadata = await this.readDatabaseControlMetadata();
+      if (!tableMetadata) return { status: "UNINITIALIZED", reason: "TABLE_MISSING" };
+      const schemaError = this.validateTableSchema(tableMetadata);
+      if (schemaError) return { status: "UNAVAILABLE", reason: schemaError };
 
-      const tableExists = (result.rows[0]?.count as number) > 0;
-      if (!tableExists) {
-        return { status: "UNINITIALIZED", reason: "Table database_control does not exist" };
+      const migrationHistory = await this.db.query(
+        "SELECT id, checksum, status FROM schema_migrations WHERE id = ?",
+        ["0002-database-control"],
+      );
+      const migration = migrationHistory.rows[0];
+      if (
+        migrationHistory.rowCount !== 1 ||
+        migration?.id !== "0002-database-control" ||
+        migration?.checksum !== DATABASE_CONTROL_CHECKSUM ||
+        migration?.status !== "APPLIED"
+      ) {
+        return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
       }
 
       // Query the table contents
@@ -117,12 +148,12 @@ export class DatabaseControlService {
 
       // Exactly zero rows is UNINITIALIZED
       if (rows.rowCount === 0) {
-        return { status: "UNINITIALIZED", reason: "Table exists but contains no rows" };
+        return { status: "UNINITIALIZED", reason: "TABLE_EMPTY" };
       }
 
       // Anything other than exactly one row is UNAVAILABLE
       if (rows.rowCount !== 1) {
-        return { status: "UNAVAILABLE", reason: `Expected exactly 1 row, found ${rows.rowCount}` };
+        return { status: "UNAVAILABLE", reason: "ROW_COUNT_MISMATCH" };
       }
 
       const row = rows.rows[0];
@@ -130,7 +161,7 @@ export class DatabaseControlService {
       // Validate row structure and parse record
       const validation = this.validateAndParseRecord(row);
       if (validation.error) {
-        return { status: "UNAVAILABLE", reason: validation.error };
+        return { status: "UNAVAILABLE", reason: "ROW_DATA_INVALID" };
       }
 
       return { status: "AVAILABLE", record: validation.record };
@@ -138,9 +169,40 @@ export class DatabaseControlService {
       // Any database error during inspection means UNAVAILABLE
       return {
         status: "UNAVAILABLE",
-        reason: `Inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+        reason: "INSPECTION_FAILED",
       };
     }
+  }
+
+  private async readDatabaseControlMetadata(): Promise<TableMetadata | null> {
+    const catalog = await this.db.query(
+      "SELECT type, sql FROM sqlite_schema WHERE name = 'database_control' AND type IN ('table', 'view')",
+    );
+    const object = catalog.rows[0];
+    if (!object) return null;
+
+    const kind = object.type === "view" ? "VIEW" : object.type === "table" ? "TABLE" : undefined;
+    if (!kind) return null;
+
+    const xinfo = await this.db.query("PRAGMA table_xinfo(database_control)");
+    const columns: ColumnMetadata[] = xinfo.rows.map((column) => {
+      const notnull = Number(column.notnull);
+      const pk = Number(column.pk);
+      return {
+        cid: Number(column.cid),
+        name: String(column.name),
+        type: String(column.type ?? ""),
+        nullable: notnull === 0 && pk === 0,
+        default: column.dflt_value === null ? null : String(column.dflt_value),
+        primaryKey: pk > 0,
+        notnull,
+        dflt_value: column.dflt_value ?? null,
+        pk,
+        hidden: Number(column.hidden),
+      };
+    });
+
+    return { name: "database_control", kind, columns, checks: [], ddl: object.sql == null ? undefined : String(object.sql) };
   }
 
   /**
@@ -159,13 +221,13 @@ export class DatabaseControlService {
     // First, validate the table schema exists and is exactly correct
     const tableMetadata = await session.getTableMetadata("database_control");
     if (!tableMetadata) {
-      throw new DomainError("DATABASE_CONTROL_UNINITIALIZED", "database_control table does not exist");
+      throw new DomainError("DATABASE_CONTROL_UNINITIALIZED", "Database control table is unavailable");
     }
 
     // Validate table schema structure
     const schemaError = this.validateTableSchema(tableMetadata);
     if (schemaError) {
-      throw new DomainError("DATABASE_CONTROL_MALFORMED", `Table schema validation failed: ${schemaError}`);
+      throw new DomainError("DATABASE_CONTROL_MALFORMED", "database_control schema is not canonical");
     }
 
     // Fetch 0002 migration from schema_migrations
@@ -177,14 +239,14 @@ export class DatabaseControlService {
     if (!migrationRecord) {
       throw new DomainError(
         "DATABASE_CONTROL_MISSING_MIGRATION",
-        "Migration 0002-database-control not found in schema_migrations",
+        "Required migration history is unavailable",
       );
     }
 
     if (migrationRecord.status !== "APPLIED") {
       throw new DomainError(
         "DATABASE_CONTROL_MIGRATION_NOT_APPLIED",
-        `Expected 0002-database-control status=APPLIED, got ${migrationRecord.status}`,
+        "Required migration history is not applied",
       );
     }
 
@@ -192,7 +254,7 @@ export class DatabaseControlService {
     if (!this.isValidHexChecksum(migrationChecksum)) {
       throw new DomainError(
         "DATABASE_CONTROL_INVALID_CHECKSUM",
-        "Migration checksum is not valid hex format",
+        "Required migration history checksum is malformed",
       );
     }
 
@@ -200,7 +262,7 @@ export class DatabaseControlService {
     if (migrationChecksum !== DATABASE_CONTROL_CHECKSUM) {
       throw new DomainError(
         "DATABASE_CONTROL_CHECKSUM_MISMATCH",
-        "Migration 0002-database-control checksum does not match corrected baseline",
+        "Required migration history checksum is not canonical",
       );
     }
 
@@ -216,7 +278,7 @@ export class DatabaseControlService {
       if (existingChecksum !== DATABASE_CONTROL_CHECKSUM) {
         throw new DomainError(
           "DATABASE_CONTROL_CHECKSUM_MISMATCH",
-          "Existing database_control row has different migration checksum",
+          "Existing database_control row checksum is not canonical",
         );
       }
 
@@ -228,7 +290,7 @@ export class DatabaseControlService {
 
       throw new DomainError(
         "DATABASE_CONTROL_READ_FAILED",
-        "Could not read existing database_control row",
+        "Existing database control row is unavailable",
       );
     }
 
@@ -282,14 +344,14 @@ export class DatabaseControlService {
       if (validation.error) {
         throw new DomainError(
           "DATABASE_CONTROL_INSERT_FAILED",
-          `Failed to read back inserted database_control row: ${validation.error}`,
+          "database_control row could not be read after initialization",
         );
       }
     }
 
     throw new DomainError(
       "DATABASE_CONTROL_INSERT_FAILED",
-      "Failed to read back inserted database_control row: no row found",
+      "database_control row could not be read after initialization",
     );
   }
 
@@ -304,7 +366,7 @@ export class DatabaseControlService {
     if (inspection.status !== "AVAILABLE") {
       throw new DomainError(
         "DATABASE_CONTROL_UNAVAILABLE",
-        `Database control unavailable: ${inspection.reason || "unknown"}`,
+        "Database control is unavailable",
       );
     }
 
@@ -313,7 +375,7 @@ export class DatabaseControlService {
     if (record.state !== "READY") {
       throw new DomainError(
         "DATABASE_CONTROL_NOT_READY",
-        `Database is not READY (current state: ${record.state})`,
+        "Database control is not ready",
       );
     }
 
@@ -323,7 +385,7 @@ export class DatabaseControlService {
     ) {
       throw new DomainError(
         "DATABASE_READER_INCOMPATIBLE",
-        `Reader protocol ${params.readerProtocol} outside range [${record.readerCompatibilityMin}, ${record.readerCompatibilityMax}]`,
+        "Reader protocol is incompatible",
       );
     }
   }
@@ -339,7 +401,7 @@ export class DatabaseControlService {
     if (inspection.status !== "AVAILABLE") {
       throw new DomainError(
         "DATABASE_CONTROL_UNAVAILABLE",
-        `Database control unavailable: ${inspection.reason || "unknown"}`,
+        "Database control is unavailable",
       );
     }
 
@@ -348,14 +410,14 @@ export class DatabaseControlService {
     if (record.state !== "READY") {
       throw new DomainError(
         "DATABASE_CONTROL_NOT_READY",
-        `Database is not READY (current state: ${record.state})`,
+        "Database control is not ready",
       );
     }
 
     if (params.writerProtocol !== record.requiredWriterProtocol) {
       throw new DomainError(
         "DATABASE_WRITER_INCOMPATIBLE",
-        `Writer protocol ${params.writerProtocol} does not match required ${record.requiredWriterProtocol}`,
+        "Writer protocol is incompatible",
       );
     }
   }
@@ -366,7 +428,7 @@ export class DatabaseControlService {
    * Also validates stored DDL against expected canonical SQL (exact match, no formatting tolerance).
    * Returns safe error code (not raw schema values) if invalid, undefined if valid.
    */
-  private validateTableSchema(metadata: any): string | undefined {
+  private validateTableSchema(metadata: TableMetadata): DatabaseControlInspectionReason | undefined {
     // Must be a TABLE, not a VIEW
     if (metadata.kind !== "TABLE") {
       return "TABLE_KIND_MISMATCH";
@@ -383,23 +445,23 @@ export class DatabaseControlService {
     // Validate each column's exact specification
     // Using ColumnMetadata structure with exact xinfo fields
     const expectedSpecs = [
-      { name: "id", type: "INTEGER", nullable: false, primaryKey: true, notnull: 0, pk: 1, hidden: 0, dflt_value: null },
-      { name: "schema_version", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "data_format_version", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "reader_compatibility_min", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "reader_compatibility_max", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "required_writer_protocol", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "state", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "revision", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "generation", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "last_migration_id", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "last_migration_checksum", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "last_writer_cli_version", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "last_writer_build_id", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "last_writer_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "created_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "updated_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
-      { name: "recovery_reason", type: "TEXT", nullable: true, primaryKey: false, notnull: 0, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 0, name: "id", type: "INTEGER", nullable: false, primaryKey: true, notnull: 0, pk: 1, hidden: 0, dflt_value: null },
+      { cid: 1, name: "schema_version", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 2, name: "data_format_version", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 3, name: "reader_compatibility_min", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 4, name: "reader_compatibility_max", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 5, name: "required_writer_protocol", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 6, name: "state", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 7, name: "revision", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 8, name: "generation", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 9, name: "last_migration_id", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 10, name: "last_migration_checksum", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 11, name: "last_writer_cli_version", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 12, name: "last_writer_build_id", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 13, name: "last_writer_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 14, name: "created_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 15, name: "updated_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { cid: 16, name: "recovery_reason", type: "TEXT", nullable: true, primaryKey: false, notnull: 0, pk: 0, hidden: 0, dflt_value: null },
     ];
 
     for (let i = 0; i < expectedSpecs.length; i++) {
@@ -421,11 +483,15 @@ export class DatabaseControlService {
       }
 
       if (actual.nullable !== expected.nullable) {
-        return "TABLE_COLUMN_NOTNULL_MISMATCH";
+        return "TABLE_COLUMN_NULLABILITY_MISMATCH";
       }
 
       if (actual.primaryKey !== expected.primaryKey) {
         return "TABLE_COLUMN_PRIMARY_KEY_MISMATCH";
+      }
+
+      if (actual.cid !== expected.cid) {
+        return "TABLE_COLUMN_CID_MISMATCH";
       }
 
       // Validate exact xinfo fields (no formatting tolerance)
@@ -556,6 +622,7 @@ export class DatabaseControlService {
         return { error: `Failed to parse last_migration_id: ${e instanceof Error ? e.message : String(e)}` };
       }
       if (!lastMigrationId) return { error: "last_migration_id is blank" };
+      if (lastMigrationId !== "0002-database-control") return { error: "last_migration_id is not canonical" };
 
       let lastMigrationChecksum: string;
       try {
@@ -566,6 +633,9 @@ export class DatabaseControlService {
       if (!lastMigrationChecksum) return { error: "last_migration_checksum is blank" };
       if (!this.isValidHexChecksum(lastMigrationChecksum)) {
         return { error: "last_migration_checksum is not 64 hex characters" };
+      }
+      if (lastMigrationChecksum !== DATABASE_CONTROL_CHECKSUM) {
+        return { error: "last_migration_checksum is not canonical" };
       }
 
       let lastWriterCliVersion: string;
@@ -663,14 +733,10 @@ export class DatabaseControlService {
   private parseTimestamp(value: unknown, fieldName: string): string | null {
     if (value === null || value === undefined) return null;
     if (typeof value === "string" && value.length > 0) {
-      try {
-        // Must parse as ISO and re-stringify to validate canonical format
-        const date = new Date(value);
-        if (!Number.isNaN(date.getTime()) && date.toISOString() === value) {
-          return value;
-        }
-      } catch {
-        // Fall through to error
+      // Must parse as ISO and re-stringify to validate canonical format.
+      const date = new Date(value);
+      if (!Number.isNaN(date.getTime()) && date.toISOString() === value) {
+        return value;
       }
     }
     throw new Error(`${fieldName} is not a valid canonical UTC ISO string: ${String(value)}`);

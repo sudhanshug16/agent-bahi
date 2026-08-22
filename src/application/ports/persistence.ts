@@ -155,6 +155,7 @@ export interface MigrationService {
 }
 
 export interface ColumnMetadata {
+  cid?: number;
   name: string;
   type: string;
   nullable: boolean;

@@ -55,7 +55,8 @@ Singleton `database_control` table holds schema versions, compatibility, and dat
 - No implicit transitions, auto-migration logic, or universal BusinessSession enforcement in this slice.
 - **Rejected 2c0e399 experimental baseline**: Databases created with the rejected 0002 migration in commit 2c0e399
   are unsupported and fail closed on checksum mismatch. All new databases must use the corrected 0002
-  with exact checksum `665e93b1f489f1c7e8826fb5c58f32be071de34c6d3a088f0fe1098e7a0bf9f2`.
+  with the exact checksum exported by the canonical migration source (`DATABASE_CONTROL_CHECKSUM`),
+  currently `a52a0e16d47790652a0207d0b2246b5e24f9f7e19749bff24917ed8ef49a6fbd`.
 - **Corrected 0002 immutability**: The corrected 0002-database-control migration is now immutable as part
   of the production baseline. All table schema validation includes exact column types, defaults, nullability,
   and named CHECK constraints. Malformed/partial schemas fail UNAVAILABLE; no repair or coercion.

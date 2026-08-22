@@ -48,6 +48,9 @@ export function classifySqliteError(error: unknown, _operation: string = "databa
   const fields = getErrorFields(error);
   const structuredFieldsPresent = fields.code !== undefined || fields.errno !== undefined;
 
+  const namedCheck = classifyNamedCheckConstraint(fields);
+  if (namedCheck) return makeClassified(namedCheck, error);
+
   // Bun reports missing tables with the generic SQLITE_ERROR code. This one
   // allowlisted control-table condition remains a stable domain outcome.
   if ((fields.code === "SQLITE_ERROR" || fields.errno === 1) && isMissingMigrationControlTable(fields.message)) {
@@ -69,6 +72,26 @@ export function classifySqliteError(error: unknown, _operation: string = "databa
   }
 
   return makeClassified({ code: "DATABASE_QUERY_FAILED", message: "SQLite database operation failed" }, error, true);
+}
+
+function classifyNamedCheckConstraint(fields: SqliteErrorFields): { code: string; message: string } | undefined {
+  const isConstraintCode = fields.errno === 19 || fields.code === 19 ||
+    (typeof fields.code === "string" && fields.code.toUpperCase().startsWith("SQLITE_CONSTRAINT"));
+  if (!isConstraintCode || typeof fields.message !== "string") return undefined;
+
+  const match = fields.message.match(/^CHECK constraint failed: (chk_[a-z0-9_]+)$/i);
+  if (!match) return undefined;
+
+  const allowed = new Set([
+    "chk_id_singleton", "chk_schema_version", "chk_data_format_version",
+    "chk_reader_min", "chk_reader_max", "chk_writer_protocol", "chk_state",
+    "chk_revision", "chk_generation", "chk_last_migration_id", "chk_checksum_length",
+    "chk_checksum_hex", "chk_cli_version", "chk_build_id", "chk_writer_at",
+    "chk_created_at", "chk_updated_at", "chk_recovery_reason_state",
+  ]);
+  const name = match[1].toLowerCase();
+  if (!allowed.has(name)) return undefined;
+  return { code: "SQLITE_CONSTRAINT", message: `SQLite constraint ${name} violation` };
 }
 
 function getErrorFields(error: unknown): SqliteErrorFields {

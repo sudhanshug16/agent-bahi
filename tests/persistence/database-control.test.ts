@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createHash } from "crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Database, MigrationSession } from "../../src/application/ports/persistence.ts";
@@ -24,6 +24,14 @@ let db: Database | null = null;
 let migrationService: MigrationService;
 let dbControlService: DatabaseControlService;
 
+const DATABASE_CONTROL_COLUMNS = [
+  "id", "schema_version", "data_format_version", "reader_compatibility_min",
+  "reader_compatibility_max", "required_writer_protocol", "state", "revision",
+  "generation", "last_migration_id", "last_migration_checksum",
+  "last_writer_cli_version", "last_writer_build_id", "last_writer_at",
+  "created_at", "updated_at", "recovery_reason",
+];
+
 async function setupTestDb(): Promise<{ db: Database; path: string }> {
   // Create isolated temp directory with mkdtemp
   testTempDir = await mkdtemp(path.join(tmpdir(), "agent-bahi-test-"));
@@ -34,28 +42,72 @@ async function setupTestDb(): Promise<{ db: Database; path: string }> {
 
 async function cleanupTestDb(): Promise<void> {
   if (db) {
-    try {
-      await db.close();
-    } catch (e) {
-      console.error("Failed to close database:", e);
-    }
+    await db.close();
     db = null;
   }
 
   if (testTempDir) {
-    try {
-      // Use rm from fs/promises to clean up temp directory
-      // force: false will throw on error, which we rethrow with context
-      await rm(testTempDir, { recursive: true, force: false });
-    } catch (e) {
-      // Only throw if it's not ENOENT (already deleted)
-      if (e instanceof Error && e.message.includes("ENOENT")) {
-        // Directory already deleted, that's fine
-        return;
-      }
-      throw new Error(`Failed to cleanup test directory ${testTempDir}: ${String(e)}`);
-    }
+    const parent = path.dirname(testTempDir);
+    const name = path.basename(testTempDir);
+    await rm(testTempDir, { recursive: true, force: false });
+    expect(await readdir(parent)).not.toContain(name);
+    expect(await Bun.file(testDbPath).exists()).toBe(false);
+    expect(await Bun.file(`${testDbPath}-wal`).exists()).toBe(false);
+    expect(await Bun.file(`${testDbPath}-shm`).exists()).toBe(false);
   }
+}
+
+async function assertIntendedObject(
+  expectedKind: "table" | "view",
+  expectedColumns: string[],
+  changedColumn?: { name: string; type?: string; notnull?: number; pk?: number; dflt_value?: unknown },
+): Promise<void> {
+  const catalog = await db!.query(
+    "SELECT type, sql FROM sqlite_schema WHERE name = 'database_control' AND type IN ('table', 'view')",
+  );
+  expect(catalog.rows).toHaveLength(1);
+  expect(catalog.rows[0]?.type).toBe(expectedKind);
+
+  const xinfo = await db!.query("PRAGMA table_xinfo(database_control)");
+  expect(xinfo.rows.map((column) => column.name)).toEqual(expectedColumns);
+  if (changedColumn) {
+    const column = xinfo.rows.find((candidate) => candidate.name === changedColumn.name);
+    expect(column?.name).toBe(changedColumn.name);
+    if (changedColumn.type !== undefined) expect(column?.type).toBe(changedColumn.type);
+    if (changedColumn.notnull !== undefined) expect(Number(column?.notnull)).toBe(changedColumn.notnull);
+    if (changedColumn.pk !== undefined) expect(Number(column?.pk)).toBe(changedColumn.pk);
+    if (changedColumn.dflt_value !== undefined) expect(column?.dflt_value).toBe(changedColumn.dflt_value);
+  }
+}
+
+async function expectSqliteConstraint(sql: string, constraintName: string): Promise<void> {
+  let caught: unknown;
+  try {
+    await db!.executeRaw(sql);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(DomainError);
+  const domainError = caught as DomainError;
+  expect(domainError.code).toBe("SQLITE_CONSTRAINT");
+  expect(domainError.message).toBe(`SQLite constraint ${constraintName} violation`);
+}
+
+async function expectDomainError(
+  operation: () => Promise<unknown>,
+  code: string,
+  message: string,
+): Promise<void> {
+  let caught: unknown;
+  try {
+    await operation();
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(DomainError);
+  const domainError = caught as DomainError;
+  expect(domainError.code).toBe(code);
+  expect(domainError.message).toBe(message);
 }
 
 describe("Database Control Foundation - Corrected 0002", () => {
@@ -113,7 +165,7 @@ describe("Database Control Foundation - Corrected 0002", () => {
 
       const inspection = await dbControlService.inspect();
       expect(inspection.status).toBe("UNINITIALIZED");
-      expect(inspection.reason).toContain("no rows");
+      expect(inspection.reason).toBe("TABLE_EMPTY");
     });
 
     it("should reject table with IF NOT EXISTS in migration SQL", () => {
@@ -145,20 +197,32 @@ describe("Database Control Foundation - Corrected 0002", () => {
       const inspection = await dbControlService.inspect();
       expect(inspection.status).toBe("UNINITIALIZED");
       expect(inspection.record).toBeUndefined();
-      expect(inspection.reason).toContain("no rows");
+      expect(inspection.reason).toBe("TABLE_EMPTY");
+    });
+
+    it("should keep an empty canonical table unavailable without exact migration history", async () => {
+      await db!.execute("UPDATE schema_migrations SET status = 'DIRTY' WHERE id = '0002-database-control'");
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("MIGRATION_HISTORY_MISMATCH");
     });
 
     it("should return UNINITIALIZED for missing table", async () => {
-      const setup = await setupTestDb();
-      const freshDb = setup.db;
+      const missingDir = await mkdtemp(path.join(tmpdir(), "agent-bahi-missing-"));
+      const missingPath = path.join(missingDir, "missing.db");
+      const freshDb = new SqliteAdapter({ path: missingPath });
       const freshService = new DatabaseControlService(freshDb, "sqlite");
 
       const inspection = await freshService.inspect();
       expect(inspection.status).toBe("UNINITIALIZED");
-      expect(inspection.reason).toContain("does not exist");
+      expect(inspection.reason).toBe("TABLE_MISSING");
 
       await freshDb.close();
-      await cleanupTestDb();
+      await rm(missingDir, { recursive: true, force: false });
+      expect(await Bun.file(missingPath).exists()).toBe(false);
+      expect(await Bun.file(`${missingPath}-wal`).exists()).toBe(false);
+      expect(await Bun.file(`${missingPath}-shm`).exists()).toBe(false);
     });
 
     it("should return UNAVAILABLE for malformed table with missing columns", async () => {
@@ -167,11 +231,16 @@ describe("Database Control Foundation - Corrected 0002", () => {
       await db!.executeRaw(
         `CREATE TABLE database_control (id INTEGER PRIMARY KEY, extra_field TEXT)`,
       );
+      await assertIntendedObject("table", ["id", "extra_field"]);
 
       const inspection = await dbControlService.inspect();
       expect(inspection.status).toBe("UNAVAILABLE");
-      // Should fail on DDL mismatch or column count
-      expect(inspection.reason).toBeDefined();
+      expect(inspection.reason).toBe("TABLE_COLUMN_COUNT_MISMATCH");
+      await expectDomainError(
+        () => dbControlService.requireCompatibleReader({ readerProtocol: 1 }),
+        "DATABASE_CONTROL_UNAVAILABLE",
+        "Database control is unavailable",
+      );
     });
 
     it("should return UNAVAILABLE for wrong column type", async () => {
@@ -198,17 +267,87 @@ describe("Database Control Foundation - Corrected 0002", () => {
           recovery_reason TEXT
         )
       `);
+      await assertIntendedObject("table", DATABASE_CONTROL_COLUMNS, { name: "schema_version", type: "TEXT" });
 
       const inspection = await dbControlService.inspect();
-      // Either UNAVAILABLE (if inspection validates) or UNINITIALIZED (if table is not recognized as valid)
-      expect(["UNAVAILABLE", "UNINITIALIZED"]).toContain(inspection.status);
-      expect(inspection.reason).toBeDefined();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_COLUMN_TYPE_MISMATCH");
+    });
+
+    it("should return UNAVAILABLE for wrong nullability", async () => {
+      await db!.executeRaw("DROP TABLE database_control");
+      const ddl = DATABASE_CONTROL_TABLE_DDL.replace("schema_version INTEGER NOT NULL", "schema_version INTEGER");
+      await db!.executeRaw(ddl);
+      await assertIntendedObject("table", DATABASE_CONTROL_COLUMNS, { name: "schema_version", notnull: 0 });
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_COLUMN_NULLABILITY_MISMATCH");
+    });
+
+    it("should return UNAVAILABLE for wrong default", async () => {
+      await db!.executeRaw("DROP TABLE database_control");
+      const ddl = DATABASE_CONTROL_TABLE_DDL.replace("schema_version INTEGER NOT NULL", "schema_version INTEGER NOT NULL DEFAULT 1");
+      await db!.executeRaw(ddl);
+      await assertIntendedObject("table", DATABASE_CONTROL_COLUMNS, { name: "schema_version", dflt_value: "1" });
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_COLUMN_DEFAULT_MISMATCH");
+    });
+
+    it("should return UNAVAILABLE for wrong primary-key metadata", async () => {
+      await db!.executeRaw("DROP TABLE database_control");
+      const ddl = DATABASE_CONTROL_TABLE_DDL.replace("id INTEGER PRIMARY KEY", "id INTEGER").replace(
+        "  recovery_reason TEXT,",
+        "  recovery_reason TEXT,\n  PRIMARY KEY (id, schema_version),",
+      );
+      await db!.executeRaw(ddl);
+      await assertIntendedObject("table", DATABASE_CONTROL_COLUMNS);
+      const xinfo = await db!.query("PRAGMA table_xinfo(database_control)");
+      expect(Number(xinfo.rows[1]?.pk)).toBe(2);
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_COLUMN_PRIMARY_KEY_MISMATCH");
+    });
+
+    it("should return UNAVAILABLE for a changed CHECK constraint", async () => {
+      await db!.executeRaw("DROP TABLE database_control");
+      const ddl = DATABASE_CONTROL_TABLE_DDL.replace("CONSTRAINT chk_id_singleton CHECK(id=1)", "CONSTRAINT chk_id_singleton CHECK(id=2)");
+      await db!.executeRaw(ddl);
+      await assertIntendedObject("table", DATABASE_CONTROL_COLUMNS);
+      const catalog = await db!.query("SELECT sql FROM sqlite_schema WHERE name = 'database_control'");
+      expect(catalog.rows[0]?.sql).toContain("CHECK(id=2)");
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_DDL_MISMATCH");
+    });
+
+    it("should return UNAVAILABLE for an extra column", async () => {
+      await db!.executeRaw("DROP TABLE database_control");
+      const ddl = DATABASE_CONTROL_TABLE_DDL.replace("  recovery_reason TEXT,", "  recovery_reason TEXT,\n  extra_field TEXT,");
+      await db!.executeRaw(ddl);
+      await assertIntendedObject("table", [...DATABASE_CONTROL_COLUMNS, "extra_field"]);
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_COLUMN_COUNT_MISMATCH");
+    });
+
+    it("should return UNAVAILABLE for a view with the database_control name", async () => {
+      await db!.executeRaw("DROP TABLE database_control");
+      await db!.executeRaw("CREATE VIEW database_control AS SELECT 1 AS id");
+      await assertIntendedObject("view", ["id"]);
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("UNAVAILABLE");
+      expect(inspection.reason).toBe("TABLE_KIND_MISMATCH");
     });
 
     it("should return UNAVAILABLE for multiple rows", async () => {
-      // Try to insert two rows (will violate CHECK constraint but we test raw count)
-      try {
-        await db!.executeRaw(`
+      await db!.executeRaw(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -219,10 +358,9 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
+      `);
 
-        // Try to insert a second row - should fail on id CHECK
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -233,10 +371,10 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch {
-        // Expected: CHECK(id=1) prevents second row
-      }
+      `, "chk_id_singleton");
+
+      const inspection = await dbControlService.inspect();
+      expect(inspection.status).toBe("AVAILABLE");
     });
 
     it("should return UNAVAILABLE for missing nullable recovery_reason field", async () => {
@@ -262,11 +400,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
           updated_at TEXT NOT NULL
         )
       `);
+      await assertIntendedObject("table", DATABASE_CONTROL_COLUMNS.slice(0, -1));
 
       const inspection = await dbControlService.inspect();
       expect(inspection.status).toBe("UNAVAILABLE");
-      // Should fail on column count mismatch
-      expect(inspection.reason).toBeDefined();
+      expect(inspection.reason).toBe("TABLE_COLUMN_COUNT_MISMATCH");
     });
   });
 
@@ -289,9 +427,7 @@ describe("Database Control Foundation - Corrected 0002", () => {
     });
 
     it("should enforce singleton id CHECK constraint", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -302,17 +438,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_id_singleton");
     });
 
     it("should enforce schema_version >=1", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -323,17 +453,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_schema_version");
     });
 
     it("should enforce reader_compatibility_max >= reader_compatibility_min", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -344,17 +468,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_reader_max");
     });
 
     it("should enforce state IN ('READY','APPLYING','RECOVERY_REQUIRED')", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -365,17 +483,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_state");
     });
 
     it("should enforce RECOVERY_REQUIRED requires nonblank recovery_reason", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -386,17 +498,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z', NULL)
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_recovery_reason_state");
     });
 
     it("should enforce checksum is exactly 64 lowercase hex", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -404,22 +510,15 @@ describe("Database Control Foundation - Corrected 0002", () => {
             last_writer_cli_version, last_writer_build_id, last_writer_at,
             created_at, updated_at
           ) VALUES (1, 2, 1, 1, 1, 1, 'READY', 1, 1, '0002-database-control',
-            'invalid-checksum-not-hex',
+            '${"g".repeat(64)}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_checksum_hex");
     });
 
     it("should reject checksum with uppercase hex", async () => {
-      let failed = false;
-      try {
-        const badChecksum =
-          "665E93B1F489F1C7E8826FB5C58F32BE071DE34C6D3A088F0FE1098E7A0BF9F2";
-        await db!.executeRaw(`
+      const badChecksum = "A".repeat(64);
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -430,17 +529,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
             '${badChecksum}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_checksum_hex");
     });
 
     it("should enforce non-empty trim on string fields", async () => {
-      let failed = false;
-      try {
-        await db!.executeRaw(`
+      await expectSqliteConstraint(`
           INSERT INTO database_control (
             id, schema_version, data_format_version, reader_compatibility_min,
             reader_compatibility_max, required_writer_protocol, state, revision,
@@ -450,11 +543,7 @@ describe("Database Control Foundation - Corrected 0002", () => {
           ) VALUES (1, 2, 1, 1, 1, 1, 'READY', 1, 1, '   ', '${DATABASE_CONTROL_CHECKSUM}',
             '0.0.0', 'build1', '2025-08-22T00:00:00.000Z',
             '2025-08-22T00:00:00.000Z', '2025-08-22T00:00:00.000Z')
-        `);
-      } catch (e) {
-        failed = true;
-      }
-      expect(failed).toBe(true);
+        `, "chk_last_migration_id");
     });
   });
 
@@ -486,20 +575,21 @@ describe("Database Control Foundation - Corrected 0002", () => {
         record = await dbControlService.initialize(params, session);
       });
 
-      expect(record).toBeDefined();
-      expect(record.schemaVersion).toBe(2);
-      expect(record.dataFormatVersion).toBe(1);
-      expect(record.readerCompatibilityMin).toBe(1);
-      expect(record.readerCompatibilityMax).toBe(1);
-      expect(record.requiredWriterProtocol).toBe(1);
-      expect(record.state).toBe("READY");
-      expect(record.revision).toBe(1);
-      expect(record.generation).toBe(1);
-      expect(record.lastMigrationId).toBe("0002-database-control");
-      expect(record.lastMigrationChecksum).toBe(DATABASE_CONTROL_CHECKSUM);
-      expect(record.lastWriterCliVersion).toBe("0.1.0");
-      expect(record.lastWriterBuildId).toBe("build-123");
-      expect(record.recoveryReason).toBeNull();
+      expect(record).toEqual(expect.objectContaining({
+        schemaVersion: 2,
+        dataFormatVersion: 1,
+        readerCompatibilityMin: 1,
+        readerCompatibilityMax: 1,
+        requiredWriterProtocol: 1,
+        state: "READY",
+        revision: 1,
+        generation: 1,
+        lastMigrationId: "0002-database-control",
+        lastMigrationChecksum: DATABASE_CONTROL_CHECKSUM,
+        lastWriterCliVersion: "0.1.0",
+        lastWriterBuildId: "build-123",
+        recoveryReason: null,
+      }));
     });
 
     it("should be idempotent - second initialize returns same record without rewriting timestamps", async () => {
@@ -554,17 +644,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
       const now = new Date("2025-08-22T12:00:00.000Z");
       const params = { cliVersion: "0.1.0", buildId: "build-123", now };
 
-      let error: any;
-      try {
+      await expectDomainError(async () => {
         await db!.withMigrationLease(async (session: MigrationSession) => {
           await dbControlService.initialize(params, session);
         });
-      } catch (e) {
-        error = e;
-      }
-
-      expect(error).toBeInstanceOf(DomainError);
-      expect((error as DomainError).code).toBe("DATABASE_CONTROL_MIGRATION_NOT_APPLIED");
+      }, "DATABASE_CONTROL_MIGRATION_NOT_APPLIED", "Required migration history is not applied");
     });
 
     it("should fail if 0002 migration checksum does not match", async () => {
@@ -578,17 +662,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
       const now = new Date("2025-08-22T12:00:00.000Z");
       const params = { cliVersion: "0.1.0", buildId: "build-123", now };
 
-      let error: any;
-      try {
+      await expectDomainError(async () => {
         await db!.withMigrationLease(async (session: MigrationSession) => {
           await dbControlService.initialize(params, session);
         });
-      } catch (e) {
-        error = e;
-      }
-
-      expect(error).toBeInstanceOf(DomainError);
-      expect((error as DomainError).code).toBe("DATABASE_CONTROL_CHECKSUM_MISMATCH");
+      }, "DATABASE_CONTROL_CHECKSUM_MISMATCH", "Required migration history checksum is not canonical");
     });
 
     it("should fail if table schema is malformed", async () => {
@@ -597,21 +675,16 @@ describe("Database Control Foundation - Corrected 0002", () => {
       await db!.executeRaw(
         `CREATE TABLE database_control (id INTEGER PRIMARY KEY, wrong_field TEXT)`,
       );
+      await assertIntendedObject("table", ["id", "wrong_field"]);
 
       const now = new Date("2025-08-22T12:00:00.000Z");
       const params = { cliVersion: "0.1.0", buildId: "build-123", now };
 
-      let error: any;
-      try {
+      await expectDomainError(async () => {
         await db!.withMigrationLease(async (session: MigrationSession) => {
           await dbControlService.initialize(params, session);
         });
-      } catch (e) {
-        error = e;
-      }
-
-      expect(error).toBeInstanceOf(DomainError);
-      expect((error as DomainError).code).toBe("DATABASE_CONTROL_MALFORMED");
+      }, "DATABASE_CONTROL_MALFORMED", "database_control schema is not canonical");
     });
   });
 
@@ -646,15 +719,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
     });
 
     it("should reject reader protocol below minimum", async () => {
-      let error: any;
-      try {
-        await dbControlService.requireCompatibleReader({ readerProtocol: 0 });
-      } catch (e) {
-        error = e;
-      }
-
-      expect(error).toBeInstanceOf(DomainError);
-      expect((error as DomainError).code).toBe("DATABASE_READER_INCOMPATIBLE");
+      await expectDomainError(
+        () => dbControlService.requireCompatibleReader({ readerProtocol: 0 }),
+        "DATABASE_READER_INCOMPATIBLE",
+        "Reader protocol is incompatible",
+      );
     });
 
     it("should accept exact writer protocol match", async () => {
@@ -662,15 +731,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
     });
 
     it("should reject writer protocol mismatch", async () => {
-      let error: any;
-      try {
-        await dbControlService.requireCompatibleWriter({ writerProtocol: 2 });
-      } catch (e) {
-        error = e;
-      }
-
-      expect(error).toBeInstanceOf(DomainError);
-      expect((error as DomainError).code).toBe("DATABASE_WRITER_INCOMPATIBLE");
+      await expectDomainError(
+        () => dbControlService.requireCompatibleWriter({ writerProtocol: 2 }),
+        "DATABASE_WRITER_INCOMPATIBLE",
+        "Writer protocol is incompatible",
+      );
     });
 
     it("should reject reader when database is not READY", async () => {
@@ -679,15 +744,11 @@ describe("Database Control Foundation - Corrected 0002", () => {
         [],
       );
 
-      let error: any;
-      try {
-        await dbControlService.requireCompatibleReader({ readerProtocol: 1 });
-      } catch (e) {
-        error = e;
-      }
-
-      expect(error).toBeInstanceOf(DomainError);
-      expect((error as DomainError).code).toBe("DATABASE_CONTROL_NOT_READY");
+      await expectDomainError(
+        () => dbControlService.requireCompatibleReader({ readerProtocol: 1 }),
+        "DATABASE_CONTROL_NOT_READY",
+        "Database control is not ready",
+      );
     });
   });
 
@@ -697,28 +758,15 @@ describe("Database Control Foundation - Corrected 0002", () => {
       const testDir = testTempDir;
       const testPath = testDbPath;
 
-      // Verify directory and db file exist
-      expect(testDir).toBeTruthy();
-      expect(testPath).toBeTruthy();
-
       // Verify db file was created
-      const stat = await Bun.file(testPath).stat();
-      expect(stat).toBeTruthy();
+      expect(await Bun.file(testPath).exists()).toBe(true);
 
-      await setup.db.close();
       await cleanupTestDb();
 
-      // Verify cleanup actually happened - directory should not exist
-      let dirStillExists = false;
-      try {
-        await Bun.file(testDir).stat();
-        dirStillExists = true;
-      } catch (e) {
-        // Expected: directory was deleted
-        dirStillExists = false;
-      }
-
-      expect(dirStillExists).toBe(false);
+      expect(await Bun.file(testDir).exists()).toBe(false);
+      expect(await Bun.file(testPath).exists()).toBe(false);
+      expect(await Bun.file(`${testPath}-wal`).exists()).toBe(false);
+      expect(await Bun.file(`${testPath}-shm`).exists()).toBe(false);
     });
   });
 });
