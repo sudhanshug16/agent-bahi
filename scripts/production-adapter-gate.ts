@@ -124,19 +124,16 @@ function revokeResource(resource: CanonicalResource): void {
  */
 export function safeReason(error: unknown): string {
   if (error instanceof IntegrationBlockedError) return REASONS.disposableUnavailable;
+  if (error instanceof GateCleanupError) return REASONS.cleanupFailure;
   if (error instanceof GateLifecycleError) return REASONS.lifecycleFailure;
   return REASONS.adapterFailure;
 }
 
 class GateLifecycleError extends Error {}
+class GateCleanupError extends Error {}
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await lstat(path);
-    return true;
-  } catch {
-    return false;
-  }
+function isMissingPath(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
 
 function sameDirectoryIdentity(stat: { dev: number; ino: number }, identity: DirectoryIdentity): boolean {
@@ -144,10 +141,21 @@ function sameDirectoryIdentity(stat: { dev: number; ino: number }, identity: Dir
 }
 
 async function readDirectoryIdentity(path: string): Promise<DirectoryIdentity> {
+  const pathStat = await lstat(path);
+  if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) throw new GateLifecycleError();
   const canonicalPath = await realpath(path);
   const stat = await lstat(canonicalPath);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new GateLifecycleError();
   return { realpath: canonicalPath, dev: stat.dev, ino: stat.ino };
+}
+
+async function directoryIdentityMatches(path: string, identity: DirectoryIdentity): Promise<boolean> {
+  try {
+    const current = await readDirectoryIdentity(path);
+    return current.realpath === identity.realpath && current.dev === identity.dev && current.ino === identity.ino;
+  } catch {
+    return false;
+  }
 }
 
 async function verifyOwnedSqliteDirectory(resource: CanonicalSqliteResource, requireSentinel = true): Promise<boolean> {
@@ -171,30 +179,67 @@ async function removeFreshSqliteDirectory(
   path: string,
   identity: DirectoryIdentity | null,
   createdStat?: { dev: number; ino: number },
-): Promise<void> {
+): Promise<string | null> {
   try {
-    if (!identity && !createdStat) return;
+    if (!identity && !createdStat) return REASONS.cleanupFailure;
     const current = await readDirectoryIdentity(path);
-    if (identity && (current.realpath !== identity.realpath || current.dev !== identity.dev || current.ino !== identity.ino)) return;
-    if (createdStat && (current.dev !== createdStat.dev || current.ino !== createdStat.ino)) return;
+    if (identity && (current.realpath !== identity.realpath || current.dev !== identity.dev || current.ino !== identity.ino)) return REASONS.cleanupFailure;
+    if (createdStat && (current.dev !== createdStat.dev || current.ino !== createdStat.ino)) return REASONS.cleanupFailure;
+
+    // Validate the complete allowlist before deleting anything. An unknown
+    // entry remains in place, along with the proven sentinel, for inspection.
+    if (!(await directoryIdentityMatches(path, current))) return REASONS.cleanupFailure;
     const entries = await readdir(current.realpath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name !== "ownership.sentinel" || !entry.isFile() || entry.isSymbolicLink()) return;
-      await unlink(join(current.realpath, entry.name));
+    if (entries.some((entry) => entry.name !== "ownership.sentinel" || !entry.isFile() || entry.isSymbolicLink())) {
+      return REASONS.cleanupFailure;
     }
+    if (entries.length === 1) {
+      if (!(await directoryIdentityMatches(path, current))) return REASONS.cleanupFailure;
+      const sentinelPath = join(current.realpath, "ownership.sentinel");
+      const sentinelStat = await lstat(sentinelPath);
+      if (!sentinelStat.isFile() || sentinelStat.isSymbolicLink()) return REASONS.cleanupFailure;
+      if (!(await directoryIdentityMatches(path, current))) return REASONS.cleanupFailure;
+      await unlink(sentinelPath);
+    }
+    if (!(await directoryIdentityMatches(path, current))) return REASONS.cleanupFailure;
+    const remaining = await readdir(current.realpath, { withFileTypes: true });
+    if (remaining.length !== 0) return REASONS.cleanupFailure;
+    if (!(await directoryIdentityMatches(path, current))) return REASONS.cleanupFailure;
     await rmdir(current.realpath);
+    return null;
   } catch {
     // Constructor failure must never broaden cleanup beyond the exact fresh
     // directory. If identity, contents, or emptiness cannot be proven, leave
-    // the path in place for inspection.
+    // the path in place and report cleanup failure.
+    return REASONS.cleanupFailure;
   }
 }
 
 async function unlinkOwnedSqliteFile(resource: CanonicalSqliteResource, path: string): Promise<string | null> {
   if (!(await verifyOwnedSqliteDirectory(resource))) return REASONS.ownershipFailure;
+  let originalStat: { dev: number; ino: number };
   try {
     const stat = await lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink()) return REASONS.ownershipFailure;
+    originalStat = { dev: stat.dev, ino: stat.ino };
+  } catch (error) {
+    return isMissingPath(error) ? null : REASONS.cleanupFailure;
+  }
+
+  // Revalidate the exact parent immediately before the unlink and reject a
+  // replacement of the allowlisted file. A post-lstat/pre-unlink race is NOT
+  // PROVEN safe here without descriptor-relative native primitives.
+  if (!(await verifyOwnedSqliteDirectory(resource))) return REASONS.ownershipFailure;
+  try {
+    const currentStat = await lstat(path);
+    if (!currentStat.isFile() || currentStat.isSymbolicLink() || currentStat.dev !== originalStat.dev || currentStat.ino !== originalStat.ino) {
+      return REASONS.ownershipFailure;
+    }
+  } catch {
+    return REASONS.cleanupFailure;
+  }
+  if (!(await verifyOwnedSqliteDirectory(resource))) return REASONS.ownershipFailure;
+  try {
     await unlink(path);
     return null;
   } catch {
@@ -219,22 +264,31 @@ async function cleanupOwnedSqlite(resource: CanonicalSqliteResource): Promise<st
         resource.sentinelPath,
       ];
       for (const path of exactPaths) {
-        if (await pathExists(path)) {
-          failure = await unlinkOwnedSqliteFile(resource, path);
-          if (failure) break;
-        }
+        failure = await unlinkOwnedSqliteFile(resource, path);
+        if (failure) break;
       }
       if (!failure) {
         if (!(await verifyOwnedSqliteDirectory(resource, false))) {
           failure = REASONS.ownershipFailure;
         } else {
+          // The directory identity is checked immediately before readdir and
+          // again immediately before rmdir. The post-check race remains
+          // unproven without descriptor-relative native primitives.
+          if (!(await directoryIdentityMatches(resource.directory, resource.directoryIdentity))) {
+            failure = REASONS.ownershipFailure;
+          }
+        }
+        if (!failure) {
           const entries = await readdir(resource.directory, { withFileTypes: true });
           if (entries.length !== 0) {
             failure = REASONS.cleanupFailure;
           } else {
             try {
-              await rmdir(resource.directory);
-              if (await pathExists(resource.directory)) failure = REASONS.cleanupFailure;
+              if (!(await directoryIdentityMatches(resource.directory, resource.directoryIdentity))) {
+                failure = REASONS.ownershipFailure;
+              } else {
+                await rmdir(resource.directory);
+              }
             } catch {
               failure = REASONS.cleanupFailure;
             }
@@ -283,7 +337,8 @@ async function createOwnedSqlite(): Promise<CanonicalSqliteResource> {
     ownedResources.set(capability.token, resource);
     return resource;
   } catch (error) {
-    await removeFreshSqliteDirectory(directory, identity, createdStat);
+    const cleanupFailure = await removeFreshSqliteDirectory(directory, identity, createdStat);
+    if (cleanupFailure) throw new GateCleanupError();
     throw error;
   }
 }
@@ -377,18 +432,28 @@ async function runDialect(resource: CanonicalResource): Promise<GateResult> {
   let result: GateResult = { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.adapterFailure };
 
   try {
-    db = DatabaseFactory.createDatabase(resource.config);
-    const migration = new MigrationService(db, resource.dialect);
-    const applied = await migration.migrate([{ id: migrationId, sql }]);
-    const status = await migration.getStatus();
-    const appliedMigration = status.appliedMigrations.find((item) => item.id === migrationId);
-    if (applied.length !== 1 || !appliedMigration) {
-      result = { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.adapterFailure };
+    // Claiming the resource proves only the module-private capability. The
+    // SQLite path must be revalidated at the final use boundary as well, so a
+    // replaced directory cannot cause Bun SQLite to create database/WAL/SHM
+    // files in a caller-owned path.
+    if (resource.kind === "sqlite" && !(await verifyOwnedSqliteDirectory(resource))) {
+      result = { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.ownershipFailure };
     } else {
-      await migration.verifyChecksum(migrationId, appliedMigration.checksum);
-      await db.executeRaw(`DROP TABLE ${table}`);
-      await verifyOwnedTableAbsent(db, resource.config, table);
-      result = { dialect: resource.dialect, status: "PASS" };
+      db = DatabaseFactory.createDatabase(resource.config);
+    }
+    if (db) {
+      const migration = new MigrationService(db, resource.dialect);
+      const applied = await migration.migrate([{ id: migrationId, sql }]);
+      const status = await migration.getStatus();
+      const appliedMigration = status.appliedMigrations.find((item) => item.id === migrationId);
+      if (applied.length !== 1 || !appliedMigration) {
+        result = { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.adapterFailure };
+      } else {
+        await migration.verifyChecksum(migrationId, appliedMigration.checksum);
+        await db.executeRaw(`DROP TABLE ${table}`);
+        await verifyOwnedTableAbsent(db, resource.config, table);
+        result = { dialect: resource.dialect, status: "PASS" };
+      }
     }
   } catch (error) {
     result = { dialect: resource.dialect, status: "BLOCKED", reason: safeReason(error) };
@@ -432,6 +497,20 @@ function replayResults(): GateResult[] {
   return DIALECTS.map((dialect) => ({ dialect, status: "BLOCKED", reason: REASONS.gateReplay }));
 }
 
+function completeResults(results: readonly GateResult[]): GateResult[] {
+  const byDialect = new Map<GateDialect, GateResult>();
+  for (const result of results) {
+    if (!DIALECTS.includes(result.dialect) || byDialect.has(result.dialect)) {
+      return DIALECTS.map((dialect) => ({ dialect, status: "BLOCKED", reason: REASONS.adapterFailure }));
+    }
+    byDialect.set(result.dialect, result);
+  }
+  if (byDialect.size !== DIALECTS.length) {
+    return DIALECTS.map((dialect) => ({ dialect, status: "BLOCKED", reason: REASONS.adapterFailure }));
+  }
+  return DIALECTS.map((dialect) => byDialect.get(dialect)!);
+}
+
 /**
  * Run the local-owned SQLite/PostgreSQL/MySQL adapter gate.
  *
@@ -444,7 +523,7 @@ export async function runProductionAdapterGate(): Promise<GateResult[]> {
   try {
     const results: GateResult[] = [];
     for (const dialect of DIALECTS) results.push(await runOwnedDialect(dialect));
-    return results;
+    return completeResults(results);
   } finally {
     gateInvocationState = "REVOKED";
   }
