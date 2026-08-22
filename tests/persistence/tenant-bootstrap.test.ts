@@ -1,6 +1,7 @@
 /**
  * Comprehensive tenant.create command tests.
  * Verifies idempotency, replay, conflict detection, rollback, and public facade isolation.
+ * Includes durable two-connection proof for concurrent idempotency and trigger-based abort recovery.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -14,6 +15,7 @@ import { BusinessSessionFactory } from "../../src/infrastructure/adapters/busine
 import type { CommandEnvelope } from "../../src/application/commands.ts";
 import type { TenantCreatePayload } from "../../src/application/commands.ts";
 import { IdempotencyConflictError } from "../../src/core/types.ts";
+import { BusinessSessionBusyError } from "../../src/infrastructure/adapters/business-session-runner.ts";
 
 describe("tenant.create bootstrap command", () => {
   test("creates tenant in CREATING state with active default BookSet and seed accounts", async () => {
@@ -321,6 +323,216 @@ describe("tenant.create bootstrap command", () => {
 
       expect(finalTenantCount).toBe(initialTenantCount);
       expect(finalBookSetCount).toBe(initialBookSetCount);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent identical tenant.create on independent facades with contention handling", async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-concurrent-durable-"));
+    const dbPath = join(directory, "test.sqlite");
+    try {
+      // Bootstrap database once
+      await bootstrapSqliteApplication(dbPath, {
+        backupDestinationPath: join(directory, "backup.sqlite"),
+      });
+
+      // Open TWO independent facade instances
+      const app1 = createSqliteApplication(dbPath);
+      const app2 = createSqliteApplication(dbPath);
+
+      const requestId = randomUUID();
+      const envelope: CommandEnvelope<TenantCreatePayload> = {
+        schemaVersion: 1 as const,
+        tenantId: "temp" as any,
+        requestId,
+        actor: { kind: "SYSTEM" as const, id: "concurrent-test" },
+        source: "INTERNAL" as const,
+        reason: "Concurrent idempotency proof",
+        payload: { kind: "COMPANY" as const, name: "Concurrent Corp", baseCurrency: "INR" },
+      };
+
+      // Issue identical requests concurrently via Promise.allSettled
+      const results = await Promise.allSettled([
+        app1.tenant.create(envelope),
+        app2.tenant.create(envelope),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<any>[];
+      const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+
+      // Valid scenarios: both fulfilled with exact match, OR one fulfilled + one BUSINESS_SESSION_BUSY
+      expect(fulfilled.length + rejected.length).toBe(2);
+
+      if (fulfilled.length === 2) {
+        // Both succeeded - verify exact match
+        const result1 = fulfilled[0].value;
+        const result2 = fulfilled[1].value;
+        expect(result1.resultJson).toBe(result2.resultJson);
+        expect(result1.resultHash).toBe(result2.resultHash);
+      } else if (fulfilled.length === 1 && rejected.length === 1) {
+        // One BUSY error expected
+        const busyError = rejected[0].reason;
+        expect(busyError.code).toBe("BUSINESS_SESSION_BUSY");
+
+        // Retry through the losing facade after winner completes
+        const result1 = fulfilled[0].value;
+        const retryResult = await app2.tenant.create(envelope);
+
+        // Verify exact match with original
+        expect(retryResult.resultJson).toBe(result1.resultJson);
+        expect(retryResult.resultHash).toBe(result1.resultHash);
+        expect(retryResult.replayed).toBe(true);
+      } else {
+        throw new Error(`Invalid result: expected 2 fulfilled OR 1 fulfilled + 1 rejected, got ${fulfilled.length} fulfilled, ${rejected.length} rejected`);
+      }
+
+      // Query DB and verify exact state
+      const native = new BunDatabase(dbPath, { readonly: true });
+
+      // Get the tenant ID from first fulfilled result
+      const result1Data = JSON.parse(fulfilled[0].value.resultJson);
+      const tenantId = result1Data.tenantId;
+      const bookSetId = result1Data.defaultBookSetId;
+
+      // Verify exactly one tenant
+      const tenantCount = (native.query("SELECT COUNT(*) as count FROM tenants WHERE id = ?").get(tenantId) as any).count;
+      expect(tenantCount).toBe(1);
+
+      // Verify one ACTIVE default BookSet
+      const bookSetRow = native.query("SELECT lifecycle FROM book_sets WHERE id = ? AND tenant_id = ?").get(bookSetId, tenantId) as any;
+      expect(bookSetRow).toBeDefined();
+      expect(bookSetRow.lifecycle).toBe("ACTIVE");
+
+      // Verify five correctly scoped seed accounts
+      const accountCount = (native.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id = ? AND book_set_id = ?").get(tenantId, bookSetId) as any).count;
+      expect(accountCount).toBe(5);
+
+      // Verify one tenant.create audit record
+      const auditRecords = native.query(
+        "SELECT command FROM audit_records WHERE tenant_id = ? AND request_id = ?",
+      ).all(tenantId, requestId) as any[];
+      expect(auditRecords).toHaveLength(1);
+      expect(auditRecords[0].command).toBe("tenant.create");
+
+      // Verify one finalized tenant_creation_requests row
+      const tcrRow = native.query(
+        "SELECT id, request_id, request_hash, tenant_id, result_json, result_hash FROM tenant_creation_requests WHERE request_id = ?",
+      ).get(requestId) as any;
+      expect(tcrRow).toBeDefined();
+      expect(tcrRow.tenant_id).toBe(tenantId);
+      expect(tcrRow.result_json).toBe(fulfilled[0].value.resultJson);
+      expect(tcrRow.result_hash).toBe(fulfilled[0].value.resultHash);
+
+      native.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("tenant.create failure with trigger abort reverts all writes, then retry succeeds with idempotency", async () => {
+    const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-trigger-abort-"));
+    const dbPath = join(directory, "test.sqlite");
+    try {
+      // Bootstrap database
+      await bootstrapSqliteApplication(dbPath, {
+        backupDestinationPath: join(directory, "backup.sqlite"),
+      });
+
+      const app = createSqliteApplication(dbPath);
+
+      const requestId = randomUUID();
+      const envelope: CommandEnvelope<TenantCreatePayload> = {
+        schemaVersion: 1 as const,
+        tenantId: "temp" as any,
+        requestId,
+        actor: { kind: "SYSTEM" as const, id: "trigger-abort-test" },
+        source: "INTERNAL" as const,
+        reason: "Trigger abort recovery test",
+        payload: { kind: "INDIVIDUAL" as const, name: "Trigger Test Person", baseCurrency: "USD" },
+      };
+
+      // Install trigger that aborts tenant_creation_requests finalization
+      const setupDb = new BunDatabase(dbPath);
+      setupDb.exec(`
+        CREATE TRIGGER tenant_creation_requests_abort_for_test BEFORE UPDATE ON tenant_creation_requests
+        WHEN NEW.result_json IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'test: abort finalization');
+        END;
+      `);
+      setupDb.close();
+
+      // Attempt tenant.create - should fail due to trigger abort
+      let error: Error | null = null;
+      try {
+        await app.tenant.create(envelope);
+      } catch (e) {
+        error = e as Error;
+      }
+      expect(error).toBeDefined();
+      expect(error!.message).toContain("trigger constraint violation");
+
+      // Query DB: verify zero tenant/BookSet/account/audit/request rows for this attempt
+      const queryDb = new BunDatabase(dbPath, { readonly: true });
+
+      const tenantCount = (queryDb.query("SELECT COUNT(*) as count FROM tenants WHERE id = (SELECT DISTINCT tenant_id FROM tenant_creation_requests WHERE request_id = ?)").get(requestId) as any).count;
+      expect(tenantCount).toBe(0);
+
+      const bookSetCount = (queryDb.query("SELECT COUNT(*) as count FROM book_sets WHERE tenant_id IN (SELECT DISTINCT tenant_id FROM tenant_creation_requests WHERE request_id = ?)").get(requestId) as any).count;
+      expect(bookSetCount).toBe(0);
+
+      const accountCount = (queryDb.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id IN (SELECT DISTINCT tenant_id FROM tenant_creation_requests WHERE request_id = ?)").get(requestId) as any).count;
+      expect(accountCount).toBe(0);
+
+      const auditCount = (queryDb.query("SELECT COUNT(*) as count FROM audit_records WHERE request_id = ?").get(requestId) as any).count;
+      expect(auditCount).toBe(0);
+
+      const tcrCount = (queryDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any).count;
+      expect(tcrCount).toBe(0);
+
+      queryDb.close();
+
+      // Drop the abort trigger
+      const dropDb = new BunDatabase(dbPath);
+      dropDb.exec("DROP TRIGGER tenant_creation_requests_abort_for_test;");
+      dropDb.close();
+
+      // Retry with SAME requestId/payload - should succeed
+      const retryResult = await app.tenant.create(envelope);
+      expect(retryResult).toBeDefined();
+
+      const retryData = JSON.parse(retryResult.resultJson);
+      expect(retryData.tenantId).toBeDefined();
+      expect(retryData.defaultBookSetId).toBeDefined();
+      expect(retryData.seedAccountIds).toBeDefined();
+
+      // Verify state is clean and matches first successful attempt
+      const finalDb = new BunDatabase(dbPath, { readonly: true });
+
+      // Verify exactly one tenant
+      const finalTenantCount = (finalDb.query("SELECT COUNT(*) as count FROM tenants WHERE id = ?").get(retryData.tenantId) as any).count;
+      expect(finalTenantCount).toBe(1);
+
+      // Verify one ACTIVE BookSet
+      const bookSetRow = finalDb.query("SELECT lifecycle FROM book_sets WHERE id = ? AND tenant_id = ?").get(retryData.defaultBookSetId, retryData.tenantId) as any;
+      expect(bookSetRow.lifecycle).toBe("ACTIVE");
+
+      // Verify five seed accounts
+      const finalAccountCount = (finalDb.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id = ? AND book_set_id = ?").get(retryData.tenantId, retryData.defaultBookSetId) as any).count;
+      expect(finalAccountCount).toBe(5);
+
+      // Verify one tenant_creation_requests row (not two)
+      const finalTcrCount = (finalDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any).count;
+      expect(finalTcrCount).toBe(1);
+
+      // Verify the finalized row
+      const finalTcrRow = finalDb.query("SELECT tenant_id, result_json, result_hash FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any;
+      expect(finalTcrRow.tenant_id).toBe(retryData.tenantId);
+      expect(finalTcrRow.result_json).toBeDefined();
+      expect(finalTcrRow.result_hash).toBeDefined();
+
+      finalDb.close();
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
