@@ -1,21 +1,20 @@
 import type { BusinessSessionRunner } from "../../application/ports/persistence.ts";
-import { SqliteAdapter } from "./sqlite-adapter.ts";
 import { SqliteBusinessSessionRunner } from "./business-session-runner.ts";
-import { DatabaseControlService } from "../services/database-control-service.ts";
 import type { Dialect } from "../../core/types.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 
 /**
- * Factory for creating BusinessSessionRunner with all dependencies.
+ * Factory for creating BusinessSessionRunner.
  * Composition root for production use.
  *
- * Invariant: the constructed runner uses only the injected database path.
- * DatabaseControlService is created fresh for each runner to ensure isolation.
+ * Invariant: the constructed runner validates database state directly on the
+ * fresh connection, without external dependencies. All gate validation happens
+ * within the same transaction where BEGIN IMMEDIATE is executed.
  */
 export class BusinessSessionFactory {
   /**
    * Create a BusinessSessionRunner for a SQLite database at the given path.
-   * Initializes the Database adapter and DatabaseControlService internally.
+   * The runner validates database state directly on each fresh connection.
    *
    * @param dbPath - Absolute path to SQLite database file
    * @param dialect - Database dialect (currently only 'sqlite' supported)
@@ -35,18 +34,8 @@ export class BusinessSessionFactory {
       throw new Error(`Only sqlite dialect is supported, got ${dialect}`);
     }
 
-    // Create the database adapter
-    const db = new SqliteAdapter({ path: dbPath });
-
-    // Create the control service (will inspect existing state if present)
-    const controlService = new DatabaseControlService(db, dialect);
-
     // Create and return the session runner
-    return new SqliteBusinessSessionRunner(
-      dbPath,
-      controlService,
-      readerProtocol,
-      writerProtocol,
-    );
+    // The runner validates database_control and schema directly on the fresh connection
+    return new SqliteBusinessSessionRunner(dbPath, readerProtocol, writerProtocol);
   }
 }

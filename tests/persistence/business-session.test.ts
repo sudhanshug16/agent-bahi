@@ -45,7 +45,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     });
 
     // Create session runner (reader protocol 1, writer protocol 1)
-    sessionRunner = new SqliteBusinessSessionRunner(dbPath, controlService, 1, 1);
+    sessionRunner = new SqliteBusinessSessionRunner(dbPath, 1, 1);
   });
 
   afterEach(async () => {
@@ -161,7 +161,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
       const badDb = new SqliteAdapter({ path: badDbPath });
 
       const controlService = new DatabaseControlService(badDb, "sqlite");
-      const badSessionRunner = new SqliteBusinessSessionRunner(badDbPath, controlService, 1, 1);
+      const badSessionRunner = new SqliteBusinessSessionRunner(badDbPath, 1, 1);
 
       try {
         await badSessionRunner.withBusinessSession("write", async (session) => {
@@ -237,7 +237,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     it("should check reader protocol compatibility", async () => {
       // Create session runner with protocol 999 that doesn't match DB defaults
       const controlService = new DatabaseControlService(db, "sqlite");
-      const incompatibleRunner = new SqliteBusinessSessionRunner(dbPath, controlService, 999, 1);
+      const incompatibleRunner = new SqliteBusinessSessionRunner(dbPath, 999, 1);
 
       try {
         await incompatibleRunner.withBusinessSession("read", async (session) => {
@@ -252,7 +252,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     it("should check writer protocol compatibility", async () => {
       // Create session runner with protocol 999 that doesn't match DB defaults
       const controlService = new DatabaseControlService(db, "sqlite");
-      const incompatibleRunner = new SqliteBusinessSessionRunner(dbPath, controlService, 1, 999);
+      const incompatibleRunner = new SqliteBusinessSessionRunner(dbPath, 1, 999);
 
       try {
         await incompatibleRunner.withBusinessSession("write", async (session) => {

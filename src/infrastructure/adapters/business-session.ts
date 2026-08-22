@@ -1,8 +1,146 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import type { BusinessSession, BusinessSessionMode, QueryResult } from "../../application/ports/persistence.ts";
-import type { DatabaseControlRecord } from "../services/database-control-service.ts";
 import { DomainError } from "../../core/types.ts";
 import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.ts";
+
+/**
+ * Business table allowlist: explicit set of tables callbacks are permitted to access.
+ */
+const BUSINESS_TABLE_ALLOWLIST = new Set([
+  "tenants",
+  "book_sets",
+  "accounts",
+  "legal_identities",
+  "gst_registrations",
+  "evidence",
+  "audit_records",
+  "idempotency_records",
+  "tenant_creation_requests",
+]);
+
+/**
+ * SQL validator: fail-closed policy for read and write modes.
+ */
+class SQLValidator {
+  /**
+   * Validate read-mode SQL: accept only required single SELECT statements.
+   * Reject comments (anywhere), semicolons/stacking, PRAGMA, WITH, DDL, DML,
+   * and sensitive sqlite/control/migration table access.
+   */
+  static validateReadSQL(sql: string): void {
+    const trimmed = sql.trim();
+
+    if (!trimmed) {
+      throw new DomainError("INVALID_SQL", "Empty SQL statement is not allowed");
+    }
+
+    // Reject any comments (leading or inline)
+    if (trimmed.includes("--") || trimmed.includes("/*") || trimmed.includes("*/")) {
+      throw new DomainError("INVALID_SQL", "Comments are not allowed");
+    }
+
+    // Reject semicolons (no stacking/multi-statements)
+    if (trimmed.includes(";")) {
+      throw new DomainError("INVALID_SQL", "Multi-statement SQL is not allowed");
+    }
+
+    // Reject PRAGMA
+    if (/^\s*PRAGMA\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "PRAGMA statements are not allowed");
+    }
+
+    // Reject WITH (even if followed by SELECT)
+    if (/^\s*WITH\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "WITH statements are not allowed in read-mode");
+    }
+
+    // Reject DDL/DML
+    if (/^\s*(CREATE|DROP|ALTER|REPLACE|INSERT|UPDATE|DELETE)\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "DDL/DML statements are not allowed in read-mode");
+    }
+
+    // Must be SELECT
+    if (!/^\s*SELECT\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "Only SELECT statements are allowed in read-mode");
+    }
+
+    // Check for sensitive table access (sqlite_*, database_control, schema_migrations)
+    const lowerSQL = sql.toLowerCase();
+    if (
+      lowerSQL.includes("sqlite_") ||
+      lowerSQL.includes("database_control") ||
+      lowerSQL.includes("schema_migrations")
+    ) {
+      throw new DomainError("INVALID_SQL", "Access to system/control tables is not allowed");
+    }
+  }
+
+  /**
+   * Validate write-mode SQL: accept only single INSERT/UPDATE/DELETE on business tables.
+   * Reject comments, semicolons, WITH, PRAGMA, DDL, and metadata table access.
+   */
+  static validateWriteSQL(sql: string): void {
+    const trimmed = sql.trim();
+
+    if (!trimmed) {
+      throw new DomainError("INVALID_SQL", "Empty SQL statement is not allowed");
+    }
+
+    // Reject any comments
+    if (trimmed.includes("--") || trimmed.includes("/*") || trimmed.includes("*/")) {
+      throw new DomainError("INVALID_SQL", "Comments are not allowed");
+    }
+
+    // Reject semicolons (no stacking)
+    if (trimmed.includes(";")) {
+      throw new DomainError("INVALID_SQL", "Multi-statement SQL is not allowed");
+    }
+
+    // Reject PRAGMA
+    if (/^\s*PRAGMA\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "PRAGMA statements are not allowed");
+    }
+
+    // Reject WITH
+    if (/^\s*WITH\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "WITH statements are not allowed in write-mode");
+    }
+
+    // Reject DDL
+    if (/^\s*(CREATE|DROP|ALTER|REPLACE)\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "DDL statements are not allowed");
+    }
+
+    // Must be DML: INSERT, UPDATE, or DELETE
+    if (!/^\s*(INSERT|UPDATE|DELETE)\s+/i.test(trimmed)) {
+      throw new DomainError("INVALID_SQL", "Only INSERT/UPDATE/DELETE statements are allowed in write-mode");
+    }
+
+    // Extract table name from DML statement (rough check)
+    const tableMatch = trimmed.match(/^\s*(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)/i);
+    if (!tableMatch) {
+      throw new DomainError("INVALID_SQL", "Cannot determine target table");
+    }
+
+    const tableName = tableMatch[2];
+    if (!BUSINESS_TABLE_ALLOWLIST.has(tableName)) {
+      throw new DomainError(
+        "INVALID_SQL",
+        `Table '${tableName}' is not allowed; access to system/control tables is not permitted`
+      );
+    }
+
+    // Check for sensitive table access (sqlite_*, database_control, schema_migrations)
+    const lowerSQL = sql.toLowerCase();
+    if (
+      lowerSQL.includes("sqlite_") ||
+      lowerSQL.includes("database_control") ||
+      lowerSQL.includes("schema_migrations")
+    ) {
+      throw new DomainError("INVALID_SQL", "Access to system/control tables is not allowed");
+    }
+  }
+}
 
 /**
  * Concrete SQLite BusinessSession implementation.
@@ -10,9 +148,9 @@ import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.t
  * All methods check active flag; becomes inactive after finally completes.
  * Never expose outside callback or capture for later use.
  *
- * Read-mode validation: rejects PRAGMA, DDL, DML, writable WITH, leading comments,
- * and multi-statement SQL before execution. Does not expose raw Database, native
- * handle, commit, rollback, or close.
+ * Read-mode: fail-closed validation accepts only required single SELECT statements.
+ * Write-mode: fail-closed validation accepts only single INSERT/UPDATE/DELETE on business tables.
+ * Both modes reject comments, semicolons, PRAGMA, WITH, DDL, and metadata/control table access.
  */
 export class SqliteBusinessSession implements BusinessSession {
   private active = true;
@@ -22,7 +160,6 @@ export class SqliteBusinessSession implements BusinessSession {
   constructor(
     private db: BunDatabase,
     private sessionMode: BusinessSessionMode,
-    private controlRecord: DatabaseControlRecord,
   ) {
     this.dbRef = db;
   }
@@ -45,80 +182,6 @@ export class SqliteBusinessSession implements BusinessSession {
     }
   }
 
-  private validateReadModeSQL(sql: string): void {
-    if (this.sessionMode !== "read") {
-      return;
-    }
-
-    const trimmed = sql.trim();
-    if (!trimmed) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "Empty SQL statement is not allowed"
-      );
-    }
-
-    // Reject leading comments (-- or /* */)
-    if (trimmed.startsWith("--") || trimmed.startsWith("/*")) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "SQL with leading comments is not allowed in read-mode"
-      );
-    }
-
-    // Reject PRAGMA statements
-    if (/^\s*PRAGMA\s+/i.test(trimmed)) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "PRAGMA statements are not allowed in read-mode"
-      );
-    }
-
-    // Reject DDL keywords (CREATE, DROP, ALTER, REPLACE)
-    if (/^\s*(CREATE|DROP|ALTER|REPLACE)\s+/i.test(trimmed)) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "DDL statements are not allowed in read-mode"
-      );
-    }
-
-    // Reject DML keywords (INSERT, UPDATE, DELETE, WITH writable)
-    if (/^\s*(INSERT|UPDATE|DELETE)\s+/i.test(trimmed)) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "DML statements are not allowed in read-mode"
-      );
-    }
-
-    // Reject writable WITH (common table expressions with INSERT/UPDATE/DELETE)
-    if (/^\s*WITH\s+/i.test(trimmed) && /\s+(INSERT|UPDATE|DELETE)\s+/i.test(trimmed)) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "Writable WITH statements are not allowed in read-mode"
-      );
-    }
-
-    // Reject multi-statement SQL (detect semicolon followed by non-whitespace or comment)
-    const parts = trimmed.split(";");
-    if (parts.length > 1) {
-      const afterSemicolon = parts.slice(1).join(";").trim();
-      if (afterSemicolon && !afterSemicolon.startsWith("--") && !afterSemicolon.startsWith("/*")) {
-        throw new DomainError(
-          "INVALID_SQL",
-          "Multi-statement SQL is not allowed in read-mode"
-        );
-      }
-    }
-
-    // Ensure statement starts with SELECT or WITH (read-only)
-    if (!/^\s*(SELECT|WITH)\s+/i.test(trimmed)) {
-      throw new DomainError(
-        "INVALID_SQL",
-        "Only SELECT and WITH statements are allowed in read-mode"
-      );
-    }
-  }
-
   private prepareStatement(sql: string) {
     if (!this.dbRef) throw new DomainError("BUSINESS_SESSION_INACTIVE", "Database connection lost");
     if (!this.statements.has(sql)) {
@@ -129,7 +192,7 @@ export class SqliteBusinessSession implements BusinessSession {
 
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     this.checkActive();
-    this.validateReadModeSQL(sql);
+    SQLValidator.validateReadSQL(sql);
     try {
       const stmt = this.prepareStatement(sql);
       const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
@@ -145,7 +208,7 @@ export class SqliteBusinessSession implements BusinessSession {
 
   async querySingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
     this.checkActive();
-    this.validateReadModeSQL(sql);
+    SQLValidator.validateReadSQL(sql);
     try {
       const stmt = this.prepareStatement(sql);
       return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
@@ -158,6 +221,7 @@ export class SqliteBusinessSession implements BusinessSession {
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
     this.checkActive();
     this.checkWriteMode();
+    SQLValidator.validateWriteSQL(sql);
     try {
       const stmt = this.prepareStatement(sql);
       stmt.run(...((params || []) as any));
@@ -171,6 +235,7 @@ export class SqliteBusinessSession implements BusinessSession {
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
     this.checkActive();
     this.checkWriteMode();
+    SQLValidator.validateWriteSQL(sql);
     try {
       const stmt = this.prepareStatement(sql);
       return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
@@ -197,20 +262,5 @@ export class SqliteBusinessSession implements BusinessSession {
     this.active = false;
     this.dbRef = null;
     this.statements.clear();
-  }
-
-  /**
-   * Get the underlying BunDatabase for finalization (commit/rollback).
-   * Only called by the runner during cleanup; not exposed through BusinessSession interface.
-   */
-  getDatabase(): BunDatabase {
-    return this.db;
-  }
-
-  /**
-   * Get control record for protocol validation (read from runner).
-   */
-  getControlRecord(): DatabaseControlRecord {
-    return this.controlRecord;
   }
 }

@@ -10,11 +10,13 @@ import type { Database, BusinessSessionRunner } from "../../src/application/port
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
+import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
 import { BookSetService } from "../../src/application/services/book-set-service.ts";
 import { AccountService } from "../../src/application/services/account-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
+import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp, DirtyMigrationError } from "../../src/core/types.ts";
 
 describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
@@ -28,15 +30,32 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
   beforeEach(async () => {
     const dbPath = `/tmp/defect-test-${randomUUID()}.sqlite`;
     db = new SqliteAdapter({ path: dbPath });
-    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
     migrationService = new MigrationService(db, "sqlite");
+
+    // Initialize database schema (order matters: core first, then database-control)
+    await migrationService.migrate([
+      { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
+      { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
+    ]);
+
+    // Initialize database_control row via migration lease
+    const controlService = new DatabaseControlService(db, "sqlite");
+    await db.withMigrationLease(async (session) => {
+      return await controlService.initialize(
+        {
+          cliVersion: "0.0.0-test",
+          buildId: "test-build",
+          now: new Date(),
+        },
+        session
+      );
+    });
+
+    // Now create the session runner and services
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
     tenantService = new TenantService(sessionRunner);
     bookSetService = new BookSetService(sessionRunner);
     accountService = new AccountService(sessionRunner);
-
-    await migrationService.migrate([
-      { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
-    ]);
   });
 
   afterEach(async () => {

@@ -5,10 +5,12 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
+import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
 import { BookSetService } from "../../src/application/services/book-set-service.ts";
 import { AccountService } from "../../src/application/services/account-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
+import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp } from "../../src/core/types.ts";
 
 describe("Phase 1A: Production Persistence Foundation", () => {
@@ -26,20 +28,40 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     dbPath = `/tmp/agent-bahi-test-${randomUUID()}.sqlite`;
 
     db = new SqliteAdapter({ path: dbPath });
-    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
     migrationService = new MigrationService(db, "sqlite");
     compatibilityService = new CompatibilityService(db, "sqlite");
-    tenantService = new TenantService(sessionRunner);
-    bookSetService = new BookSetService(sessionRunner);
-    accountService = new AccountService(sessionRunner);
 
-    // Initialize database schema
+    // Initialize database schema (order matters: core first, then database-control)
     await migrationService.migrate([
       {
         id: CORE_MIGRATIONS.id,
         sql: CORE_MIGRATIONS.sqlite,
       },
+      {
+        id: DATABASE_CONTROL_MIGRATIONS.id,
+        sql: DATABASE_CONTROL_MIGRATIONS.sqlite,
+      },
     ]);
+
+    // Initialize database_control row via migration lease
+    const controlService = new DatabaseControlService(db, "sqlite");
+    await db.withMigrationLease(async (session) => {
+      return await controlService.initialize(
+        {
+          cliVersion: "0.0.0-test",
+          buildId: "test-build",
+          now: new Date(),
+        },
+        session
+      );
+    });
+
+    // Now create the session runner (database is ready)
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
+    tenantService = new TenantService(sessionRunner);
+    bookSetService = new BookSetService(sessionRunner);
+    accountService = new AccountService(sessionRunner);
+
     await compatibilityService.initializeDefaults();
   });
 
