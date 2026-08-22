@@ -1,114 +1,276 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { DatabaseFactory } from "../src/infrastructure/adapters/database-factory.ts";
 import type { DatabaseConfig } from "../src/infrastructure/config/database.ts";
 import { DialectSqlBuilder } from "../src/infrastructure/sql/dialect-sql-builder.ts";
 import { MigrationService } from "../src/infrastructure/services/migration-service.ts";
-import { startMySQLContainer, startPostgresContainer } from "../spikes/gate0/database-integration.ts";
+import { IntegrationBlockedError, startMySQLContainer, startPostgresContainer } from "../spikes/gate0/database-integration.ts";
 
-interface GateResult {
-  dialect: string;
+type GateDialect = "sqlite" | "postgresql" | "mysql";
+type GateResult = {
+  dialect: GateDialect;
   status: "PASS" | "BLOCKED";
   reason?: string;
-}
+};
+
+type ResourceState = "NEW" | "RUNNING" | "CLEANING" | "REVOKED";
+
+const REASONS = {
+  adapterFailure: "ADAPTER_OPERATION_FAILED",
+  cleanupFailure: "CLEANUP_FAILED",
+  disposableUnavailable: "DISPOSABLE_RESOURCE_UNAVAILABLE",
+  gateReplay: "GATE_REPLAY_REJECTED",
+  lifecycleFailure: "RESOURCE_LIFECYCLE_REJECTED",
+  ownershipFailure: "OWNERSHIP_VERIFICATION_FAILED",
+} as const;
+
+const DIALECTS: readonly GateDialect[] = ["sqlite", "postgresql", "mysql"];
 
 interface GateCapability {
-  _brand: "GateCapability";
-  token: string;
-  targetHash: string;
-  active: boolean;
+  readonly token: string;
+  readonly targetHash: string;
 }
 
-interface OwnedResource {
-  canonical: { dialect: string; path?: string; host?: string; port?: number };
-  capability: GateCapability;
+interface ResourceLifecycle {
+  state: ResourceState;
 }
 
-const gateCapabilityRegistry = new Map<string, OwnedResource>();
-
-function computeTargetHash(dialect: string, config?: { path?: string; host?: string; port?: number }): string {
-  const canonical = `${dialect}:${config?.path || `${config?.host}:${config?.port}`}`;
-  return createHash("sha256").update(canonical).digest("hex");
+interface CanonicalSqliteResource {
+  readonly kind: "sqlite";
+  readonly dialect: "sqlite";
+  readonly config: Readonly<DatabaseConfig>;
+  readonly directory: string;
+  readonly databasePath: string;
+  readonly sentinelPath: string;
+  readonly sentinel: string;
+  readonly capability: GateCapability;
+  readonly lifecycle: ResourceLifecycle;
+  readonly dispose: () => Promise<string | null>;
 }
 
-function createGateCapability(dialect: string, config?: { path?: string; host?: string; port?: number }): GateCapability {
-  const token = crypto.randomUUID();
-  const targetHash = computeTargetHash(dialect, config);
-  const capability: GateCapability = { _brand: "GateCapability", token, targetHash, active: true };
-  const canonical = { dialect, ...config };
-  gateCapabilityRegistry.set(token, { canonical, capability });
-  return capability;
+interface CanonicalDatabaseResource {
+  readonly kind: "database";
+  readonly dialect: "postgresql" | "mysql";
+  readonly config: Readonly<DatabaseConfig>;
+  readonly containerId: string;
+  readonly host: string;
+  readonly port: number;
+  readonly capability: GateCapability;
+  readonly lifecycle: ResourceLifecycle;
+  readonly dispose: () => Promise<string | null>;
 }
 
-function validateGateCapability(capability: GateCapability, dialect: string, config?: { path?: string; host?: string; port?: number }): boolean {
-  if (capability._brand !== "GateCapability" || !capability.active) return false;
-  const registered = gateCapabilityRegistry.get(capability.token);
-  if (!registered) return false;
-  const expectedHash = computeTargetHash(dialect, config);
-  return capability.targetHash === expectedHash && registered.capability.active;
+type CanonicalResource = CanonicalSqliteResource | CanonicalDatabaseResource;
+
+// These are module-private by design. Nothing outside this module can create,
+// replace, inspect, or clean a registered resource.
+const ownedResources = new Map<string, CanonicalResource>();
+let gateInvocationState: ResourceState = "NEW";
+
+function targetHash(dialect: GateDialect, target: string): string {
+  return createHash("sha256").update(`${dialect}:${target}`).digest("hex");
 }
 
-function revokeGateCapability(token: string): void {
-  const resource = gateCapabilityRegistry.get(token);
-  if (resource) {
-    resource.capability.active = false;
-  }
+function createCapability(dialect: GateDialect, target: string): GateCapability {
+  return Object.freeze({ token: randomUUID(), targetHash: targetHash(dialect, target) });
 }
 
-export interface OwnedSqliteResource {
-  directory: string;
-  databasePath: string;
-  sentinelPath: string;
-  sentinel: string;
+function freezeConfig(config: DatabaseConfig): Readonly<DatabaseConfig> {
+  if (config.sqlite) Object.freeze(config.sqlite);
+  if (config.postgresql) Object.freeze(config.postgresql);
+  if (config.mysql) Object.freeze(config.mysql);
+  return Object.freeze(config);
 }
 
-export async function createOwnedSqliteResource(): Promise<{ config: DatabaseConfig; resource: OwnedSqliteResource; capability: GateCapability }> {
-  const directory = await mkdtemp(`${Bun.env.TMPDIR ?? "/tmp"}/agent-bahi-production-gate-`);
-  const databasePath = `${directory}/database.sqlite`;
-  const sentinelPath = `${directory}/ownership.sentinel`;
-  const sentinel = `agent-bahi-production-gate:${crypto.randomUUID()}`;
-  const capability = createGateCapability("sqlite", { path: databasePath });
-  await Bun.write(sentinelPath, sentinel);
-  return {
-    config: { dialect: "sqlite", sqlite: { path: databasePath } },
-    resource: { directory, databasePath, sentinelPath, sentinel },
-    capability,
-  };
+function resourceIsRegistered(resource: CanonicalResource): boolean {
+  const target = resource.kind === "sqlite"
+    ? resource.databasePath
+    : `${resource.host}:${resource.port}`;
+  return ownedResources.get(resource.capability.token) === resource
+    && resource.capability.targetHash === targetHash(resource.dialect, target);
 }
 
-export async function cleanupOwnedSqliteResource(resource: OwnedSqliteResource, capability: GateCapability): Promise<string | null> {
-  if (!(await Bun.file(resource.sentinelPath).exists()) || (await Bun.file(resource.sentinelPath).text()) !== resource.sentinel) {
-    return "SQLite ownership sentinel missing or mismatched";
-  }
-  revokeGateCapability(capability.token);
+function claimResource(resource: CanonicalResource): boolean {
+  // This synchronous check-and-set is the lifecycle gate. JavaScript cannot
+  // interleave another caller between these statements.
+  if (!resourceIsRegistered(resource) || resource.lifecycle.state !== "NEW") return false;
+  resource.lifecycle.state = "RUNNING";
+  return true;
+}
+
+function beginCleanup(resource: CanonicalResource): boolean {
+  if (!resourceIsRegistered(resource)) return false;
+  if (resource.lifecycle.state !== "RUNNING") return false;
+  resource.lifecycle.state = "CLEANING";
+  return true;
+}
+
+function revokeResource(resource: CanonicalResource): void {
+  resource.lifecycle.state = "REVOKED";
+  ownedResources.delete(resource.capability.token);
+}
+
+/**
+ * Convert any error to a fixed label. The error's name and message are never
+ * returned or inspected, so this remains safe for direct adversarial testing.
+ */
+export function safeReason(error: unknown): string {
+  if (error instanceof IntegrationBlockedError) return REASONS.disposableUnavailable;
+  if (error instanceof GateLifecycleError) return REASONS.lifecycleFailure;
+  return REASONS.adapterFailure;
+}
+
+class GateLifecycleError extends Error {}
+
+async function pathExists(path: string): Promise<boolean> {
   try {
-    for (const path of [resource.databasePath, `${resource.databasePath}-wal`, `${resource.databasePath}-shm`, resource.sentinelPath]) {
-      if (await Bun.file(path).exists()) await Bun.file(path).delete();
-    }
-    await rm(resource.directory, { recursive: true, force: true });
+    await lstat(path);
+    return true;
   } catch {
-    return "owned SQLite cleanup operation failed";
+    return false;
   }
-  for (const path of [resource.databasePath, `${resource.databasePath}-wal`, `${resource.databasePath}-shm`, resource.sentinelPath, resource.directory]) {
-    if (await Bun.file(path).exists()) return "owned SQLite resource remained after cleanup";
-  }
-  return null;
 }
 
-function safeReason(error: unknown): string {
-  if (error instanceof Error) {
-    if (error.name === "IntegrationBlockedError") return "DISPOSABLE_RESOURCE_UNAVAILABLE";
-    if (/docker|container|network|image|database container/i.test(error.message)) return "DISPOSABLE_RESOURCE_UNAVAILABLE";
-    const allowedNames = new Set(["Error", "TypeError", "SyntaxError", "RangeError"]);
-    if (allowedNames.has(error.name)) return error.name;
-    return "adapter operation failed";
+async function verifyOwnedSqliteDirectory(resource: CanonicalSqliteResource): Promise<boolean> {
+  try {
+    const directoryStat = await lstat(resource.directory);
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) return false;
+    if (await realpath(resource.directory) !== resource.directory) return false;
+
+    const sentinelStat = await lstat(resource.sentinelPath);
+    if (!sentinelStat.isFile() || sentinelStat.isSymbolicLink()) return false;
+    const sentinel = await Bun.file(resource.sentinelPath).text();
+    return sentinel === resource.sentinel;
+  } catch {
+    return false;
   }
-  return "adapter operation failed";
+}
+
+async function cleanupOwnedSqlite(resource: CanonicalSqliteResource): Promise<string | null> {
+  if (!beginCleanup(resource)) return REASONS.lifecycleFailure;
+
+  let failure: string | null = null;
+  try {
+    // Ownership is checked before any deletion. In particular, a missing or
+    // replaced sentinel leaves every file untouched.
+    if (!(await verifyOwnedSqliteDirectory(resource))) {
+      failure = REASONS.ownershipFailure;
+    } else {
+      const exactPaths = [
+        resource.databasePath,
+        `${resource.databasePath}-wal`,
+        `${resource.databasePath}-shm`,
+        resource.sentinelPath,
+      ];
+      for (const path of exactPaths) {
+        if (await pathExists(path)) await rm(path, { force: true });
+      }
+      // Recursive removal is restricted to the realpath of this invocation's
+      // mkdtemp directory, rechecked immediately before the operation.
+      if (await realpath(resource.directory) !== resource.directory) {
+        failure = REASONS.ownershipFailure;
+      } else {
+        await rm(resource.directory, { recursive: true, force: true });
+        if (await pathExists(resource.directory)) failure = REASONS.cleanupFailure;
+      }
+    }
+  } catch {
+    failure = REASONS.cleanupFailure;
+  } finally {
+    // Revocation is unconditional, including failed sentinel verification.
+    revokeResource(resource);
+  }
+  return failure;
+}
+
+async function createOwnedSqlite(): Promise<CanonicalSqliteResource> {
+  const directory = await mkdtemp(join(Bun.env.TMPDIR ?? "/tmp", "agent-bahi-production-gate-"));
+  const canonicalDirectory = await realpath(directory);
+  const databasePath = join(canonicalDirectory, "database.sqlite");
+  const sentinelPath = join(canonicalDirectory, "ownership.sentinel");
+  const sentinel = `agent-bahi-production-gate:${randomUUID()}`;
+  await Bun.write(sentinelPath, sentinel);
+
+  const capability = createCapability("sqlite", databasePath);
+  let resource!: CanonicalSqliteResource;
+  resource = Object.freeze({
+    kind: "sqlite",
+    dialect: "sqlite",
+    config: freezeConfig({ dialect: "sqlite", sqlite: { path: databasePath } }),
+    directory: canonicalDirectory,
+    databasePath,
+    sentinelPath,
+    sentinel,
+    capability,
+    lifecycle: { state: "NEW" as ResourceState },
+    dispose: () => cleanupOwnedSqlite(resource),
+  });
+  ownedResources.set(capability.token, resource);
+  return resource;
+}
+
+async function createOwnedDatabase(dialect: "postgresql" | "mysql"): Promise<CanonicalDatabaseResource> {
+  const started = dialect === "postgresql"
+    ? await startPostgresContainer(`production-gate-${randomUUID()}`)
+    : await startMySQLContainer(`production-gate-${randomUUID()}`);
+
+  const config = dialect === "postgresql"
+    ? {
+        dialect,
+        postgresql: {
+          host: started.config.host,
+          port: started.config.port,
+          database: started.config.database,
+          username: started.config.username,
+          password: started.config.password,
+        },
+      } satisfies DatabaseConfig
+    : {
+        dialect,
+        mysql: {
+          host: started.config.host,
+          port: started.config.port,
+          database: started.config.database,
+          username: started.config.username,
+          password: started.config.password,
+          ssl: true,
+        },
+      } satisfies DatabaseConfig;
+  const canonicalConfig = freezeConfig(config);
+  const containerId = started.config.containerName;
+  const capability = createCapability(dialect, `${started.config.host}:${started.config.port}`);
+  let resource!: CanonicalDatabaseResource;
+  resource = Object.freeze({
+    kind: "database",
+    dialect,
+    config: canonicalConfig,
+    containerId,
+    host: started.config.host,
+    port: started.config.port,
+    capability,
+    lifecycle: { state: "NEW" as ResourceState },
+    // The starter creates this closure over the exact container/network IDs;
+    // no caller-supplied callback or target reaches the public gate entry.
+    dispose: async () => {
+      if (!beginCleanup(resource)) return REASONS.lifecycleFailure;
+      try {
+        await started.cleanup();
+        return null;
+      } catch {
+        return REASONS.cleanupFailure;
+      } finally {
+        revokeResource(resource);
+      }
+    },
+  });
+  ownedResources.set(capability.token, resource);
+  return resource;
 }
 
 async function verifyOwnedTableAbsent(
   db: ReturnType<typeof DatabaseFactory.createDatabase>,
-  config: DatabaseConfig,
+  config: Readonly<DatabaseConfig>,
   table: string,
 ): Promise<void> {
   const builder = new DialectSqlBuilder(config.dialect);
@@ -119,143 +281,99 @@ async function verifyOwnedTableAbsent(
       ? `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ${placeholder}`
       : `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ${placeholder}`;
   const result = await db.query(catalogQuery, [table]);
-  if (result.rows.length !== 0) throw new Error("owned table remained after cleanup");
+  if (result.rows.length !== 0) throw new GateLifecycleError();
 }
 
-export async function runDialect(
-  config: DatabaseConfig,
-  ownedSqlite?: { resource: OwnedSqliteResource; capability: GateCapability },
-  ownedDatabase?: { config: DatabaseConfig; cleanup: () => Promise<void>; capability: GateCapability },
-): Promise<GateResult> {
-  if (config.dialect === "sqlite") {
-    if (!ownedSqlite || config.sqlite?.path !== ownedSqlite.resource.databasePath || !validateGateCapability(ownedSqlite.capability, "sqlite", { path: ownedSqlite.resource.databasePath })) {
-      return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
-    }
-  } else if (config.dialect === "postgresql") {
-    if (!ownedDatabase || !validateGateCapability(ownedDatabase.capability, "postgresql", { host: config.postgresql?.host, port: config.postgresql?.port })) {
-      return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
-    }
-  } else if (config.dialect === "mysql") {
-    if (!ownedDatabase || !validateGateCapability(ownedDatabase.capability, "mysql", { host: config.mysql?.host, port: config.mysql?.port })) {
-      return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
-    }
-  } else {
-    return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
+async function runDialect(resource: CanonicalResource): Promise<GateResult> {
+  if (!claimResource(resource)) {
+    return { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.lifecycleFailure };
   }
+
   let db: ReturnType<typeof DatabaseFactory.createDatabase> | null = null;
-  const suffix = crypto.randomUUID().replace(/-/g, "");
+  const suffix = randomUUID().replaceAll("-", "");
   const table = `__agent_bahi_gate_${suffix}`;
-  const migrationId = `production-gate-${config.dialect}-${suffix}`;
-  const sql = config.dialect === "mysql"
+  const migrationId = `production-gate-${resource.dialect}-${suffix}`;
+  const sql = resource.dialect === "mysql"
     ? `CREATE TABLE ${table} (id VARCHAR(255) PRIMARY KEY)`
     : `CREATE TABLE ${table} (id TEXT PRIMARY KEY)`;
-  let result: GateResult = { dialect: config.dialect, status: "BLOCKED", reason: "adapter operation did not complete" };
+  let result: GateResult = { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.adapterFailure };
+
   try {
-    db = DatabaseFactory.createDatabase(config);
-    const migration = new MigrationService(db, config.dialect);
+    db = DatabaseFactory.createDatabase(resource.config);
+    const migration = new MigrationService(db, resource.dialect);
     const applied = await migration.migrate([{ id: migrationId, sql }]);
     const status = await migration.getStatus();
-    if (applied.length !== 1 || !status.appliedMigrations.some((item) => item.id === migrationId)) {
-      result = { dialect: config.dialect, status: "BLOCKED", reason: "migration lifecycle did not report APPLIED" };
+    const appliedMigration = status.appliedMigrations.find((item) => item.id === migrationId);
+    if (applied.length !== 1 || !appliedMigration) {
+      result = { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.adapterFailure };
     } else {
-      await migration.verifyChecksum(migrationId, status.appliedMigrations.find((item) => item.id === migrationId)!.checksum);
+      await migration.verifyChecksum(migrationId, appliedMigration.checksum);
       await db.executeRaw(`DROP TABLE ${table}`);
-      await verifyOwnedTableAbsent(db, config, table);
-      result = { dialect: config.dialect, status: "PASS" };
+      await verifyOwnedTableAbsent(db, resource.config, table);
+      result = { dialect: resource.dialect, status: "PASS" };
     }
   } catch (error) {
-    result = { dialect: config.dialect, status: "BLOCKED", reason: safeReason(error) };
+    result = { dialect: resource.dialect, status: "BLOCKED", reason: safeReason(error) };
   } finally {
     const cleanupFailures: string[] = [];
     try {
       if (db) await db.close();
-    } catch (error) {
-      cleanupFailures.push(`database close failed: ${safeReason(error)}`);
+    } catch {
+      cleanupFailures.push(REASONS.cleanupFailure);
     }
-    if (ownedDatabase) {
-      try {
-        revokeGateCapability(ownedDatabase.capability.token);
-        await ownedDatabase.cleanup();
-      } catch (error) {
-        cleanupFailures.push(`disposable database cleanup failed: ${safeReason(error)}`);
-      }
-    }
-    const cleanupFailure = cleanupFailures.length > 0 ? cleanupFailures.join("; ") : null;
-    if (cleanupFailure) {
+    const cleanupFailure = await resource.dispose();
+    if (cleanupFailure) cleanupFailures.push(cleanupFailure);
+    if (cleanupFailures.length > 0) {
       result = result.status === "PASS"
-        ? { dialect: config.dialect, status: "BLOCKED", reason: `cleanup failed: ${cleanupFailure}` }
-        : { ...result, reason: `${result.reason ?? "operation failed"}; cleanup failed: ${cleanupFailure}` };
+        ? { dialect: resource.dialect, status: "BLOCKED", reason: REASONS.cleanupFailure }
+        : { ...result, reason: REASONS.cleanupFailure };
     }
   }
   return result;
 }
 
-async function main(): Promise<void> {
-  const results: GateResult[] = [];
-  let ownedSqlite: Awaited<ReturnType<typeof createOwnedSqliteResource>> | null = null;
+async function runOwnedDialect(dialect: GateDialect): Promise<GateResult> {
+  let resource: CanonicalResource | null = null;
   try {
-    ownedSqlite = await createOwnedSqliteResource();
-    results.push(await runDialect(ownedSqlite.config, { resource: ownedSqlite.resource, capability: ownedSqlite.capability }));
+    resource = dialect === "sqlite" ? await createOwnedSqlite() : await createOwnedDatabase(dialect);
+    return await runDialect(resource);
   } catch (error) {
-    results.push({ dialect: "sqlite", status: "BLOCKED", reason: safeReason(error) });
+    // Database-container startup cleans its own partially-created resources;
+    // a fully registered resource is cleaned here if construction succeeded
+    // but execution failed before runDialect claimed it.
+    if (resource && resource.lifecycle.state === "NEW") {
+      resource.lifecycle.state = "RUNNING";
+      const cleanupFailure = await resource.dispose();
+      return { dialect, status: "BLOCKED", reason: cleanupFailure ?? safeReason(error) };
+    }
+    return { dialect, status: "BLOCKED", reason: safeReason(error) };
+  }
+}
+
+function replayResults(): GateResult[] {
+  return DIALECTS.map((dialect) => ({ dialect, status: "BLOCKED", reason: REASONS.gateReplay }));
+}
+
+/**
+ * Run the local-owned SQLite/PostgreSQL/MySQL adapter gate.
+ *
+ * This is intentionally the only public mutating entry. Its arguments are
+ * omitted from the signature and are never read at runtime.
+ */
+export async function runProductionAdapterGate(): Promise<GateResult[]> {
+  if (gateInvocationState !== "NEW") return replayResults();
+  gateInvocationState = "RUNNING";
+  try {
+    const results: GateResult[] = [];
+    for (const dialect of DIALECTS) results.push(await runOwnedDialect(dialect));
+    return results;
   } finally {
-    if (ownedSqlite) {
-      try {
-        const failure = await cleanupOwnedSqliteResource(ownedSqlite.resource, ownedSqlite.capability);
-        if (failure) {
-          results[0] = { ...results[0], status: "BLOCKED", reason: `cleanup failed: ${failure}` };
-        }
-      } catch (error) {
-        results[0] = { ...results[0], status: "BLOCKED", reason: `cleanup failed: ${safeReason(error)}` };
-      }
-    }
+    gateInvocationState = "REVOKED";
   }
+}
 
-  for (const dialect of ["postgresql", "mysql"] as const) {
-    let owned: { config: DatabaseConfig; cleanup: () => Promise<void>; capability: GateCapability } | null = null;
-    try {
-      const started = dialect === "postgresql"
-        ? await startPostgresContainer(`production-gate-${crypto.randomUUID()}`)
-        : await startMySQLContainer(`production-gate-${crypto.randomUUID()}`);
-      const config: DatabaseConfig = dialect === "postgresql"
-        ? {
-            dialect,
-            postgresql: {
-              host: started.config.host,
-              port: started.config.port,
-              database: started.config.database,
-              username: started.config.username,
-              password: started.config.password,
-            },
-          }
-        : {
-            dialect,
-            mysql: {
-              host: started.config.host,
-              port: started.config.port,
-              database: started.config.database,
-              username: started.config.username,
-              password: started.config.password,
-              ssl: true,
-            },
-          };
-      const capability = createGateCapability(dialect, { host: started.config.host, port: started.config.port });
-      owned = { config, cleanup: started.cleanup, capability };
-      results.push(await runDialect(owned.config, undefined, owned));
-    } catch (error) {
-      let reason = safeReason(error);
-      if (owned) {
-        try {
-          revokeGateCapability(owned.capability.token);
-          await owned.cleanup();
-        } catch (cleanupError) {
-          reason = `${reason}; cleanup failed: ${safeReason(cleanupError)}`;
-        }
-      }
-      results.push({ dialect, status: "BLOCKED", reason });
-    }
-  }
-
+async function main(): Promise<void> {
+  const results = await runProductionAdapterGate();
   for (const result of results) console.log(JSON.stringify(result));
   if (results.some((result) => result.status !== "PASS")) process.exitCode = 1;
 }

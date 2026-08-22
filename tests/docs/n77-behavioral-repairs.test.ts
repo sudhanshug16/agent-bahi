@@ -1,41 +1,14 @@
 /**
- * N77 Behavioral Repair Tests - Real behavior validation
- *
- * These tests exercise actual gate behavior, not mock implementations.
- * They prove that defects are fixed through observable behavior.
+ * N77 Behavioral Repair Tests - Real behavior validation.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect } from "bun:test";
 import { randomUUID } from "crypto";
 import type { Database } from "../../src/application/ports/persistence.ts";
-import type { DatabaseConfig } from "../../src/infrastructure/config/database.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 
-describe("N77 Behavioral Repairs - Real Gate/Service Behavior", () => {
-  describe("DEFECT 1 & 2: Capability binding and forged ownership rejection", () => {
-    it("must reject token copied to different SQLite path", async () => {
-      // This test proves token reuse with different target is rejected
-      // Requires access to actual gate entry point behavior
-      // NOTE: Full behavioral test requires invoking the actual gate script
-      // This is covered by the live production-adapter-gate runs below
-      expect(true).toBe(true); // Placeholder for gate invocation
-    });
-
-    it("must reject token replay after cleanup revocation", async () => {
-      // This test proves capabilities are revoked on cleanup
-      // Observable through gate refusing the revoked capability
-      // Covered by live gate cleanup tests
-      expect(true).toBe(true);
-    });
-
-    it("must reject fabricated capability with arbitrary config", async () => {
-      // This test proves capabilities cannot be forged externally
-      // Covered by gate validation tests
-      expect(true).toBe(true);
-    });
-  });
-
+describe("N77 Behavioral Repairs - Real service behavior", () => {
   describe("DEFECT 4: Legacy schema upgrade preserves dirty state", () => {
     it("should preserve legacy dirty=1 as DIRTY status with reason", async () => {
       const dbPath = `/tmp/legacy-dirty-${randomUUID()}.sqlite`;
@@ -131,51 +104,6 @@ describe("N77 Behavioral Repairs - Real Gate/Service Behavior", () => {
       await db.close();
     });
 
-    it("should abort upgrade on row count mismatch and preserve original", async () => {
-      const dbPath = `/tmp/legacy-mismatch-${randomUUID()}.sqlite`;
-      const db = new SqliteAdapter({ path: dbPath });
-
-      await db.executeRaw(`
-        CREATE TABLE schema_migrations (
-          id TEXT PRIMARY KEY,
-          version INTEGER NOT NULL
-        )
-      `);
-
-      const testId = randomUUID();
-      await db.execute(
-        "INSERT INTO schema_migrations (id, version) VALUES (?, ?)",
-        [testId, 1]
-      );
-
-      const migrationService = new MigrationService(db, "sqlite");
-
-      // Hijack the process by manually creating temp table with wrong count
-      try {
-        // This would require direct SQL manipulation to simulate the error
-        // For now, document the expected behavior:
-        // If row count mismatch detected, upgrade aborts and original table remains
-        expect(true).toBe(true); // Covered by integration tests
-      } finally {
-        await db.close();
-      }
-    });
-  });
-
-  describe("DEFECT 3: safeReason through gate behavior", () => {
-    it("must not expose secret-bearing error.name in gate output", async () => {
-      // This test proves safeReason works through actual gate execution
-      // Observable through gate result.reason field containing no secrets
-      // Covered by live gate execution that validates error.reason sanitization
-      expect(true).toBe(true);
-    });
-
-    it("should emit MySQL DDL with VARCHAR(255) PRIMARY KEY in gate", async () => {
-      // This test proves MySQL DDL is dialect-valid
-      // Observable through successful MySQL gate execution
-      // Covered by live production-adapter-gate MySQL run
-      expect(true).toBe(true);
-    });
   });
 
   describe("DEFECT 5: NULL manifest_version preservation", () => {
@@ -237,22 +165,4 @@ describe("N77 Behavioral Repairs - Real Gate/Service Behavior", () => {
     });
   });
 
-  describe("Integration: Production adapter gate live execution", () => {
-    it("must execute gate for SQLite with PASS result", async () => {
-      // This will be validated by the actual gate script execution
-      // reporting PASS for SQLite dialect
-      expect(true).toBe(true);
-    });
-
-    it("must execute gate for PostgreSQL with PASS result", async () => {
-      // Live gate execution validates PostgreSQL capability binding
-      // and proper cleanup revocation
-      expect(true).toBe(true);
-    });
-
-    it("must execute gate for MySQL with PASS result", async () => {
-      // Live gate execution validates MySQL DDL and capability binding
-      expect(true).toBe(true);
-    });
-  });
 });
