@@ -31,6 +31,9 @@ export const CURRENT_READER_PROTOCOL_MIN = 1;
 export const CURRENT_READER_PROTOCOL_MAX = 1;
 export const CURRENT_WRITER_PROTOCOL = 1;
 
+export const V3_SCHEMA_VERSION = 3;
+export const V3_DATABASE_REVISION = 2;
+
 export interface SqliteSchemaManifest {
   readonly manifestVersion: number;
   readonly schemaVersion: number;
@@ -84,6 +87,23 @@ export const V2_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
   migrations: Object.freeze([
     Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
     Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
+  ]),
+});
+
+/** V3 Schema Manifest for upgrade source verification (V2->V3 transition). */
+export const V3_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
+  manifestVersion: 1,
+  schemaVersion: V3_SCHEMA_VERSION,
+  dataFormatVersion: 1,
+  generation: 1,
+  revision: V3_DATABASE_REVISION,
+  readerCompatibilityMin: 1,
+  readerCompatibilityMax: 1,
+  writerProtocol: 1,
+  migrations: Object.freeze([
+    Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
+    Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
+    Object.freeze({ id: BOOKSET_V3_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V3_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
   ]),
 });
 

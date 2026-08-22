@@ -27,8 +27,8 @@ describe("BookSet command service", () => {
   let db: BunDatabase;
   let sessionRunner: BusinessSessionRunner;
 
-  beforeEach(() => {
-    db = initializeTestDatabase();
+  beforeEach(async () => {
+    db = await initializeTestDatabase();
     sessionRunner = createTestSessionRunner(db);
   });
 

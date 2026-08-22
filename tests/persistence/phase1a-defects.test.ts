@@ -21,6 +21,7 @@ import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts"
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
+import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp, DirtyMigrationError } from "../../src/core/types.ts";
 
 describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
@@ -36,11 +37,12 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
     db = new SqliteAdapter({ path: dbPath });
     migrationService = new MigrationService(db, "sqlite");
 
-    // Initialize database schema (order matters: core first, then database-control, then bookset-v3)
+    // Initialize database schema (order matters: core first, then database-control, then bookset-v3, then bookset-v4)
     await migrationService.migrate([
       { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
       { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
       { id: BOOKSET_V3_MIGRATION.id, sql: BOOKSET_V3_MIGRATION.sqlite },
+      { id: BOOKSET_V4_MIGRATION.id, sql: BOOKSET_V4_MIGRATION.sqlite },
     ]);
 
     // Initialize database_control row via migration lease (v3 manifest)

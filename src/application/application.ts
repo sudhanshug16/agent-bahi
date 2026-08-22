@@ -13,10 +13,11 @@ import { MigrationService } from "../infrastructure/services/migration-service.t
 import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
-import { BOOKSET_V3_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
+import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
 import { CORE_MIGRATIONS } from "../infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../infrastructure/schema/database-control-schema.ts";
-import { V2_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
+import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
+import { BOOKSET_V4_MIGRATION } from "../infrastructure/schema/bookset-v4-migration.ts";
 
 export type ApplicationFacade = {
   tenant: TenantService;
@@ -54,7 +55,7 @@ export function createSqliteApplication(
 
 /**
  * Production bootstrap. The v2 foundation is initialized first, then the
- * immutable coordinator applies 0003 while no business session exists.
+ * immutable coordinator applies 0003 (v2->v3) and 0004 (v3->v4) in sequence.
  */
 export async function bootstrapSqliteApplication(
   dbPath: string,
@@ -78,6 +79,8 @@ export async function bootstrapSqliteApplication(
     if (inspection.status !== "AVAILABLE" || !inspection.record) {
       throw new Error("Database control did not converge to a known foundation state");
     }
+
+    // Upgrade v2->v3 if starting from v2
     if (inspection.record.schemaVersion === V2_SCHEMA_MANIFEST.schemaVersion) {
       await new UpgradeCoordinator(db, new BackupService({
         sourcePath: dbPath,
@@ -89,6 +92,33 @@ export async function bootstrapSqliteApplication(
         buildId: options.buildId ?? "bootstrap",
         now,
       });
+    }
+
+    // Apply v4 migration if at v3 (direct application for bootstrap simplicity)
+    try {
+      const v3Inspection = await new DatabaseControlService(db, "sqlite", V3_SCHEMA_MANIFEST).inspect();
+      if (v3Inspection.status === "AVAILABLE" && v3Inspection.record?.schemaVersion === V3_SCHEMA_MANIFEST.schemaVersion) {
+        // Apply the v4 migration directly since we're starting from v3
+        const v4MigrationService = new MigrationService(db, "sqlite");
+        await v4MigrationService.migrate([
+          {
+            id: BOOKSET_V4_MIGRATION.id,
+            sql: BOOKSET_V4_MIGRATION.sqlite,
+            manifest: BOOKSET_V4_MIGRATION.manifest,
+          },
+        ]);
+
+        // Update database_control to v4
+        await db.withMigrationLease(async (session) => {
+          const lastMigration = (await session.execute("SELECT id, checksum FROM schema_migrations WHERE status = 'APPLIED' ORDER BY rowid DESC LIMIT 1")).rows[0];
+          await session.execute(
+            `UPDATE database_control SET schema_version = ?, revision = ?, last_migration_id = ?, last_migration_checksum = ?, updated_at = ? WHERE id = 1`,
+            [4, 3, lastMigration?.id, lastMigration?.checksum, now.toISOString()]
+          );
+        });
+      }
+    } catch (error) {
+      throw new Error(`Failed to apply v4 migration: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
     await db.close();

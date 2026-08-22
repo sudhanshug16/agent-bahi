@@ -28,7 +28,7 @@ test("production composition exposes typed services without raw persistence hand
   }
 });
 
-test("bootstrap applies 0003 before business sessions and scope resolution is active-only", async () => {
+test("bootstrap applies 0003-0004 before business sessions and scope resolution is active-only", async () => {
   const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-bootstrap-"));
   const dbPath = join(directory, "bootstrap.sqlite");
   try {
@@ -38,8 +38,8 @@ test("bootstrap applies 0003 before business sessions and scope resolution is ac
       buildId: "bootstrap-test",
     });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 3n, last_migration_id: "0003-bookset-display-name" });
-    expect(native.query("SELECT id, status FROM schema_migrations ORDER BY rowid").all()).toHaveLength(3);
+    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 4n, last_migration_id: "0004-bookset-command-audit" });
+    expect(native.query("SELECT id, status FROM schema_migrations ORDER BY rowid").all()).toHaveLength(4);
     native.close();
 
     const created = await application.tenant.createTenantWithDefaultBookSet("INDIVIDUAL", "Scope Tenant", "INR", randomUUID());

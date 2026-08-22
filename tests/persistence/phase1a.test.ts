@@ -13,6 +13,7 @@ import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts"
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { V2_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
+import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp } from "../../src/core/types.ts";
 
 describe("Phase 1A: Production Persistence Foundation", () => {
@@ -33,7 +34,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     migrationService = new MigrationService(db, "sqlite");
     compatibilityService = new CompatibilityService(db, "sqlite");
 
-    // Initialize database schema (order matters: core first, then database-control, then bookset-v3)
+    // Initialize database schema (order matters: core first, then database-control, then bookset-v3, then bookset-v4)
     await migrationService.migrate([
       {
         id: CORE_MIGRATIONS.id,
@@ -46,6 +47,10 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       {
         id: BOOKSET_V3_MIGRATION.id,
         sql: BOOKSET_V3_MIGRATION.sqlite,
+      },
+      {
+        id: BOOKSET_V4_MIGRATION.id,
+        sql: BOOKSET_V4_MIGRATION.sqlite,
       },
     ]);
 

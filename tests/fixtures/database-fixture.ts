@@ -1,31 +1,29 @@
 /**
  * Test database fixture for BookSet command tests.
- * Initializes SQLite with schema migrations and provides a session runner.
+ * Initializes SQLite with full schema migrations and provides a session runner.
  */
 import { Database as BunDatabase } from "bun:sqlite";
 import { join } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
 import type { BusinessSessionRunner, BusinessSession } from "../../src/application/ports/persistence.ts";
-import { CORE_SCHEMA_SQLITE } from "../../src/infrastructure/schema/core-schema.ts";
-import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
-import { BOOKSET_V3_MIGRATION_SQLITE } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
-import { BOOKSET_V4_MIGRATION_SQLITE } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
+import { bootstrapSqliteApplication } from "../../src/application/application.ts";
 
-export function initializeTestDatabase(): BunDatabase {
+export async function initializeTestDatabase(): Promise<BunDatabase> {
   const dbPath = join(tmpdir(), `test-${randomUUID()}.db`);
+
+  // Bootstrap the database with all migrations through the application layer
+  const backupPath = join(tmpdir(), `backup-${randomUUID()}.sqlite`);
+  await bootstrapSqliteApplication(dbPath, {
+    backupDestinationPath: backupPath,
+    cliVersion: "test",
+    buildId: "test-fixture",
+    now: new Date(),
+  });
+
+  // Re-open the database for test use
   const db = new BunDatabase(dbPath);
-
-  // Enable foreign keys
   db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA journal_mode = WAL");
-
-  // Apply migrations
-  db.exec(CORE_SCHEMA_SQLITE);
-  db.exec(DATABASE_CONTROL_MIGRATIONS.sqlite);
-  db.exec(BOOKSET_V3_MIGRATION_SQLITE);
-  db.exec(BOOKSET_V4_MIGRATION_SQLITE);
-
   return db;
 }
 
