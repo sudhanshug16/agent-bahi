@@ -280,11 +280,16 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     pass("STK-003n", "audit_log tenant FK rejection", "audit insert with non-existent tenant rejected");
 
     // Test BEFORE INSERT guard: cannot create entry with status != DRAFT
+    const countBeforeBypass = count(db, "journal_entries");
     expectThrow(
       () => db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key, status) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "bypass-posted", "key-bypass", "POSTED"),
       "must start with status=DRAFT"
     );
-    pass("STK-003p", "posted journal creation guard", "BEFORE INSERT trigger requires status=DRAFT on creation; direct POSTED creation rejected");
+    const countAfterBypass = count(db, "journal_entries");
+    if (countAfterBypass !== countBeforeBypass) throw new Error("rejected POSTED journal entry was created (side effect)");
+    const bypassedRow = db.query<{ id: string }, [string]>("SELECT id FROM journal_entries WHERE id = ?").get("bypass-posted");
+    if (bypassedRow) throw new Error("rejected POSTED journal entry row exists in database");
+    pass("STK-003p", "posted journal creation guard", "BEFORE INSERT trigger requires status=DRAFT on creation; direct POSTED creation rejected; rejected row absent");
 
     // Test posted journal entry immutability: create entry, post it, verify immutability
     db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", "key-posted");
@@ -329,31 +334,61 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
       throw new Error("idempotency first create returned wrong result");
     }
 
-    const replayRecord = getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash1, result1, resultHash1);
-    if (replayRecord.result_json !== result1 || replayRecord.result_hash !== resultHash1) {
-      throw new Error("idempotency replay returned different result");
+    // Replay with deliberately different candidate result bytes/hash; assert stored original is returned
+    const differentCandidate = JSON.stringify({ entry_id: "different-id", created: false });
+    const differentCandidateHash = sha256(differentCandidate);
+    const replayRecord = getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash1, differentCandidate, differentCandidateHash);
+    if (replayRecord.result_json !== result1) {
+      throw new Error(`idempotency replay must return original result_json, got ${replayRecord.result_json}`);
     }
-    pass("STK-003s", "idempotency replay", "same request_id + same hash returns exact stored result_json and result_hash");
+    if (replayRecord.result_hash !== resultHash1) {
+      throw new Error(`idempotency replay must return original result_hash, got ${replayRecord.result_hash}`);
+    }
+    pass("STK-003s", "idempotency replay", "same request_id + same hash returns exact stored result_json/hash, ignoring different candidate bytes");
 
-    // Test idempotency conflict: same request_id + different hash should throw typed error, create no record
+    // Test idempotency conflict: same request_id + different hash should throw typed error with zero side effects
     const request2 = JSON.stringify({ action: "create_entry", amount: 200 });
     const requestHash2 = sha256(request2);
-    const countBefore = count(db, "idempotency_records");
+    const conflictCandidate = JSON.stringify({ entry_id: "different" });
+    const conflictCandidateHash = sha256(conflictCandidate);
+
+    // Get original row data before conflict attempt
+    const storedBefore = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
+      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
+    ).get("tenant-a", "req-1");
 
     let conflictThrown = false;
     let isTypedConflict = false;
+    let hasCorrectErrorCode = false;
     try {
-      getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash2, JSON.stringify({ entry_id: "different" }), sha256("{}"));
+      getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash2, conflictCandidate, conflictCandidateHash);
     } catch (error) {
       conflictThrown = true;
       isTypedConflict = error instanceof IdempotencyConflictError;
+      hasCorrectErrorCode = (error as any)?.code === "IDEMPOTENCY_CONFLICT";
       if (!isTypedConflict) throw new Error(`expected IdempotencyConflictError, got ${error?.constructor.name}`);
     }
 
     if (!conflictThrown) throw new Error("expected IDEMPOTENCY_CONFLICT error");
-    const countAfter = count(db, "idempotency_records");
-    if (countAfter !== countBefore) throw new Error("idempotency conflict created a side effect (new record)");
-    pass("STK-003t", "idempotency conflict detection", "same request_id + different hash throws typed IDEMPOTENCY_CONFLICT; no side effects or prior result exposed");
+    if (!hasCorrectErrorCode) throw new Error("error must have code='IDEMPOTENCY_CONFLICT'");
+
+    // Verify original row is unchanged
+    const storedAfter = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
+      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
+    ).get("tenant-a", "req-1");
+
+    if (storedAfter?.request_hash !== storedBefore?.request_hash || storedAfter?.result_json !== storedBefore?.result_json) {
+      throw new Error("idempotency conflict: original row was modified");
+    }
+    if (storedAfter?.result_hash !== storedBefore?.result_hash) {
+      throw new Error("idempotency conflict: original result_hash was modified");
+    }
+
+    // Verify exactly one row exists (zero new rows created)
+    const rowCount = count(db, "idempotency_records");
+    if (rowCount !== 1) throw new Error(`idempotency conflict: expected 1 row total, found ${rowCount}`);
+
+    pass("STK-003t", "idempotency conflict detection", "same request_id + different hash throws typed IDEMPOTENCY_CONFLICT with code='IDEMPOTENCY_CONFLICT'; original row/hash unchanged; zero new rows");
 
     if (pragmas.length === 0) throw new Error("pragma query unexpectedly empty");
     return results;

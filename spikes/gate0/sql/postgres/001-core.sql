@@ -229,3 +229,18 @@ CREATE TRIGGER journal_entries_no_delete_when_posted
 BEFORE DELETE ON journal_entries
 FOR EACH ROW
 EXECUTE FUNCTION prevent_journal_delete_when_posted();
+
+-- PostgreSQL function to enforce draft status on creation
+CREATE OR REPLACE FUNCTION enforce_draft_status_on_insert() RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status != 'DRAFT' THEN
+    RAISE EXCEPTION 'new journal entry must start with status=DRAFT';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER journal_entries_must_start_as_draft
+BEFORE INSERT ON journal_entries
+FOR EACH ROW
+EXECUTE FUNCTION enforce_draft_status_on_insert();

@@ -70,8 +70,6 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
 
-DELIMITER //
-
 -- MySQL trigger for balance validation before posting
 CREATE TRIGGER journal_entries_validate_balance_on_post
 BEFORE UPDATE ON journal_entries
@@ -101,7 +99,7 @@ BEGIN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'cannot post journal entry with unbalanced postings';
     END IF;
   END IF;
-END//
+END;
 
 -- MySQL trigger to prevent inserts to posted entries
 CREATE TRIGGER postings_no_insert_when_posted
@@ -116,7 +114,7 @@ BEGIN
   ) = 'POSTED' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'cannot insert postings for posted journal entry';
   END IF;
-END//
+END;
 
 -- MySQL trigger to prevent updates to postings
 CREATE TRIGGER postings_no_update
@@ -124,7 +122,7 @@ BEFORE UPDATE ON postings
 FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'postings are append-only';
-END//
+END;
 
 -- MySQL trigger to prevent deletes from postings
 CREATE TRIGGER postings_no_delete
@@ -132,7 +130,7 @@ BEFORE DELETE ON postings
 FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'postings are append-only';
-END//
+END;
 
 -- MySQL trigger to prevent audit log updates
 CREATE TRIGGER audit_log_no_update
@@ -140,7 +138,7 @@ BEFORE UPDATE ON audit_log
 FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit log is append-only';
-END//
+END;
 
 -- MySQL trigger to prevent audit log deletes
 CREATE TRIGGER audit_log_no_delete
@@ -148,7 +146,7 @@ BEFORE DELETE ON audit_log
 FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit log is append-only';
-END//
+END;
 
 -- MySQL trigger to prevent reverting from POSTED to DRAFT
 CREATE TRIGGER journal_entries_no_revert_from_posted
@@ -158,7 +156,7 @@ BEGIN
   IF NEW.status = 'DRAFT' AND OLD.status = 'POSTED' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'posted journal entry cannot revert to draft';
   END IF;
-END//
+END;
 
 -- MySQL trigger to prevent changes to posted entries
 CREATE TRIGGER journal_entries_no_change_when_posted
@@ -179,7 +177,7 @@ BEGIN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'posted journal entry idempotency_key is immutable';
     END IF;
   END IF;
-END//
+END;
 
 -- MySQL trigger to prevent deletes of posted entries
 CREATE TRIGGER journal_entries_no_delete_when_posted
@@ -189,6 +187,14 @@ BEGIN
   IF OLD.status = 'POSTED' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'posted journal entry cannot be deleted';
   END IF;
-END//
+END;
 
-DELIMITER ;
+-- MySQL trigger to enforce draft status on creation
+CREATE TRIGGER journal_entries_must_start_as_draft
+BEFORE INSERT ON journal_entries
+FOR EACH ROW
+BEGIN
+  IF NEW.status != 'DRAFT' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'new journal entry must start with status=DRAFT';
+  END IF;
+END;
