@@ -3,6 +3,7 @@ import {
   REQUIRED_SEMANTIC_PROOF_IDS,
   blockedDialectResults,
   emitIntegrationSummary,
+  rollbackFailureDetail,
   runDatabaseIntegrationTests,
   sanitizeError,
   startMySQLContainer,
@@ -46,6 +47,26 @@ function validateIntegrationResults(
     );
   }
 }
+
+test("rollback failure detail canonicalizes nested BigInt leftovers deterministically", () => {
+  const failure = new Error("duplicate DDL");
+  const leftovers = [
+    {
+      nested: {
+        function_count: 9007199254740993n,
+        table_count: 1n,
+      },
+      counts: [0n, { trigger_count: 2n }],
+    },
+  ];
+
+  const detail = rollbackFailureDetail(failure, leftovers);
+
+  expect(detail).toBe(
+    'fresh-namespace rollback incomplete: failure=Error: duplicate DDL leftovers=[{"counts":["BIGINT:0",{"trigger_count":"BIGINT:2"}],"nested":{"function_count":"BIGINT:9007199254740993","table_count":"BIGINT:1"}}]',
+  );
+  expect(rollbackFailureDetail(failure, leftovers)).toBe(detail);
+});
 
 describe("Gate0 PostgreSQL integration contract", () => {
   let config: DatabaseConfig | null = null;

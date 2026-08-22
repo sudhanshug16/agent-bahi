@@ -952,6 +952,14 @@ function canonicalizeRow(row: Record<string, unknown>): Record<string, unknown> 
   return canonicalizeValue(row) as Record<string, unknown>;
 }
 
+export function rollbackFailureDetail(failure: unknown, leftovers: unknown): string {
+  return `fresh-namespace rollback incomplete: failure=${sanitizeError(failure)} leftovers=${JSON.stringify(canonicalizeValue(leftovers))}`;
+}
+
+function isZeroDatabaseCount(value: bigint | number | undefined): boolean {
+  return value === 0n || value === 0;
+}
+
 async function captureTableSnapshot(sql: SQL, tableName: string, dialect: DatabaseType): Promise<TableSnapshot> {
   const countResult = await sql.unsafe<{ count: bigint | number }[]>(`SELECT COUNT(*) as count FROM ${tableName}`);
   const count = Number(countResult[0]?.count ?? 0);
@@ -1340,9 +1348,9 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
             (SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = '${rollbackSchema}') AS trigger_count,
             (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '${rollbackSchema}') AS function_count
         `);
-        const rollbackComplete = failure instanceof MigrationContractError && failure.code === MIGRATION_FAILED && Number(leftovers[0]?.table_count ?? 0) === 0 && Number(leftovers[0]?.trigger_count ?? 0) === 0 && Number(leftovers[0]?.function_count ?? 0) === 0 && catalogBeforeRollback === catalogAfterRollback && catalogAfterRollback === "[]";
+        const rollbackComplete = failure instanceof MigrationContractError && failure.code === MIGRATION_FAILED && isZeroDatabaseCount(leftovers[0]?.table_count) && isZeroDatabaseCount(leftovers[0]?.trigger_count) && isZeroDatabaseCount(leftovers[0]?.function_count) && catalogBeforeRollback === catalogAfterRollback && catalogAfterRollback === "[]";
         if (!rollbackComplete) {
-          recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", `fresh-namespace rollback incomplete: failure=${sanitizeError(failure)} leftovers=${JSON.stringify(leftovers)}`);
+          recordProofFail(results, "MIG-DDL-ROLLBACK", "PG", rollbackFailureDetail(failure, leftovers));
         } else {
           recordProofPass(results, "MIG-DDL-ROLLBACK", "PG", [
             "real applyMigration path called on a fresh PostgreSQL namespace",
