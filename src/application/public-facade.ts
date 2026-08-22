@@ -19,6 +19,7 @@ import type { BusinessSessionRunner } from "./ports/persistence.ts";
 import type { JournalPostPayload, JournalPostResult } from "./services/journal-command-service.ts";
 import { executeJournalPost } from "./services/journal-command-service.ts";
 import type { LedgerReportService, TrialBalanceReport, ProfitAndLossReport, BalanceSheetReport } from "./services/ledger-report-service.ts";
+import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeReceiptRecord, getInvoice, listOutstandingInvoices, type PartyCreatePayload, type PartyCreateResult, type InvoiceCreatePayload, type InvoiceCreateResult, type InvoicePostPayload, type InvoicePostResult, type ReceiptRecordPayload, type ReceiptRecordResult, type InvoiceView } from "./services/sales-command-service.ts";
 
 /**
  * Read-only tenant operations
@@ -82,6 +83,16 @@ export interface LedgerReportOperations {
   balanceSheet(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<BalanceSheetReport>;
 }
 
+export type SalesCommandEnvelope<P> = CommandEnvelope<P> & { bookSetId: BookSetId };
+export interface PartyCommands { create(envelope: SalesCommandEnvelope<PartyCreatePayload>): Promise<CommandResult<PartyCreateResult>>; }
+export interface InvoiceCommands {
+  create(envelope: SalesCommandEnvelope<InvoiceCreatePayload>): Promise<CommandResult<InvoiceCreateResult>>;
+  post(envelope: SalesCommandEnvelope<InvoicePostPayload>): Promise<CommandResult<InvoicePostResult>>;
+  get(tenantId: TenantId, bookSetId: BookSetId, invoiceId: string): Promise<InvoiceView>;
+  outstanding(tenantId: TenantId, bookSetId: BookSetId): Promise<InvoiceView[]>;
+}
+export interface ReceiptCommands { record(envelope: SalesCommandEnvelope<ReceiptRecordPayload>): Promise<CommandResult<ReceiptRecordResult>>; }
+
 /**
  * Public application facade: typed read and command interfaces.
  * No raw service mutators or persistence handles escape.
@@ -93,6 +104,9 @@ export type PublicApplicationFacade = {
   bookSetScope: BookSetScopeOperations;
   journal: JournalCommands;
   ledger: LedgerReportOperations;
+  party: PartyCommands;
+  invoice: InvoiceCommands;
+  receipt: ReceiptCommands;
 };
 
 /**
@@ -138,5 +152,13 @@ export function createPublicFacade(
       profitAndLoss: (tenantId, bookSetId, fromDate, toDate) => ledgerReportService.profitAndLoss(tenantId, bookSetId, fromDate, toDate),
       balanceSheet: (tenantId, bookSetId, asOfDate) => ledgerReportService.balanceSheet(tenantId, bookSetId, asOfDate),
     },
+    party: { create: (envelope) => executePartyCreate(sessionRunner, envelope) },
+    invoice: {
+      create: (envelope) => executeInvoiceCreate(sessionRunner, envelope),
+      post: (envelope) => executeInvoicePost(sessionRunner, envelope),
+      get: (tenantId, bookSetId, invoiceId) => getInvoice(sessionRunner, tenantId, bookSetId, invoiceId),
+      outstanding: (tenantId, bookSetId) => listOutstandingInvoices(sessionRunner, tenantId, bookSetId),
+    },
+    receipt: { record: (envelope) => executeReceiptRecord(sessionRunner, envelope) },
   };
 }

@@ -23,6 +23,7 @@ import { CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current
 import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
 import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
 import { JOURNAL_V5_MIGRATION } from "../../src/infrastructure/schema/journal-v5-migration.ts";
+import { SALES_V6_MIGRATION } from "../../src/infrastructure/schema/sales-v6-migration.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp, DirtyMigrationError } from "../../src/core/types.ts";
 
 describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
@@ -45,6 +46,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       { id: BOOKSET_V3_MIGRATION.id, sql: BOOKSET_V3_MIGRATION.sqlite },
       { id: BOOKSET_V4_MIGRATION.id, sql: BOOKSET_V4_MIGRATION.sqlite },
       { id: JOURNAL_V5_MIGRATION.id, sql: JOURNAL_V5_MIGRATION.sqlite },
+      { id: SALES_V6_MIGRATION.id, sql: SALES_V6_MIGRATION.sqlite },
     ]);
 
     // Initialize database_control row via migration lease (v3 manifest)

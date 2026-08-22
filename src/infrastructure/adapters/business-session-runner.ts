@@ -20,6 +20,11 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tenant_creation_requests",
   "journal_entries",
   "journal_lines",
+  "parties",
+  "sales_invoices",
+  "sales_invoice_lines",
+  "bank_receipts",
+  "bank_receipt_allocations",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

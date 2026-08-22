@@ -34,6 +34,15 @@ interface StoredIdempotency {
   resultHash: string;
 }
 
+export interface InSessionJournalPost {
+  tenantId: TenantId;
+  bookSetId: BookSetId;
+  postingDate: string;
+  reference?: string;
+  narration?: string;
+  lines: JournalLinePayload[];
+}
+
 function isIsoDate(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -109,6 +118,29 @@ async function assertScope(session: BusinessSession, tenantId: TenantId, bookSet
   }
 }
 
+/** Post a validated journal inside the caller's existing BusinessSession. */
+export async function postJournalInSession(session: BusinessSession, posting: InSessionJournalPost): Promise<string> {
+  validatePayload({ postingDate: posting.postingDate, reference: posting.reference, narration: posting.narration, lines: posting.lines });
+  await assertScope(session, posting.tenantId, posting.bookSetId, posting.lines);
+  const journalId = randomUUID();
+  const now = new Date().toISOString();
+  await session.execute(
+    `INSERT INTO journal_entries
+     (id, tenant_id, book_set_id, posting_date, reference, narration, status, created_at, posted_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'POSTED', ?, ?)`,
+    [journalId, posting.tenantId, posting.bookSetId, posting.postingDate, posting.reference ?? null, posting.narration ?? null, now, now],
+  );
+  for (const line of posting.lines) {
+    await session.execute(
+      `INSERT INTO journal_lines
+       (id, tenant_id, book_set_id, journal_entry_id, account_id, description, debit_minor, credit_minor)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), posting.tenantId, posting.bookSetId, journalId, line.accountId, line.description ?? null, line.debitMinor ?? 0, line.creditMinor ?? 0],
+    );
+  }
+  return journalId;
+}
+
 export async function executeJournalPost(
   sessionRunner: BusinessSessionRunner,
   envelope: CommandEnvelope<JournalPostPayload> & { bookSetId: BookSetId },
@@ -129,7 +161,6 @@ export async function executeJournalPost(
     }
 
     await assertScope(session, envelope.tenantId, envelope.bookSetId, envelope.payload.lines);
-    const journalId = randomUUID();
     const now = new Date().toISOString();
     let totalDebitMinor = 0;
     let totalCreditMinor = 0;
@@ -138,20 +169,14 @@ export async function executeJournalPost(
       totalCreditMinor += line.creditMinor ?? 0;
     }
 
-    await session.execute(
-      `INSERT INTO journal_entries
-       (id, tenant_id, book_set_id, posting_date, reference, narration, status, created_at, posted_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'POSTED', ?, ?)`,
-      [journalId, envelope.tenantId, envelope.bookSetId, envelope.payload.postingDate, envelope.payload.reference ?? null, envelope.payload.narration ?? null, now, now],
-    );
-    for (const line of envelope.payload.lines) {
-      await session.execute(
-        `INSERT INTO journal_lines
-         (id, tenant_id, book_set_id, journal_entry_id, account_id, description, debit_minor, credit_minor)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), envelope.tenantId, envelope.bookSetId, journalId, line.accountId, line.description ?? null, line.debitMinor ?? 0, line.creditMinor ?? 0],
-      );
-    }
+    const journalId = await postJournalInSession(session, {
+      tenantId: envelope.tenantId,
+      bookSetId: envelope.bookSetId,
+      postingDate: envelope.payload.postingDate,
+      reference: envelope.payload.reference,
+      narration: envelope.payload.narration,
+      lines: envelope.payload.lines,
+    });
 
     const result: JournalPostResult = { journalId, postingDate: envelope.payload.postingDate, totalDebitMinor, totalCreditMinor, status: "POSTED" };
     const resultJson = canonicalJson(result);
