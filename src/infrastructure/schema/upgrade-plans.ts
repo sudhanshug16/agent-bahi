@@ -1,9 +1,11 @@
 import { BOOKSET_V3_MIGRATION } from "./bookset-v3-migration.ts";
 import { BOOKSET_V4_MIGRATION } from "./bookset-v4-migration.ts";
+import { JOURNAL_V5_MIGRATION } from "./journal-v5-migration.ts";
 import {
   computeSqliteMigrationChecksum,
   V2_SCHEMA_MANIFEST,
   V3_SCHEMA_MANIFEST,
+  V4_SCHEMA_MANIFEST,
   CURRENT_SCHEMA_MANIFEST,
   type SqliteSchemaManifest,
 } from "./current-manifest.ts";
@@ -42,7 +44,7 @@ export function createBookSetV3UpgradePlan(): UpgradePlan {
 /** Canonical production V3 -> V4 plan used by bootstrap and CLI composition. */
 export const BOOKSET_V4_UPGRADE_PLAN: UpgradePlan = Object.freeze({
   sourceManifest: V3_SCHEMA_MANIFEST,
-  targetManifest: CURRENT_SCHEMA_MANIFEST,
+  targetManifest: V4_SCHEMA_MANIFEST,
   migration: Object.freeze({
     id: BOOKSET_V4_MIGRATION.id,
     sql: BOOKSET_V4_MIGRATION.sqlite,
@@ -60,6 +62,33 @@ export const BOOKSET_V4_UPGRADE_PLAN: UpgradePlan = Object.freeze({
 
 if (BOOKSET_V4_UPGRADE_PLAN.targetManifest.migrations.at(-1)?.checksum !== computeSqliteMigrationChecksum(BOOKSET_V4_MIGRATION.sqlite)) {
   throw new Error("BookSet V4 upgrade plan checksum is not canonical");
+}
+
+/** Canonical production V4 -> V5 journal ledger plan. */
+export const JOURNAL_V5_UPGRADE_PLAN: UpgradePlan = Object.freeze({
+  sourceManifest: V4_SCHEMA_MANIFEST,
+  targetManifest: CURRENT_SCHEMA_MANIFEST,
+  migration: Object.freeze({
+    id: JOURNAL_V5_MIGRATION.id,
+    sql: JOURNAL_V5_MIGRATION.sqlite,
+    manifest: JOURNAL_V5_MIGRATION.manifest,
+  }),
+  preflightProbes: Object.freeze([
+    {
+      id: "source-audit-records-table",
+      sql: "SELECT CAST(COUNT(*) AS TEXT) AS table_count FROM sqlite_master WHERE type = 'table' AND name = 'audit_records' LIMIT 1",
+      expectedRows: [{ table_count: "1" }],
+    },
+  ]),
+  targetVerificationProbes: JOURNAL_V5_MIGRATION.manifest.probes,
+});
+
+if (JOURNAL_V5_UPGRADE_PLAN.targetManifest.migrations.at(-1)?.checksum !== computeSqliteMigrationChecksum(JOURNAL_V5_MIGRATION.sqlite)) {
+  throw new Error("Journal V5 upgrade plan checksum is not canonical");
+}
+
+export function createJournalV5UpgradePlan(): UpgradePlan {
+  return JOURNAL_V5_UPGRADE_PLAN;
 }
 
 export function createBookSetV4UpgradePlan(): UpgradePlan {

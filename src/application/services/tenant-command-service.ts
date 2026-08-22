@@ -36,11 +36,12 @@ async function seedAccountsForBookSet(
   session: BusinessSession,
   tenantId: TenantId,
   bookSetId: BookSetId,
-): Promise<{ assets: AccountId; liabilities: AccountId; equity: AccountId; income: AccountId; expenses: AccountId }> {
+): Promise<{ assets: AccountId; cash: AccountId; liabilities: AccountId; equity: AccountId; income: AccountId; expenses: AccountId }> {
   const repo = new SqliteAccountRepository(session);
   const now = currentTimestamp();
 
   const assets = brandAccountId(randomUUID());
+  const cash = brandAccountId(randomUUID());
   const liabilities = brandAccountId(randomUUID());
   const equity = brandAccountId(randomUUID());
   const income = brandAccountId(randomUUID());
@@ -53,6 +54,18 @@ async function seedAccountsForBookSet(
     code: "1000",
     name: "Assets",
     accountType: "ASSET",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await repo.create({
+    id: cash,
+    tenantId,
+    bookSetId,
+    code: "1100",
+    name: "Cash",
+    accountType: "ASSET",
+    parentAccountId: assets,
     createdAt: now,
     updatedAt: now,
   });
@@ -101,7 +114,7 @@ async function seedAccountsForBookSet(
     updatedAt: now,
   });
 
-  return { assets, liabilities, equity, income, expenses };
+  return { assets, cash, liabilities, equity, income, expenses };
 }
 
 export interface TenantCreateResult {
@@ -113,6 +126,7 @@ export interface TenantCreateResult {
   defaultBookSetId: BookSetId;
   seedAccountIds: {
     assets: AccountId;
+    cash: AccountId;
     liabilities: AccountId;
     equity: AccountId;
     income: AccountId;

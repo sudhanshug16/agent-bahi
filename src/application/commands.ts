@@ -78,10 +78,12 @@ export function canonicalJson(obj: unknown): string {
 }
 
 export function computeCommandHash(command: string, envelope: CommandEnvelope<unknown>, payload: unknown): string {
+  const scopedEnvelope = envelope as CommandEnvelope<unknown> & { bookSetId?: string };
   const normalized = {
     schemaVersion: envelope.schemaVersion,
     command,
     tenantId: envelope.tenantId,
+    bookSetId: scopedEnvelope.bookSetId,
     requestId: envelope.requestId,
     actor: canonicalizeValue(envelope.actor),
     source: envelope.source,

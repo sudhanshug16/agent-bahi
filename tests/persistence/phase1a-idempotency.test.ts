@@ -11,6 +11,7 @@ import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/dat
 import { CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
 import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
+import { JOURNAL_V5_MIGRATION } from "../../src/infrastructure/schema/journal-v5-migration.ts";
 import { IdempotencyConflictError, DomainError } from "../../src/core/types.ts";
 
 describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
@@ -42,6 +43,10 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
       {
         id: BOOKSET_V4_MIGRATION.id,
         sql: BOOKSET_V4_MIGRATION.sqlite,
+      },
+      {
+        id: JOURNAL_V5_MIGRATION.id,
+        sql: JOURNAL_V5_MIGRATION.sqlite,
       },
     ]);
 

@@ -60,7 +60,7 @@ describe("tenant.create bootstrap command", () => {
 
       // Verify seed accounts exist
       const accountCount = native.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id = ? AND book_set_id = ?").get(resultData.tenantId, resultData.defaultBookSetId) as any;
-      expect(accountCount.count).toBe(5);
+      expect(accountCount.count).toBe(6);
 
       native.close();
     } finally {
@@ -407,7 +407,7 @@ describe("tenant.create bootstrap command", () => {
       expect(globalBookSetCount).toBe(1);
 
       const globalAccountCount = (native.query("SELECT COUNT(*) as count FROM accounts").get() as any).count;
-      expect(globalAccountCount).toBe(5);
+      expect(globalAccountCount).toBe(6);
 
       // Verify only one tenant.create audit record for this request
       const auditRecords = native.query(
@@ -440,7 +440,7 @@ describe("tenant.create bootstrap command", () => {
       expect(bookSetRow.tenant_id).toBe(returnedTenantId);
 
       const accountRows = native.query("SELECT tenant_id, book_set_id FROM accounts WHERE tenant_id = ? AND book_set_id = ?").all(returnedTenantId, returnedBookSetId) as any[];
-      expect(accountRows).toHaveLength(5);
+      expect(accountRows).toHaveLength(6);
       accountRows.forEach((row) => {
         expect(row.tenant_id).toBe(returnedTenantId);
         expect(row.book_set_id).toBe(returnedBookSetId);
@@ -575,7 +575,7 @@ describe("tenant.create bootstrap command", () => {
       if (capturedInTransactionState) {
         expect((capturedInTransactionState as CapturedState).tenants).toBe(1);
         expect((capturedInTransactionState as CapturedState).bookSets).toBe(1);
-        expect((capturedInTransactionState as CapturedState).accounts).toBe(5);
+        expect((capturedInTransactionState as CapturedState).accounts).toBe(6);
         expect((capturedInTransactionState as CapturedState).audits).toBe(1);
         expect((capturedInTransactionState as CapturedState).tcrRows).toBe(1);
         expect((capturedInTransactionState as CapturedState).resultJson).toBeDefined();
@@ -602,12 +602,12 @@ describe("tenant.create bootstrap command", () => {
       expect(retryData.tenantId).toBeDefined();
       expect(retryData.defaultBookSetId).toBeDefined();
 
-      // Verify GLOBAL state after success: exact 1/1/5/1/1 with row scoping
+      // Verify GLOBAL state after success: exact 1/1/6/1/1 with row scoping
       const finalDb = new BunDatabase(dbPath, { readonly: true });
 
       expect((finalDb.query("SELECT COUNT(*) as count FROM tenants").get() as any).count).toBe(1);
       expect((finalDb.query("SELECT COUNT(*) as count FROM book_sets").get() as any).count).toBe(1);
-      expect((finalDb.query("SELECT COUNT(*) as count FROM accounts").get() as any).count).toBe(5);
+      expect((finalDb.query("SELECT COUNT(*) as count FROM accounts").get() as any).count).toBe(6);
       expect((finalDb.query("SELECT COUNT(*) as count FROM audit_records WHERE command = ?").get("tenant.create") as any).count).toBe(1);
       expect((finalDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests").get() as any).count).toBe(1);
 
@@ -616,7 +616,7 @@ describe("tenant.create bootstrap command", () => {
       expect(bookSetRow.tenant_id).toBe(retryData.tenantId);
 
       const accountRows = finalDb.query("SELECT tenant_id, book_set_id FROM accounts").all() as any[];
-      expect(accountRows).toHaveLength(5);
+      expect(accountRows).toHaveLength(6);
       accountRows.forEach((row) => {
         expect(row.tenant_id).toBe(retryData.tenantId);
         expect(row.book_set_id).toBe(retryData.defaultBookSetId);

@@ -13,7 +13,7 @@ import { BOOKSET_V4_UPGRADE_PLAN } from "../../src/infrastructure/schema/upgrade
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
-import { V3_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
+import { V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 
 let directory: string;
 let dbPath: string;
@@ -180,11 +180,11 @@ describe("BookSet v4 migration integrity", () => {
     await upgradeV4();
     const backup = new BackupService(dbPath);
     const v4BackupPath = join(directory, "v4-copy.sqlite");
-    await backup.createBackup(v4BackupPath, CURRENT_SCHEMA_MANIFEST);
-    await expect(backup.verifyBackup(v4BackupPath, CURRENT_SCHEMA_MANIFEST)).resolves.toBe(true);
+    await backup.createBackup(v4BackupPath, V4_SCHEMA_MANIFEST);
+    await expect(backup.verifyBackup(v4BackupPath, V4_SCHEMA_MANIFEST)).resolves.toBe(true);
     const copied = new BunDatabase(v4BackupPath);
     copied.exec("DROP TRIGGER audit_records_no_update");
     copied.close();
-    await expect(backup.verifyBackup(v4BackupPath, CURRENT_SCHEMA_MANIFEST)).rejects.toMatchObject({ code: "BACKUP_SCHEMA_MISMATCH" });
+    await expect(backup.verifyBackup(v4BackupPath, V4_SCHEMA_MANIFEST)).rejects.toMatchObject({ code: "BACKUP_SCHEMA_MISMATCH" });
   });
 });

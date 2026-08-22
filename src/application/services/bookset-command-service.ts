@@ -57,7 +57,7 @@ interface IdempotencyRow {
  * Validate strict envelope and payload requirements before mutation.
  * Ensures schemaVersion=1, nonblank bounded IDs/reason, valid enums, ISO timestamps.
  */
-function validateCommandEnvelope(envelope: CommandEnvelope<unknown>): void {
+export function validateCommandEnvelope(envelope: CommandEnvelope<unknown>): void {
   if (envelope.schemaVersion !== 1) {
     throw new DomainError("INVALID_SCHEMA_VERSION", "schemaVersion must be 1");
   }

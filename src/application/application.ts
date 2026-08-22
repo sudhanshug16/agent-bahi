@@ -13,11 +13,12 @@ import { MigrationService } from "../infrastructure/services/migration-service.t
 import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
-import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
+import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN, JOURNAL_V5_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
 import { CORE_MIGRATIONS } from "../infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../infrastructure/schema/database-control-schema.ts";
-import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
+import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
+import { LedgerReportService } from "./services/ledger-report-service.ts";
 
 /**
  * Internal composition type (all raw services).
@@ -49,7 +50,7 @@ export interface SqliteBootstrapOptions {
  * coordinator owns collision handling, so an existing path is never replaced
  * or silently reused for a different hop.
  */
-function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4"): string {
+function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4" | "v4-to-v5"): string {
   return basePath.endsWith(".sqlite")
     ? `${basePath.slice(0, -".sqlite".length)}.${hop}.sqlite`
     : `${basePath}.${hop}.sqlite`;
@@ -97,6 +98,7 @@ export function createSqliteApplication(
     internal.account,
     internal.bookSetScope,
     sessionRunner,
+    new LedgerReportService(sessionRunner),
   );
 }
 
@@ -128,7 +130,7 @@ export async function bootstrapSqliteApplication(
       throw new Error("Database control did not converge to a known foundation state");
     }
 
-    // Every versioned upgrade, including the v3->v4 hop, uses the coordinator
+    // Every versioned upgrade uses the coordinator
     // and its verified pre-DDL backup boundary.
     if (inspection.record.schemaVersion === V2_SCHEMA_MANIFEST.schemaVersion) {
       await new UpgradeCoordinator(db, new BackupService({
@@ -151,6 +153,20 @@ export async function bootstrapSqliteApplication(
       })).upgrade({
         plan: BOOKSET_V4_UPGRADE_PLAN,
         backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v3-to-v4"),
+        cliVersion: options.cliVersion ?? "agent-bahi",
+        buildId: options.buildId ?? "bootstrap",
+        now,
+      });
+    }
+
+    const postV4Inspection = await new DatabaseControlService(db, "sqlite", V4_SCHEMA_MANIFEST).inspect();
+    if (postV4Inspection.status === "AVAILABLE" && postV4Inspection.record?.schemaVersion === V4_SCHEMA_MANIFEST.schemaVersion) {
+      await new UpgradeCoordinator(db, new BackupService({
+        sourcePath: dbPath,
+        expectedSourceManifest: V4_SCHEMA_MANIFEST,
+      })).upgrade({
+        plan: JOURNAL_V5_UPGRADE_PLAN,
+        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v4-to-v5"),
         cliVersion: options.cliVersion ?? "agent-bahi",
         buildId: options.buildId ?? "bootstrap",
         now,

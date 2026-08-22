@@ -18,6 +18,8 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "audit_records",
   "idempotency_records",
   "tenant_creation_requests",
+  "journal_entries",
+  "journal_lines",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

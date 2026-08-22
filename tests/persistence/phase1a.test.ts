@@ -14,6 +14,7 @@ import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/dat
 import { V2_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
 import { BOOKSET_V4_MIGRATION } from "../../src/infrastructure/schema/bookset-v4-migration.ts";
+import { JOURNAL_V5_MIGRATION } from "../../src/infrastructure/schema/journal-v5-migration.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp } from "../../src/core/types.ts";
 
 describe("Phase 1A: Production Persistence Foundation", () => {
@@ -51,6 +52,10 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       {
         id: BOOKSET_V4_MIGRATION.id,
         sql: BOOKSET_V4_MIGRATION.sqlite,
+      },
+      {
+        id: JOURNAL_V5_MIGRATION.id,
+        sql: JOURNAL_V5_MIGRATION.sqlite,
       },
     ]);
 

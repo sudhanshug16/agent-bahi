@@ -16,6 +16,9 @@ import { executeTenantCreate, type TenantCreateResult } from "./services/tenant-
 import { executeBookSetCreate, executeBookSetSetDefault, executeBookSetArchive, executeTenantActivate, type BookSetCreateResult, type BookSetSetDefaultResult, type BookSetArchiveResult, type TenantActivateResult } from "./services/bookset-command-service.ts";
 import type { BookSetCreatePayload, BookSetSetDefaultPayload, BookSetArchivePayload, TenantActivatePayload } from "./commands.ts";
 import type { BusinessSessionRunner } from "./ports/persistence.ts";
+import type { JournalPostPayload, JournalPostResult } from "./services/journal-command-service.ts";
+import { executeJournalPost } from "./services/journal-command-service.ts";
+import type { LedgerReportService, TrialBalanceReport, ProfitAndLossReport, BalanceSheetReport } from "./services/ledger-report-service.ts";
 
 /**
  * Read-only tenant operations
@@ -67,6 +70,18 @@ export interface BookSetScopeOperations {
   resolve(tenantId: TenantId, filter?: { bookSetId?: BookSetId }): Promise<BookSet>;
 }
 
+export type JournalPostEnvelope = CommandEnvelope<JournalPostPayload> & { bookSetId: BookSetId };
+
+export interface JournalCommands {
+  post(envelope: JournalPostEnvelope): Promise<CommandResult<JournalPostResult>>;
+}
+
+export interface LedgerReportOperations {
+  trialBalance(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<TrialBalanceReport>;
+  profitAndLoss(tenantId: TenantId, bookSetId: BookSetId, fromDate: string, toDate: string): Promise<ProfitAndLossReport>;
+  balanceSheet(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<BalanceSheetReport>;
+}
+
 /**
  * Public application facade: typed read and command interfaces.
  * No raw service mutators or persistence handles escape.
@@ -76,6 +91,8 @@ export type PublicApplicationFacade = {
   bookSet: BookSetReadOperations & BookSetCommands;
   account: AccountReadOperations;
   bookSetScope: BookSetScopeOperations;
+  journal: JournalCommands;
+  ledger: LedgerReportOperations;
 };
 
 /**
@@ -88,6 +105,7 @@ export function createPublicFacade(
   accountService: AccountService,
   bookSetScopeService: BookSetScopeService,
   sessionRunner: BusinessSessionRunner,
+  ledgerReportService: LedgerReportService,
 ): PublicApplicationFacade {
   return {
     tenant: {
@@ -111,6 +129,14 @@ export function createPublicFacade(
     },
     bookSetScope: {
       resolve: (tenantId: TenantId, filter?: { bookSetId?: BookSetId }) => bookSetScopeService.resolve(tenantId, filter),
+    },
+    journal: {
+      post: (envelope: JournalPostEnvelope) => executeJournalPost(sessionRunner, envelope),
+    },
+    ledger: {
+      trialBalance: (tenantId, bookSetId, asOfDate) => ledgerReportService.trialBalance(tenantId, bookSetId, asOfDate),
+      profitAndLoss: (tenantId, bookSetId, fromDate, toDate) => ledgerReportService.profitAndLoss(tenantId, bookSetId, fromDate, toDate),
+      balanceSheet: (tenantId, bookSetId, asOfDate) => ledgerReportService.balanceSheet(tenantId, bookSetId, asOfDate),
     },
   };
 }
