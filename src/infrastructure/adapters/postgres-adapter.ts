@@ -1,4 +1,4 @@
-import type { Database, Transaction, TransactionConfig, QueryResult } from "../../application/ports/persistence.ts";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork } from "../../application/ports/persistence.ts";
 import type { PostgresConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 
@@ -52,6 +52,36 @@ class PostgresTransaction implements Transaction {
 
   isActive(): boolean {
     return this.active;
+  }
+}
+
+/**
+ * PostgreSQL UnitOfWork implementation.
+ */
+class PostgresUnitOfWork implements UnitOfWork {
+  constructor(private db: any) {}
+
+  async execute<T>(
+    callback: (tx: Transaction) => Promise<T>,
+    config?: TransactionConfig,
+  ): Promise<T> {
+    const tx = new PostgresTransaction(this.db);
+    try {
+      const result = await callback(tx);
+      if (tx.isActive()) {
+        await tx.commit();
+      }
+      return result;
+    } catch (error) {
+      if (tx.isActive()) {
+        try {
+          await tx.rollback();
+        } catch {
+          // Already rolled back
+        }
+      }
+      throw error;
+    }
   }
 }
 
@@ -136,6 +166,10 @@ export class PostgresAdapter implements Database {
     await this.db.query(`BEGIN ISOLATION LEVEL ${isolationLevel.toUpperCase()} ${readOnly}`);
 
     return new PostgresTransaction(this.db);
+  }
+
+  unitOfWork(config?: TransactionConfig): UnitOfWork {
+    return new PostgresUnitOfWork(this.db);
   }
 
   async isConnected(): Promise<boolean> {

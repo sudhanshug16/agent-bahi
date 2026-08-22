@@ -40,6 +40,9 @@ export interface Database {
   // Transaction management
   beginTransaction(config?: TransactionConfig): Promise<Transaction>;
 
+  // UnitOfWork: atomic transaction with automatic rollback on error
+  unitOfWork(config?: TransactionConfig): UnitOfWork;
+
   // Metadata/health
   isConnected(): Promise<boolean>;
   close(): Promise<void>;

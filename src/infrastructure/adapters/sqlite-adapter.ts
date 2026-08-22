@@ -1,5 +1,6 @@
 import { Database as BunDatabase } from "bun:sqlite";
-import type { Database, Transaction, TransactionConfig, QueryResult } from "../../application/ports/persistence.ts";
+import { randomUUID } from "crypto";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork } from "../../application/ports/persistence.ts";
 import type { SqliteConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { resolve } from "path";
@@ -79,13 +80,48 @@ class SqliteTransaction implements Transaction {
  * - PRAGMA busy_timeout = 0 (fail immediately on contention, visible to caller)
  * - safeIntegers for proper bigint handling
  */
+/**
+ * SQLite UnitOfWork implementation.
+ * Provides automatic rollback on error while holding a transaction.
+ */
+class SqliteUnitOfWork implements UnitOfWork {
+  constructor(private db: BunDatabase) {}
+
+  async execute<T>(
+    callback: (tx: Transaction) => Promise<T>,
+    config?: TransactionConfig,
+  ): Promise<T> {
+    const tx = new SqliteTransaction(this.db);
+    try {
+      const result = await callback(tx);
+      if (tx.isActive()) {
+        await tx.commit();
+      }
+      return result;
+    } catch (error) {
+      if (tx.isActive()) {
+        try {
+          await tx.rollback();
+        } catch {
+          // Already rolled back
+        }
+      }
+      throw error;
+    }
+  }
+}
+
 export class SqliteAdapter implements Database {
   private db: BunDatabase;
-  private lockLevel = 0; // For advisory lock emulation
+  private dbPath: string; // Store path for lock database creation
+  private heldLocks = new Map<string, string>(); // lockName -> owner token; tracks locks held by this adapter
+  private lockTransactions = new Map<string, BunDatabase>(); // lockName -> transaction connection for uncommitted lock
+  private adapterId = randomUUID(); // Stable ID for this adapter instance
 
   constructor(config: SqliteConfig) {
     // Verify canonical path safety
     this.assertLocalFilesystemPath(config.path);
+    this.dbPath = config.path;
 
     this.db = new BunDatabase(config.path, {
       strict: true,
@@ -202,6 +238,10 @@ export class SqliteAdapter implements Database {
     return new SqliteTransaction(this.db);
   }
 
+  unitOfWork(config?: TransactionConfig): UnitOfWork {
+    return new SqliteUnitOfWork(this.db);
+  }
+
   async isConnected(): Promise<boolean> {
     try {
       const result = this.db.query("SELECT 1").get();
@@ -212,28 +252,122 @@ export class SqliteAdapter implements Database {
   }
 
   async close(): Promise<void> {
+    // Release all held locks
+    for (const lockKey of this.heldLocks) {
+      const lockName = lockKey.split(':')[1];
+      await this.releaseAdvisoryLock(lockName);
+    }
     this.db.close();
   }
 
   async acquireAdvisoryLock(lockName: string, timeoutMs: number = 5000): Promise<boolean> {
-    // SQLite doesn't have true advisory locks. Use PRAGMA locking_mode = EXCLUSIVE
-    // for the entire database (single writer, multiple readers).
-    // For more fine-grained locking, we would need a lock table and serializable transactions.
+    // Crash-safe advisory lock using uncommitted transaction
+    // Key insight: lock is held by keeping a transaction open with IMMEDIATE mode
+    // If process crashes, the transaction auto-rollbacks and lock is released
+    // No manual recovery needed; no stale lock rows survive crashes
 
-    // For migration locks specifically, we use serializable transactions + lock table.
-    // This is implemented in MigrationService which creates a lock record and uses IMMEDIATE transactions.
+    const startTime = Date.now();
+    const ownerToken = this.adapterId;
 
-    // Simple counter-based emulation for now:
-    if (this.lockLevel > 0) {
-      return false; // Already locked
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        // Create separate connection for lock transaction (independent of main db)
+        const lockDb = new BunDatabase(this.dbPath, {
+          strict: true,
+          create: true,
+          safeIntegers: true,
+          readonly: false,
+        });
+
+        try {
+          // Enable FK for consistency
+          lockDb.exec("PRAGMA foreign_keys = ON");
+          lockDb.exec("PRAGMA busy_timeout = 0");
+
+          // Initialize lock table if needed
+          lockDb.exec(`
+            CREATE TABLE IF NOT EXISTS __migration_locks (
+              name TEXT PRIMARY KEY,
+              owner_token TEXT NOT NULL,
+              acquired_at INTEGER NOT NULL
+            )
+          `);
+
+          // BEGIN IMMEDIATE: acquire exclusive lock immediately
+          lockDb.exec("BEGIN IMMEDIATE");
+
+          try {
+            // Check if lock is held by different owner
+            const existing = lockDb.query(`SELECT owner_token FROM __migration_locks WHERE name = ?`).get(lockName) as any;
+
+            if (existing && existing.owner_token !== ownerToken) {
+              // Lock held by different owner - release and retry
+              lockDb.exec("ROLLBACK");
+              lockDb.close();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              continue;
+            }
+
+            // We own or can take the lock
+            if (existing) {
+              // Renew lock timestamp (same owner)
+              lockDb.query(`UPDATE __migration_locks SET acquired_at = ? WHERE name = ?`).run(
+                Date.now(),
+                lockName
+              );
+            } else {
+              // New lock
+              lockDb.query(`INSERT INTO __migration_locks (name, owner_token, acquired_at) VALUES (?, ?, ?)`).run(
+                lockName,
+                ownerToken,
+                Date.now()
+              );
+            }
+
+            // Transaction held OPEN - do NOT commit
+            // Lock is held for duration of this process
+            // If crash: transaction auto-rollbacks, lock released
+            this.heldLocks.set(lockName, ownerToken);
+            this.lockTransactions.set(lockName, lockDb);
+            return true;
+          } catch (txError) {
+            lockDb.exec("ROLLBACK");
+            lockDb.close();
+            throw txError;
+          }
+        } catch (error) {
+          try {
+            lockDb.close();
+          } catch {
+            // Already closed
+          }
+          throw error;
+        }
+      } catch (error) {
+        // Lock acquisition failed - wait and retry
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     }
 
-    this.lockLevel++;
-    return true;
+    // Timeout reached
+    return false;
   }
 
   async releaseAdvisoryLock(lockName: string): Promise<void> {
-    this.lockLevel = Math.max(0, this.lockLevel - 1);
+    if (this.heldLocks.has(lockName)) {
+      const lockDb = this.lockTransactions.get(lockName);
+      if (lockDb) {
+        try {
+          // Rollback the held transaction - this releases the lock
+          lockDb.exec("ROLLBACK");
+          lockDb.close();
+        } catch {
+          // Already closed or rolled back
+        }
+        this.lockTransactions.delete(lockName);
+      }
+      this.heldLocks.delete(lockName);
+    }
   }
 
   private handleSqliteError(error: unknown): void {

@@ -1,4 +1,4 @@
-import type { Database, Transaction, TransactionConfig, QueryResult } from "../../application/ports/persistence.ts";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork } from "../../application/ports/persistence.ts";
 import type { MysqlConfig } from "../config/database.ts";
 import { DomainError } from "../../core/types.ts";
 
