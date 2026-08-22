@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "bun";
 import { buildMySqlHealthCommand, createBunSqlClient, sanitizeError, startMySQLContainer, type DatabaseConfig } from "../../spikes/gate0/database-integration.ts";
 
 describe("MySQL authenticated readiness with TLS (live probes)", () => {
@@ -11,18 +12,13 @@ describe("MySQL authenticated readiness with TLS (live probes)", () => {
       config = started.config;
       cleanup = started.cleanup;
     } catch (error) {
-      console.warn(`MySQL startup failed: ${sanitizeError(error)}`);
-      // Do not set config; tests will detect and fail with proper error
+      throw new Error(`MySQL startup failed: ${sanitizeError(error)}`);
     }
   }, { timeout: 180000 });
 
   afterAll(async () => {
     if (cleanup) {
-      try {
-        await cleanup();
-      } catch (error) {
-        console.error(`Cleanup failed: ${sanitizeError(error)}`);
-      }
+      await cleanup();
     }
   });
 
@@ -41,7 +37,7 @@ describe("MySQL authenticated readiness with TLS (live probes)", () => {
       try {
         await client.end({ timeout: 1000 });
       } catch (error) {
-        // Ignore cleanup errors
+        throw new Error(`Bun SQL cleanup failed: ${sanitizeError(error)}`);
       }
     }
   });
@@ -69,7 +65,7 @@ describe("MySQL authenticated readiness with TLS (live probes)", () => {
       try {
         await client.end({ timeout: 1000 });
       } catch (error) {
-        // Ignore cleanup errors
+        throw new Error(`wrong-password client cleanup failed: ${sanitizeError(error)}`);
       }
     }
 
@@ -102,7 +98,7 @@ describe("MySQL authenticated readiness with TLS (live probes)", () => {
       try {
         await client.end({ timeout: 1000 });
       } catch (error) {
-        // Ignore cleanup errors
+        throw new Error(`wrong-user client cleanup failed: ${sanitizeError(error)}`);
       }
     }
 
@@ -112,34 +108,38 @@ describe("MySQL authenticated readiness with TLS (live probes)", () => {
     expect(errorMessage).toMatch(/user|access|auth|denied|invalid/);
   });
 
-  test("health command with correct credentials succeeds", async () => {
+  test("production health command succeeds with exact authenticated stdout", async () => {
     if (!config) {
       throw new Error("MySQL container must be available for health check verification");
     }
 
     const healthCommand = buildMySqlHealthCommand(config.username, config.password);
-    // Health command must include all required components for authenticated SELECT 1
-    expect(healthCommand).toContain("mysql");
-    expect(healthCommand).toContain("SELECT 1");
-    expect(healthCommand).toContain("--ssl-mode=REQUIRED");
-    expect(healthCommand).toContain(`-u ${config.username}`);
-    expect(healthCommand).toContain(`-p${config.password}`);
+    const result = spawnSync(
+      ["docker", "exec", config.containerName, "sh", "-lc", healthCommand],
+      { timeout: 15000 },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(new TextDecoder().decode(result.stdout).trim()).toBe("1");
+    expect(new TextDecoder().decode(result.stderr).trim()).toBe("");
   });
 
-  test("health command with wrong password differs", async () => {
+  test("production health command rejects wrong password and username", async () => {
     if (!config) {
       throw new Error("MySQL container must be available for health check verification");
     }
 
-    const correctCmd = buildMySqlHealthCommand(config.username, config.password);
-    const wrongCmd = buildMySqlHealthCommand(config.username, "wrongpass");
-
-    // Commands must differ due to different password
-    expect(correctCmd).not.toBe(wrongCmd);
-    // Both must use SELECT 1 with TLS
-    expect(correctCmd).toContain("SELECT 1");
-    expect(wrongCmd).toContain("SELECT 1");
-    expect(correctCmd).toContain("--ssl-mode=REQUIRED");
-    expect(wrongCmd).toContain("--ssl-mode=REQUIRED");
+    const healthCommand = buildMySqlHealthCommand(config.username, config.password);
+    const wrongPassword = spawnSync(
+      ["docker", "exec", "-e", `MYSQL_PASSWORD=wrong_${crypto.randomUUID()}`, config.containerName, "sh", "-lc", healthCommand],
+      { timeout: 15000 },
+    );
+    const wrongUser = spawnSync(
+      ["docker", "exec", "-e", `MYSQL_USER=missing_${crypto.randomUUID()}`, config.containerName, "sh", "-lc", healthCommand],
+      { timeout: 15000 },
+    );
+    expect(wrongPassword.exitCode).not.toBe(0);
+    expect(wrongUser.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(wrongPassword.stdout).trim()).not.toBe("1");
+    expect(new TextDecoder().decode(wrongUser.stdout).trim()).not.toBe("1");
   });
 });

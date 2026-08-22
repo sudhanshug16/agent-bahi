@@ -26,7 +26,8 @@ function validateIntegrationResults(
   expect(substrateResults.length).toBeGreaterThan(0);
   const blocked = results.some((result) => result.id === `${prefix}-SUBSTRATE` && result.status === "BLOCKED");
   if (blocked) {
-    expect(results.every((result) => result.status === "BLOCKED")).toBe(true);
+    expect(results.every((result) => result.status === "BLOCKED" || result.status === "NOT_APPLICABLE")).toBe(true);
+    expect(results.some((result) => result.status === "NOT_APPLICABLE")).toBe(true);
     return;
   }
   expect(substrateResults.every((result) => result.status === "PASS")).toBe(true);
@@ -38,7 +39,7 @@ function validateIntegrationResults(
 
   expect(results.filter((result) => result.status === "FAIL")).toHaveLength(0);
   expect(new Set(results.map((result) => result.id)).size).toBe(results.length);
-  const failedSemantics = semanticResults.filter((result) => result.status !== "PASS");
+  const failedSemantics = semanticResults.filter((result) => result.status !== "PASS" && result.status !== "NOT_APPLICABLE");
   if (failedSemantics.length > 0) {
     throw new Error(
       `${dialectName} semantic proofs failed: ${failedSemantics
@@ -85,17 +86,13 @@ describe("Gate0 PostgreSQL integration contract", () => {
   }, { timeout: 180000 });
 
   afterAll(async () => {
-    try {
-      if (cleanup) await cleanup();
-    } finally {
-      postgresCompletedResolve();
-    }
+    postgresCompletedResolve();
   });
 
   test("runs the full semantic matrix and all proofs must pass", async () => {
     if (results.length === 0) {
       if (!config) throw new Error("PostgreSQL startup produced neither config nor structured BLOCKED result");
-      results = await runDatabaseIntegrationTests(config);
+      results = await runDatabaseIntegrationTests(config, cleanup ?? undefined);
     }
     validateIntegrationResults("PostgreSQL", "PG", results);
   }, { timeout: 120000 }); // 120s timeout for semantic matrix execution
@@ -121,15 +118,13 @@ describe("Gate0 MySQL integration contract", () => {
   }, { timeout: 180000 });
 
   afterAll(async () => {
-    if (cleanup) {
-      await cleanup();
-    }
+    // runDatabaseIntegrationTests owns finalization when startup succeeded.
   });
 
   test("runs the full semantic matrix and all proofs must pass", async () => {
     if (results.length === 0) {
       if (!config) throw new Error("MySQL startup produced neither config nor structured BLOCKED result");
-      results = await runDatabaseIntegrationTests(config);
+      results = await runDatabaseIntegrationTests(config, cleanup ?? undefined);
     }
     validateIntegrationResults("MySQL", "MY", results);
   }, { timeout: 120000 }); // 120s timeout for semantic matrix execution

@@ -2,8 +2,12 @@ import { expect, test } from "bun:test";
 import {
   blockedDialectResults,
   classifySpawnResult,
+  cleanupResource,
+  DIALECT_NOT_APPLICABLE,
+  finalizeProofResults,
   IntegrationBlockedError,
   integrationSummary,
+  normalizeDatabaseRowKeys,
   POSTGRES_IMAGE,
   preflightDatabaseImage,
   REQUIRED_SEMANTIC_PROOF_IDS,
@@ -87,6 +91,64 @@ test("integration summary is complete, sorted, and carries server version/detail
   expect(summary.proofs.every((proof) => proof.detail.length > 0)).toBe(true);
 });
 
+test("proof finalizer fails missing, duplicate, unknown, and invalid N/A results", () => {
+  const complete = REQUIRED_SEMANTIC_PROOF_IDS.map((proofId) => ({
+    id: `PG-${proofId}`,
+    name: proofId,
+    status: DIALECT_NOT_APPLICABLE.postgres.includes(proofId as never) ? "NOT_APPLICABLE" as const : "PASS" as const,
+    evidence: [proofId],
+  }));
+  const duplicateUnknown = finalizeProofResults("postgres", [
+    ...complete,
+    complete[0],
+    { id: "PG-UNKNOWN", name: "unknown", status: "PASS", evidence: ["bad"] },
+    { id: "PG-SCOPE-001", name: "invalid N/A", status: "NOT_APPLICABLE", evidence: ["bad"] },
+  ]);
+  expect(duplicateUnknown.find((result) => result.id === "PG-MIG-001")?.status).toBe("FAIL");
+  expect(duplicateUnknown.find((result) => result.id === "PG-UNKNOWN")?.status).toBe("FAIL");
+  expect(duplicateUnknown.find((result) => result.id === "PG-SCOPE-001")?.status).toBe("FAIL");
+
+  const missing = finalizeProofResults("postgres", complete.filter((result) => result.id !== "PG-MIG-001"));
+  expect(missing.find((result) => result.id === "PG-MIG-001")?.status).toBe("FAIL");
+  expect(missing.find((result) => result.id === "PG-MIG-DIRTY-MARKER")?.status).toBe("NOT_APPLICABLE");
+});
+
+test("MySQL metadata key normalization handles actual uppercase driver labels", () => {
+  expect(normalizeDatabaseRowKeys({ TABLE_NAME: "tenants", ENGINE: "InnoDB", Trigger: "trg", ACTION_STATEMENT: "BEGIN" })).toEqual({
+    table_name: "tenants",
+    engine: "InnoDB",
+    trigger: "trg",
+    action_statement: "BEGIN",
+  });
+});
+
+test("Docker cleanup attempts all resources and verifies absence before failing", async () => {
+  const calls: string[][] = [];
+  const runDocker: DockerCommandRunner = (args) => {
+    calls.push(args);
+    if (args[0] === "network" && args[1] === "rm") {
+      return { success: false, exitCode: 1, signalCode: null, stdout: "", stderr: "network busy" };
+    }
+    if (args[0] === "inspect") {
+      return { success: false, exitCode: 1, signalCode: null, stdout: "", stderr: "No such resource" };
+    }
+    return successfulDockerResult("");
+  };
+  let failure: unknown;
+  try {
+    await cleanupResource("owned-container", "owned-network", true, true, runDocker)();
+  } catch (error) {
+    failure = error;
+  }
+  expect(String(failure)).toContain("network busy");
+  expect(calls).toEqual([
+    ["rm", "-f", "owned-container"],
+    ["inspect", "--format={{.Id}}", "owned-container"],
+    ["network", "rm", "owned-network"],
+    ["network", "inspect", "owned-network"],
+  ]);
+});
+
 test("an exact local image match skips pull and reports the local preflight", () => {
   const calls: string[][] = [];
   const runDocker: DockerCommandRunner = (args) => {
@@ -141,6 +203,7 @@ test("missing-image pull failure is blocked before network/run and cannot false-
     ["pull", POSTGRES_IMAGE],
   ]);
   const blocked = blockedDialectResults("postgres", String(failure));
-  expect(blocked.every((result) => result.status === "BLOCKED")).toBe(true);
+  expect(blocked.every((result) => result.status === "BLOCKED" || result.status === "NOT_APPLICABLE")).toBe(true);
+  expect(blocked.some((result) => result.status === "NOT_APPLICABLE")).toBe(true);
   expect(blocked.some((result) => result.status === "PASS")).toBe(false);
 });

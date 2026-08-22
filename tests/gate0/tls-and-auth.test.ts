@@ -44,7 +44,7 @@ describe("MySQL health command builder", () => {
     const healthCommand = buildMySqlHealthCommand(username, password);
 
     // Must use mysql client (not mysqladmin)
-    expect(healthCommand).toMatch(/^mysql\s/);
+    expect(healthCommand).toMatch(/^MYSQL_PWD="\$MYSQL_PASSWORD" mysql\s/);
 
     // Must execute SELECT 1 (database-selecting proof)
     expect(healthCommand).toContain("SELECT 1");
@@ -55,12 +55,13 @@ describe("MySQL health command builder", () => {
     // Must use TCP protocol (not socket)
     expect(healthCommand).toContain("--protocol=TCP");
 
-    // Must select testdb database
-    expect(healthCommand).toContain("-D testdb");
-
-    // Must use credentials with correct syntax (-p with no space)
-    expect(healthCommand).toContain(`-u ${username}`);
-    expect(healthCommand).toContain(`-p${password}`);
+    // Credentials must come from the existing container environment, not
+    // command-line literals visible to docker inspect.
+    expect(healthCommand).toContain('-u "$MYSQL_USER"');
+    expect(healthCommand).toContain('MYSQL_PWD="$MYSQL_PASSWORD"');
+    expect(healthCommand).toContain('-D "$MYSQL_DATABASE"');
+    expect(healthCommand).not.toContain(username);
+    expect(healthCommand).not.toContain(password);
 
     // Must use non-interactive output flags (-Nse)
     expect(healthCommand).toContain("-Nse");
@@ -69,33 +70,19 @@ describe("MySQL health command builder", () => {
   test("health command format is correct for mysql CLI", () => {
     const healthCommand = buildMySqlHealthCommand("user", "pass");
 
-    // Expected format: mysql -h 127.0.0.1 --protocol=TCP -u user -ppass -D testdb -Nse "SELECT 1" --ssl-mode=REQUIRED
+    // Expected format references the environment already present in the
+    // container and remains safe for shell expansion.
     expect(healthCommand).toContain("-h 127.0.0.1");
-    expect(healthCommand).toContain("-u user");
-    expect(healthCommand).toContain("-ppass");
-    expect(healthCommand).toContain("-D testdb");
+    expect(healthCommand).toContain('-u "$MYSQL_USER"');
+    expect(healthCommand).toContain('MYSQL_PWD="$MYSQL_PASSWORD"');
+    expect(healthCommand).toContain('-D "$MYSQL_DATABASE"');
     expect(healthCommand).toContain("-Nse");
     expect(healthCommand).toContain('"SELECT 1"');
   });
 
-  test("wrong credentials in health command produce different command", () => {
-    const correctPassword = "correctpass";
-    const wrongPassword = "wrongpass";
-
-    const correctCmd = buildMySqlHealthCommand("user", correctPassword);
-    const wrongCmd = buildMySqlHealthCommand("user", wrongPassword);
-
-    // Commands must differ
-    expect(correctCmd).not.toBe(wrongCmd);
-
-    // Wrong password must appear in wrong command
-    expect(wrongCmd).toContain(wrongPassword);
-    expect(wrongCmd).not.toContain(correctPassword);
-
-    // Both must use SELECT 1 with TLS required
-    expect(correctCmd).toContain("SELECT 1");
-    expect(wrongCmd).toContain("SELECT 1");
-    expect(correctCmd).toContain("--ssl-mode=REQUIRED");
-    expect(wrongCmd).toContain("--ssl-mode=REQUIRED");
+  test("health command never embeds generated secrets", () => {
+    const command = buildMySqlHealthCommand("generated_user", "generated_secret");
+    expect(command).not.toContain("generated_user");
+    expect(command).not.toContain("generated_secret");
   });
 });

@@ -14,10 +14,12 @@ export type DatabaseConfig = {
   containerPort: number;
 };
 
+export type ProofStatus = "PASS" | "FAIL" | "BLOCKED" | "NOT_APPLICABLE";
+
 export type IntegrationTestResult = {
   id: string;
   name: string;
-  status: "PASS" | "FAIL" | "BLOCKED";
+  status: ProofStatus;
   evidence: string[];
   detail?: string;
   error?: string;
@@ -26,7 +28,7 @@ export type IntegrationTestResult = {
 export type IntegrationSummary = {
   dialect: DatabaseType;
   server_version: string;
-  proofs: Array<{ id: string; status: IntegrationTestResult["status"]; detail: string }>;
+  proofs: Array<{ id: string; status: ProofStatus; detail: string }>;
 };
 
 export const REQUIRED_SEMANTIC_PROOF_IDS = [
@@ -58,6 +60,17 @@ export const REQUIRED_SEMANTIC_PROOF_IDS = [
   "BIGINT-001",
   "CLEANUP-001",
 ] as const;
+
+/**
+ * This is the only registry that may make a semantic proof inapplicable.
+ * Everything not listed here is mandatory for that dialect.
+ */
+export const DIALECT_NOT_APPLICABLE = {
+  postgres: ["MIG-DIRTY-MARKER", "MIG-DIRTY-RECOVERY"] as const,
+  mysql: ["MIG-DDL-ROLLBACK", "SCOPE-ISOLATION-001", "SCOPE-ISOLATION-002", "DEL-001"] as const,
+} as const satisfies Record<DatabaseType, readonly (typeof REQUIRED_SEMANTIC_PROOF_IDS[number])[]>;
+
+const SUBSTRATE_PROOF_IDS = new Set(["SUBSTRATE-CONNECTION", "SUBSTRATE-MIGRATION", "SUBSTRATE"]);
 
 export const POSTGRES_IMAGE =
   "docker.io/library/postgres@sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449";
@@ -331,14 +344,29 @@ export function preflightDatabaseImage(
   return "PULLED";
 }
 
-function cleanupResource(containerName: string, networkName: string, networkCreated: boolean, containerStarted: boolean) {
+export function cleanupResource(
+  containerName: string,
+  networkName: string,
+  networkCreated: boolean,
+  containerStarted: boolean,
+  runDocker: DockerCommandRunner = docker,
+) {
   return async () => {
-    // Requirement (J): Cleanup subprocess timeouts, exit/status checks, aggregated errors
+    // Cleanup is deliberately best-effort across every owned resource. A
+    // failure must not prevent the remaining resource removals or absence
+    // checks from running.
     const cleanupErrors: string[] = [];
 
     if (containerStarted) {
       try {
-        const rmResult = spawnSync(["docker", "rm", "-f", containerName], { timeout: 10000 });
+        const rmResult = runDocker(
+          ["rm", "-f", containerName],
+          [],
+          `remove test container ${containerName}`,
+          10000,
+          false,
+          true,
+        );
         const exit = processExitDetails(rmResult);
         const stderr = bytesToString(rmResult.stderr);
         if (!exit.success) {
@@ -349,11 +377,36 @@ function cleanupResource(containerName: string, networkName: string, networkCrea
       } catch (error) {
         cleanupErrors.push(`docker rm container error: ${sanitizeError(error)}`);
       }
+      try {
+        const inspectResult = runDocker(
+          ["inspect", "--format={{.Id}}", containerName],
+          [],
+          `verify removed test container ${containerName}`,
+          10000,
+          false,
+          true,
+        );
+        const exit = processExitDetails(inspectResult);
+        if (exit.success) {
+          cleanupErrors.push(`docker container still exists after removal: ${containerName}`);
+        } else if (exit.timedOut || exit.signalCode !== null) {
+          cleanupErrors.push(`docker container absence verification failed: ${imageInspectFailureDetails(inspectResult)}`);
+        }
+      } catch (error) {
+        cleanupErrors.push(`docker container absence verification error: ${sanitizeError(error)}`);
+      }
     }
 
     if (networkCreated) {
       try {
-        const netResult = spawnSync(["docker", "network", "rm", networkName], { timeout: 10000 });
+        const netResult = runDocker(
+          ["network", "rm", networkName],
+          [],
+          `remove test network ${networkName}`,
+          10000,
+          false,
+          true,
+        );
         const exit = processExitDetails(netResult);
         const stderr = bytesToString(netResult.stderr);
         if (!exit.success) {
@@ -363,6 +416,24 @@ function cleanupResource(containerName: string, networkName: string, networkCrea
         }
       } catch (error) {
         cleanupErrors.push(`docker network rm error: ${sanitizeError(error)}`);
+      }
+      try {
+        const inspectResult = runDocker(
+          ["network", "inspect", networkName],
+          [],
+          `verify removed test network ${networkName}`,
+          10000,
+          false,
+          true,
+        );
+        const exit = processExitDetails(inspectResult);
+        if (exit.success) {
+          cleanupErrors.push(`docker network still exists after removal: ${networkName}`);
+        } else if (exit.timedOut || exit.signalCode !== null) {
+          cleanupErrors.push(`docker network absence verification failed: ${imageInspectFailureDetails(inspectResult)}`);
+        }
+      } catch (error) {
+        cleanupErrors.push(`docker network absence verification error: ${sanitizeError(error)}`);
       }
     }
 
@@ -507,7 +578,7 @@ export async function startDatabaseContainer(
         containerName,
         containerPort,
       },
-      cleanup: cleanupResource(containerName, networkName, true, true),
+      cleanup: cleanupResource(containerName, networkName, true, true, runDocker),
     };
     startupSucceeded = true;
     return started;
@@ -516,7 +587,7 @@ export async function startDatabaseContainer(
     throw new Error(sanitizeError(error, secrets));
   } finally {
     if (!startupSucceeded) {
-      await cleanupResource(containerName, networkName, networkCreated, containerStarted)();
+      await cleanupResource(containerName, networkName, networkCreated, containerStarted, runDocker)();
     }
   }
 }
@@ -550,11 +621,13 @@ export function buildBunSqlConnectionOptions(config: DatabaseConfig): Record<str
 }
 
 export function buildMySqlHealthCommand(username: string, password: string): string {
-  // Use authenticated database-selecting SELECT 1 probe with TLS required (production-representative).
-  // mysql -h 127.0.0.1 -P 3306 --protocol=TCP -u {user} -p{password} -D testdb -Nse "SELECT 1" --ssl-mode=REQUIRED
-  // -N: no header row; -s: silent (no standard table output); -e: execute query and exit
-  // TLS required enforces encrypted auth (caching_sha2_password); wrong credentials fail at TLS handshake.
-  return `mysql -h 127.0.0.1 --protocol=TCP -u ${username} -p${password} -D testdb -Nse "SELECT 1" --ssl-mode=REQUIRED`;
+  // The values are intentionally unused: credentials must come from the
+  // container's existing environment, never from docker inspect arguments.
+  void username;
+  void password;
+  // -N/-s/-e produce a small authenticated probe. --ssl-mode=REQUIRED keeps
+  // caching_sha2_password authentication encrypted and rejects bad creds.
+  return 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -h 127.0.0.1 --protocol=TCP -u "$MYSQL_USER" -D "$MYSQL_DATABASE" -Nse "SELECT 1" --ssl-mode=REQUIRED';
 }
 
 export function createBunSqlClient(config: DatabaseConfig): SQL {
@@ -598,7 +671,7 @@ async function schemaMigrationsExists(sql: SQL, dialect: DatabaseType): Promise<
     return rows[0]?.exists === true;
   }
   const rows = await sql.unsafe<{ count: bigint | number }[]>(
-    "SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'schema_migrations'",
+    "SELECT COUNT(*) AS `count` FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'schema_migrations'",
   );
   return Number(rows[0]?.count ?? 0) === 1;
 }
@@ -625,6 +698,13 @@ function assertSafeIdentifier(identifier: string, label: string): void {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
     throw new Error(`${label} contains an unsafe SQL identifier`);
   }
+}
+
+/** Bun SQL preserves server-provided label casing for some MySQL metadata
+ * queries. Normalize only result keys; values and strict assertions remain
+ * unchanged. Explicit aliases are still used in every owned query. */
+export function normalizeDatabaseRowKeys<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key.toLowerCase(), value]));
 }
 
 export async function recoverDirtyMigration(
@@ -684,33 +764,35 @@ async function verifyRequiredStructure(sql: SQL, dialect: DatabaseType, migratio
   const actualMigrationText = migrationText ?? await Bun.file(`${import.meta.dir}/sql/${dialect}/001-core.sql`).text();
   const tableRows =
     dialect === "postgres"
-      ? await sql.unsafe<{ table_name: string; engine?: string | null }[]>(
-          "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')",
+      ? await sql.unsafe<Record<string, unknown>[]>(
+          "SELECT table_name AS table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')",
         )
-      : await sql.unsafe<{ table_name: string; engine: string | null }[]>(
-          "SELECT table_name, engine FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')",
+      : await sql.unsafe<Record<string, unknown>[]>(
+          "SELECT table_name AS `table_name`, engine AS `engine` FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')",
         );
 
   const triggerQuery =
     dialect === "postgres"
-      ? `SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = current_schema() AND trigger_name IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})`
-      : `SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = DATABASE() AND trigger_name IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})`;
+      ? `SELECT trigger_name AS trigger_name FROM information_schema.triggers WHERE trigger_schema = current_schema() AND trigger_name IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})`
+      : `SELECT trigger_name AS trigger_name FROM information_schema.triggers WHERE trigger_schema = DATABASE() AND trigger_name IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})`;
 
-  const triggerRows = await sql.unsafe<{ trigger_name: string }[]>(triggerQuery);
+  const triggerRowsRaw = await sql.unsafe<Record<string, unknown>[]>(triggerQuery);
+  const triggerRows = triggerRowsRaw.map(normalizeDatabaseRowKeys);
 
   let missingFunctions: string[] = [];
   if (dialect === "postgres") {
     const functionQuery = `SELECT routine_name FROM information_schema.routines WHERE routine_schema = current_schema() AND routine_name IN (${REQUIRED_PG_FUNCTIONS.map((f) => `'${f}'`).join(",")})`;
-    const functionRows = await sql.unsafe<{ routine_name: string }[]>(functionQuery);
+    const functionRows = await sql.unsafe<Record<string, unknown>[]>(functionQuery);
     const foundFunctions = new Set(functionRows.map((row) => String(row.routine_name)));
     missingFunctions = REQUIRED_PG_FUNCTIONS.filter((func) => !foundFunctions.has(func));
   }
 
-  const tables = [...new Set(tableRows.map((row) => String(row.table_name)))];
+  const normalizedTableRows = tableRows.map(normalizeDatabaseRowKeys);
+  const tables = [...new Set(normalizedTableRows.map((row) => String(row.table_name)))];
   const triggers = [...new Set(triggerRows.map((row) => String(row.trigger_name)))];
   const tableEngines: Record<string, string | null> = {};
   if (dialect === "mysql") {
-    for (const row of tableRows) tableEngines[String(row.table_name)] = row.engine ? String(row.engine) : null;
+    for (const row of normalizedTableRows) tableEngines[String(row.table_name)] = row.engine ? String(row.engine) : null;
   }
 
   const missingTables = REQUIRED_TABLES.filter((table) => !tables.includes(table));
@@ -765,16 +847,16 @@ async function verifyRequiredStructure(sql: SQL, dialect: DatabaseType, migratio
   } else if (dialect === "mysql") {
     const triggerDetailsQuery = `
       SELECT
-        trigger_name,
-        event_manipulation as event,
-        action_timing as timing,
-        event_object_table as table_name,
-        action_statement
+        trigger_name AS trigger_name,
+        event_manipulation AS event,
+        action_timing AS timing,
+        event_object_table AS table_name,
+        action_statement AS action_statement
       FROM information_schema.triggers
       WHERE trigger_schema = DATABASE() AND trigger_name IN (${REQUIRED_TRIGGERS.map((t) => `'${t}'`).join(",")})
       ORDER BY trigger_name
     `;
-    const triggerDetails = await sql.unsafe<Array<Record<string, string>>>(triggerDetailsQuery);
+    const triggerDetails = (await sql.unsafe<Array<Record<string, unknown>>>(triggerDetailsQuery)).map(normalizeDatabaseRowKeys);
     const actions = expectedMySqlActions(actualMigrationText);
     for (const required of REQUIRED_TRIGGERS) {
       const trigger = triggerDetails.find((row) => String(row.trigger_name) === required);
@@ -877,12 +959,15 @@ export async function loadMigration(dialect: DatabaseType): Promise<MigrationDef
 }
 
 function blockedSemanticResults(prefix: "PG" | "MY", dialectName: string, reason: string): IntegrationTestResult[] {
+  const dialect = prefix === "PG" ? "postgres" : "mysql";
   return REQUIRED_SEMANTIC_PROOF_IDS.map((proofId) => ({
     id: `${prefix}-${proofId}`,
     name: `${dialectName} ${proofId}`,
-    status: "BLOCKED" as const,
-    evidence: ["BLOCKED before successful database connection; proof not executed", reason],
-    detail: reason,
+    status: registryNotApplicable(dialect, proofId) ? "NOT_APPLICABLE" as const : "BLOCKED" as const,
+    evidence: registryNotApplicable(dialect, proofId)
+      ? ["NOT_APPLICABLE by dialect proof registry", reason]
+      : ["BLOCKED before successful database connection; proof not executed", reason],
+    detail: registryNotApplicable(dialect, proofId) ? "NOT_APPLICABLE by dialect proof registry" : reason,
   }));
 }
 
@@ -902,13 +987,113 @@ export function blockedDialectResults(type: DatabaseType, reason: string): Integ
   ];
 }
 
+function registryNotApplicable(type: DatabaseType, proofId: string): boolean {
+  return (DIALECT_NOT_APPLICABLE[type] as readonly string[]).includes(proofId);
+}
+
+export function recordProofNotApplicable(
+  results: IntegrationTestResult[],
+  proofId: string,
+  prefix: string,
+  reason: string,
+): void {
+  results.push({
+    id: `${prefix}-${proofId}`,
+    name: `${prefix} ${proofId}`,
+    status: "NOT_APPLICABLE",
+    evidence: [`NOT_APPLICABLE=${reason}`],
+    detail: `NOT_APPLICABLE=${reason}`,
+  });
+}
+
+type ProofContractValidation = { valid: boolean; errors: string[] };
+
+/** Validate semantic result identity before any summary can be emitted. */
+export function validateProofContract(
+  dialect: DatabaseType,
+  results: readonly IntegrationTestResult[],
+): ProofContractValidation {
+  const prefix = dialect === "postgres" ? "PG" : "MY";
+  const expected = new Set(REQUIRED_SEMANTIC_PROOF_IDS.map((id) => `${prefix}-${id}`));
+  const seen = new Set<string>();
+  const errors: string[] = [];
+  for (const result of results) {
+    if (/^(PG|MY)-/.test(result.id)) {
+      if (!result.id.startsWith(`${prefix}-`)) {
+        errors.push(`unknown proof id ${result.id}`);
+        continue;
+      }
+      const suffix = result.id.slice(prefix.length + 1);
+      if (SUBSTRATE_PROOF_IDS.has(suffix)) continue;
+      if (!expected.has(result.id)) {
+        errors.push(`unknown proof id ${result.id}`);
+        continue;
+      }
+      if (seen.has(result.id)) errors.push(`duplicate proof id ${result.id}`);
+      seen.add(result.id);
+      const proofId = suffix as typeof REQUIRED_SEMANTIC_PROOF_IDS[number];
+      if (result.status === "NOT_APPLICABLE" && !registryNotApplicable(dialect, proofId)) {
+        errors.push(`invalid NOT_APPLICABLE status for ${result.id}`);
+      }
+      if (result.status === "PASS" && registryNotApplicable(dialect, proofId)) {
+        errors.push(`inapplicable proof cannot PASS: ${result.id}`);
+      }
+    }
+  }
+  for (const proofId of REQUIRED_SEMANTIC_PROOF_IDS) {
+    const id = `${prefix}-${proofId}`;
+    if (!seen.has(id)) errors.push(`missing required proof ${id}`);
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export function finalizeProofResults(
+  dialect: DatabaseType,
+  results: readonly IntegrationTestResult[],
+): IntegrationTestResult[] {
+  const prefix = dialect === "postgres" ? "PG" : "MY";
+  const validation = validateProofContract(dialect, results);
+  const errorsById = new Map<string, string[]>();
+  for (const error of validation.errors) {
+    const match = error.match(/(PG|MY)-[A-Z0-9-]+/);
+    if (match) errorsById.set(match[0], [...(errorsById.get(match[0]) ?? []), error]);
+  }
+  const finalized = results.filter((result, index, all) => {
+    if (!result.id.startsWith(`${prefix}-`)) return true;
+    const suffix = result.id.slice(prefix.length + 1);
+    if (SUBSTRATE_PROOF_IDS.has(suffix)) return true;
+    return all.findIndex((candidate) => candidate.id === result.id) === index;
+  }).map((result) => {
+    const errors = errorsById.get(result.id);
+    if (!errors || errors.length === 0) return result;
+    const detail = `${result.detail ?? result.evidence.join("|")}; contract=${errors.join(", ")}`;
+    return { ...result, status: "FAIL" as const, detail, evidence: [...result.evidence, ...errors], error: detail };
+  });
+  for (const proofId of REQUIRED_SEMANTIC_PROOF_IDS) {
+    const id = `${prefix}-${proofId}`;
+    if (!finalized.some((result) => result.id === id)) {
+      const contractError = errorsById.get(id)?.join(", ") ?? `missing required proof ${id}`;
+      finalized.push({
+        id,
+        name: `${prefix} ${proofId}`,
+        status: "FAIL",
+        evidence: [contractError],
+        detail: contractError,
+        error: contractError,
+      });
+    }
+  }
+  return finalized;
+}
+
 export function integrationSummary(
   dialect: DatabaseType,
   serverVersion: string,
   results: readonly IntegrationTestResult[],
 ): IntegrationSummary {
   const prefix = dialect === "postgres" ? "PG" : "MY";
-  const byId = new Map(results.map((result) => [result.id, result]));
+  const finalized = finalizeProofResults(dialect, results);
+  const byId = new Map(finalized.map((result) => [result.id, result]));
   return {
     dialect,
     server_version: serverVersion,
@@ -945,7 +1130,12 @@ type SemanticProofContext = {
   migration: MigrationDefinition;
   prefix: string;
   dialectName: string;
+  cleanupErrors: string[];
 };
+
+function recordCleanupError(ctx: SemanticProofContext, message: string): void {
+  ctx.cleanupErrors.push(message);
+}
 
 type TableSnapshot = {
   table: string;
@@ -1007,44 +1197,178 @@ async function captureMultipleSnapshots(sql: SQL, tables: string[], dialect: Dat
   return snapshots;
 }
 
-async function captureCatalogSnapshot(sql: SQL, dialect: DatabaseType, explicitSchema?: string): Promise<string> {
+async function captureCatalogSnapshot(sql: SQL, dialect: DatabaseType, explicitSchema = "public"): Promise<string> {
   if (dialect === "postgres") {
-    if (explicitSchema) {
-      assertSafeIdentifier(explicitSchema, "explicit schema");
-      const rows = await sql.unsafe<Record<string, unknown>[]>(`
-        SELECT 'table' AS object_kind, table_name AS object_name, '' AS object_definition
-        FROM information_schema.tables WHERE table_schema = '${explicitSchema}'
-        UNION ALL
-        SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
-        FROM information_schema.triggers WHERE trigger_schema = '${explicitSchema}'
-        UNION ALL
-        SELECT 'routine', routine_name, CONCAT(data_type, '|', routine_definition)
-        FROM information_schema.routines WHERE routine_schema = '${explicitSchema}'
-      `);
-      return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
-    } else {
-      const rows = await sql.unsafe<Record<string, unknown>[]>(`
-        SELECT 'table' AS object_kind, table_name AS object_name, '' AS object_definition
-        FROM information_schema.tables WHERE table_schema = current_schema()
-        UNION ALL
-        SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
-        FROM information_schema.triggers WHERE trigger_schema = current_schema()
-        UNION ALL
-        SELECT 'routine', routine_name, CONCAT(data_type, '|', routine_definition)
-        FROM information_schema.routines WHERE routine_schema = current_schema()
-      `);
-      return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
-    }
-  } else {
+    assertSafeIdentifier(explicitSchema, "explicit schema");
+    // Every row is deliberately reduced to the same three-field contract.
+    // The schema is an explicit literal, never current_schema()/search_path.
+    // pg_catalog definitions are stable on PostgreSQL 17 and include changes
+    // that information_schema omits (partial indexes, identity/generated
+    // columns, overloaded routines, ownership, and view definitions).
     const rows = await sql.unsafe<Record<string, unknown>[]>(`
-      SELECT 'table' AS object_kind, table_name AS object_name, engine AS object_definition
-      FROM information_schema.tables WHERE table_schema = DATABASE()
+      SELECT 'relation' AS object_kind,
+             format('%I.%I', n.nspname, c.relname) AS object_identity,
+             format('relkind=%s|persistence=%s|replident=%s', c.relkind, c.relpersistence, c.relreplident) AS object_definition
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = '${explicitSchema}' AND c.relkind IN ('r', 'p', 'f')
+
       UNION ALL
-      SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
-      FROM information_schema.triggers WHERE trigger_schema = DATABASE()
+      SELECT 'column',
+             format('%I.%I.%I', n.nspname, c.relname, a.attname),
+             format('ordinal=%s|type=%s|not_null=%s|default=%s|identity=%s|generated=%s|collation=%s',
+               a.attnum, format_type(a.atttypid, a.atttypmod), a.attnotnull,
+               coalesce(pg_get_expr(d.adbin, d.adrelid), ''), a.attidentity,
+               a.attgenerated, CASE WHEN coll.oid IS NULL THEN '' ELSE format('%I.%I', cn.nspname, coll.collname) END)
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      LEFT JOIN pg_collation coll ON coll.oid = a.attcollation AND a.attcollation <> 0
+      LEFT JOIN pg_namespace cn ON cn.oid = coll.collnamespace
+      WHERE n.nspname = '${explicitSchema}' AND c.relkind IN ('r', 'p', 'f')
+        AND a.attnum > 0 AND NOT a.attisdropped
+
+      UNION ALL
+      SELECT 'index',
+             format('%I.%I.%I', n.nspname, t.relname, i.relname),
+             format('unique=%s|primary=%s|valid=%s|ready=%s|definition=%s|predicate=%s',
+               x.indisunique, x.indisprimary, x.indisvalid, x.indisready,
+               pg_get_indexdef(x.indexrelid), coalesce(pg_get_expr(x.indpred, x.indrelid), ''))
+      FROM pg_index x
+      JOIN pg_class i ON i.oid = x.indexrelid
+      JOIN pg_class t ON t.oid = x.indrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = '${explicitSchema}'
+
+      UNION ALL
+      SELECT 'constraint',
+             format('%I.%I.%I', coalesce(n.nspname, dn.nspname), coalesce(t.relname, 'domain'), c.conname),
+             format('definition=%s|owner=%s|referenced=%s|validated=%s|type=%s',
+               pg_get_constraintdef(c.oid, true),
+               CASE WHEN t.oid IS NULL THEN '' ELSE format('%I.%I', n.nspname, t.relname) END,
+               CASE WHEN rt.oid IS NULL THEN '' ELSE format('%I.%I', rn.nspname, rt.relname) END, c.convalidated, c.contype)
+      FROM pg_constraint c
+      LEFT JOIN pg_class t ON t.oid = c.conrelid
+      LEFT JOIN pg_namespace n ON n.oid = t.relnamespace
+      LEFT JOIN pg_class rt ON rt.oid = c.confrelid
+      LEFT JOIN pg_namespace rn ON rn.oid = rt.relnamespace
+      LEFT JOIN pg_type dt ON dt.oid = c.contypid
+      LEFT JOIN pg_namespace dn ON dn.oid = dt.typnamespace
+      WHERE coalesce(n.nspname, dn.nspname) = '${explicitSchema}'
+        AND (t.oid IS NULL OR t.relkind IN ('r', 'p', 'f'))
+
+      UNION ALL
+      SELECT 'trigger',
+             format('%I.%I.%I', n.nspname, c.relname, t.tgname),
+             pg_get_triggerdef(t.oid, true)
+      FROM pg_trigger t
+      JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = '${explicitSchema}' AND NOT t.tgisinternal
+
+      UNION ALL
+      SELECT 'routine',
+             format('%I.%I(%s)', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)),
+             format('definition=%s|kind=%s|language=%s|result=%s|volatility=%s|strict=%s|security_definer=%s',
+               pg_get_functiondef(p.oid), p.prokind, l.lanname, pg_get_function_result(p.oid),
+               p.provolatile, p.proisstrict, p.prosecdef)
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      JOIN pg_language l ON l.oid = p.prolang
+      WHERE n.nspname = '${explicitSchema}' AND p.prokind IN ('f', 'p', 'w')
+
+      UNION ALL
+      SELECT 'sequence',
+             format('%I.%I', n.nspname, c.relname),
+             format('type=%s|start=%s|min=%s|max=%s|increment=%s|cache=%s|cycle=%s|owned_by=%s',
+               format_type(s.seqtypid, NULL), s.seqstart, s.seqmin, s.seqmax,
+               s.seqincrement, s.seqcache, s.seqcycle,
+               CASE WHEN oc.oid IS NULL OR oa.attnum IS NULL THEN '' ELSE format('%I.%I.%I', onsp.nspname, oc.relname, oa.attname) END)
+      FROM pg_sequence s
+      JOIN pg_class c ON c.oid = s.seqrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_depend dep ON dep.classid = 'pg_class'::regclass AND dep.objid = c.oid AND dep.deptype = 'a'
+      LEFT JOIN pg_class oc ON oc.oid = dep.refobjid
+      LEFT JOIN pg_namespace onsp ON onsp.oid = oc.relnamespace
+      LEFT JOIN pg_attribute oa ON oa.attrelid = oc.oid AND oa.attnum = dep.refobjsubid
+      WHERE n.nspname = '${explicitSchema}'
+
+      UNION ALL
+      SELECT 'domain',
+             format('%I.%I', n.nspname, t.typname),
+             format('base=%s|not_null=%s|default=%s|collation=%s', format_type(t.typbasetype, t.typtypmod),
+               t.typnotnull, coalesce(t.typdefault, ''), CASE WHEN coll.oid IS NULL THEN '' ELSE format('%I.%I', cn.nspname, coll.collname) END)
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      LEFT JOIN pg_collation coll ON coll.oid = t.typcollation AND t.typcollation <> 0
+      LEFT JOIN pg_namespace cn ON cn.oid = coll.collnamespace
+      WHERE n.nspname = '${explicitSchema}' AND t.typtype = 'd'
+
+      UNION ALL
+      SELECT 'enum', format('%I.%I', n.nspname, t.typname),
+             string_agg(format('%s:%s', e.enumsortorder, e.enumlabel), ',' ORDER BY e.enumsortorder)
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      JOIN pg_enum e ON e.enumtypid = t.oid
+      WHERE n.nspname = '${explicitSchema}' AND t.typtype = 'e'
+      GROUP BY n.nspname, t.typname
+
+      UNION ALL
+      SELECT 'range', format('%I.%I', n.nspname, t.typname),
+             format('subtype=%s|collation=%s|canonical=%s|subdiff=%s', format_type(r.rngsubtype, NULL),
+               CASE WHEN coll.oid IS NULL THEN '' ELSE format('%I.%I', cn.nspname, coll.collname) END,
+               CASE WHEN cf.oid IS NULL THEN '' ELSE format('%I.%I', cfn.nspname, cf.proname) END,
+               CASE WHEN df.oid IS NULL THEN '' ELSE format('%I.%I', dfn.nspname, df.proname) END)
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      JOIN pg_range r ON r.rngtypid = t.oid
+      LEFT JOIN pg_collation coll ON coll.oid = r.rngcollation AND r.rngcollation <> 0
+      LEFT JOIN pg_namespace cn ON cn.oid = coll.collnamespace
+      LEFT JOIN pg_proc cf ON cf.oid = r.rngcanonical
+      LEFT JOIN pg_namespace cfn ON cfn.oid = cf.pronamespace
+      LEFT JOIN pg_proc df ON df.oid = r.rngsubdiff
+      LEFT JOIN pg_namespace dfn ON dfn.oid = df.pronamespace
+      WHERE n.nspname = '${explicitSchema}' AND t.typtype = 'r'
+
+      UNION ALL
+      SELECT 'composite', format('%I.%I', n.nspname, t.typname),
+             coalesce((SELECT string_agg(format('%s:%s:%s', a.attnum, a.attname, format_type(a.atttypid, a.atttypmod)), ',' ORDER BY a.attnum)
+                       FROM pg_attribute a WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped), '')
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = '${explicitSchema}' AND t.typtype = 'c'
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_class row_type
+          WHERE row_type.reltype = t.oid AND row_type.relkind IN ('r', 'p', 'f', 'v', 'm')
+        )
+
+      UNION ALL
+      SELECT CASE WHEN c.relkind = 'm' THEN 'materialized_view' ELSE 'view' END,
+             format('%I.%I', n.nspname, c.relname), pg_get_viewdef(c.oid, true)
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = '${explicitSchema}' AND c.relkind IN ('v', 'm')
     `);
-    return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    const canonical = rows.map(canonicalizeRow).sort((a, b) => {
+      const left = [a.object_kind, a.object_identity, a.object_definition].map(String);
+      const right = [b.object_kind, b.object_identity, b.object_definition].map(String);
+      return left[0].localeCompare(right[0]) || left[1].localeCompare(right[1]) || left[2].localeCompare(right[2]);
+    });
+    return JSON.stringify(canonical);
   }
+  const rows = await sql.unsafe<Record<string, unknown>[]>(`
+    SELECT 'table' AS \`object_kind\`, table_name AS \`object_identity\`, engine AS \`object_definition\`
+    FROM information_schema.tables WHERE table_schema = DATABASE()
+    UNION ALL
+    SELECT 'trigger' AS \`object_kind\`, trigger_name AS \`object_identity\`, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement) AS \`object_definition\`
+    FROM information_schema.triggers WHERE trigger_schema = DATABASE()
+  `);
+  return JSON.stringify(rows.map(normalizeDatabaseRowKeys).map(canonicalizeRow).sort((a, b) => {
+    const left = [a.object_kind, a.object_identity, a.object_definition].map(String);
+    const right = [b.object_kind, b.object_identity, b.object_definition].map(String);
+    return left[0].localeCompare(right[0]) || left[1].localeCompare(right[1]) || left[2].localeCompare(right[2]);
+  }));
 }
 
 export class IdempotencyConflictError extends Error {
@@ -1084,7 +1408,7 @@ export function extractLockErrorCode(error: unknown, dialect: DatabaseType): { i
     // MySQL Bun errors expose documented numeric errno and symbolic code.
     const errno = String(err.errno ?? "");
     const code = String(err.code ?? "");
-    if (errno === "1205" || errno === "1213" || code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK") {
+    if (errno === "1205" || errno === "1213" || errno === "3572" || code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK" || code === "ER_LOCK_NOWAIT") {
       return { isLockError: true, code: errno || code };
     }
   }
@@ -1175,6 +1499,10 @@ function recordProofFail(
 async function runSemanticMatrix(ctx: SemanticProofContext): Promise<IntegrationTestResult[]> {
   const results: IntegrationTestResult[] = [];
   const { sql, prefix } = ctx;
+  // Bun's MySQL binder rejects even small BigInt parameters with
+  // ERR_OUT_OF_RANGE, while PostgreSQL accepts them. Keep the values and
+  // assertions exact; use a safe Number only for the small fixture amounts.
+  const smallMinorUnits = (value: bigint): number | bigint => ctx.dbConfig.type === "mysql" ? Number(value) : value;
 
   try {
     // Seed fixtures
@@ -1194,9 +1522,10 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       } else {
         const tableQuery =
           ctx.dbConfig.type === "postgres"
-            ? "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')"
-            : "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')";
-        const tables = await sql.unsafe<{ table_name: string }[]>(tableQuery);
+            ? "SELECT table_name AS table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')"
+            : "SELECT table_name AS `table_name` FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('schema_migrations', 'tenants', 'book_sets', 'journal_entries', 'postings', 'audit_log', 'idempotency_records')";
+        const tableRows = await sql.unsafe<Record<string, unknown>[]>(tableQuery);
+        const tables = tableRows.map(normalizeDatabaseRowKeys);
         if (tables.length !== 7) {
           recordProofFail(results, "MIG-001", prefix, `Missing required tables: found ${tables.length}/7`);
         } else {
@@ -1410,9 +1739,9 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
             await rollbackSql.unsafe("SET search_path TO public");
             if (rollbackSchema) await rollbackSql.unsafe(`DROP SCHEMA IF EXISTS "${rollbackSchema}" CASCADE`);
           } catch (error) {
-            recordProofFail(results, "CLEANUP-001", "PG", `rollback namespace cleanup failed: ${sanitizeError(error)}`);
+            recordCleanupError(ctx, `rollback namespace cleanup failed: ${sanitizeError(error)}`);
           }
-          try { await rollbackSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `rollback client cleanup failed: ${sanitizeError(error)}`); }
+          try { await rollbackSql.end({ timeout: 1000 }); } catch (error) { recordCleanupError(ctx, `rollback client cleanup failed: ${sanitizeError(error)}`); }
         }
       }
     }
@@ -1471,14 +1800,16 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
             if (testSchema1) await testSql.unsafe(`DROP SCHEMA IF EXISTS "${testSchema1}" CASCADE`);
             if (testSchema2) await testSql.unsafe(`DROP SCHEMA IF EXISTS "${testSchema2}" CASCADE`);
           } catch (error) {
-            recordProofFail(results, "CLEANUP-001", "PG", `schema scope test cleanup failed: ${sanitizeError(error)}`);
+            recordCleanupError(ctx, `schema scope test cleanup failed: ${sanitizeError(error)}`);
           }
-          try { await testSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `scope test client cleanup failed: ${sanitizeError(error)}`); }
+          try { await testSql.end({ timeout: 1000 }); } catch (error) { recordCleanupError(ctx, `scope test client cleanup failed: ${sanitizeError(error)}`); }
         }
       }
     }
 
-    // SCOPE-ISOLATION-002: PostgreSQL catalog snapshot includes tables, triggers, and functions correctly
+    // SCOPE-ISOLATION-002: every representative PostgreSQL catalog mutation
+    // changes the explicit-schema snapshot. This catches snapshots that only
+    // count tables or only read information_schema names.
     if (ctx.dbConfig.type === "postgres") {
       let testSql: SQL | null = null;
       let testSchema = "";
@@ -1488,34 +1819,44 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
         testSql = createBunSqlClient(ctx.dbConfig);
         await testSql.connect();
         await testSql.unsafe(`CREATE SCHEMA "${testSchema}"`);
+        const snapshots: string[] = [await captureCatalogSnapshot(testSql, "postgres", testSchema)];
+        const mutate = async (label: string, statement: string) => {
+          await testSql!.unsafe(statement);
+          const next = await captureCatalogSnapshot(testSql!, "postgres", testSchema);
+          if (next === snapshots[snapshots.length - 1]) throw new Error(`${label} did not affect catalog snapshot`);
+          snapshots.push(next);
+        };
 
-        // Create diverse catalog objects in the test schema
-        await testSql.unsafe(`
-          SET search_path TO "${testSchema}";
-          CREATE TABLE test_table1 (id TEXT PRIMARY KEY);
-          CREATE TABLE test_table2 (name TEXT);
-          CREATE FUNCTION test_func1() RETURNS TRIGGER AS $$BEGIN RETURN NULL; END;$$ LANGUAGE plpgsql;
-          CREATE TRIGGER test_trigger1 BEFORE INSERT ON test_table1 FOR EACH ROW EXECUTE FUNCTION test_func1();
-        `);
+        await mutate("table", `CREATE TABLE "${testSchema}".catalog_table (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name text COLLATE "C" DEFAULT 'new')`);
+        await mutate("column", `ALTER TABLE "${testSchema}".catalog_table ADD COLUMN amount numeric NOT NULL DEFAULT 0`);
+        await mutate("index", `CREATE UNIQUE INDEX catalog_table_name_idx ON "${testSchema}".catalog_table (name) WHERE amount >= 0`);
+        await mutate("constraint", `ALTER TABLE "${testSchema}".catalog_table ADD CONSTRAINT catalog_amount_check CHECK (amount >= 0)`);
+        await mutate("routine", `CREATE FUNCTION "${testSchema}".catalog_fn(value integer) RETURNS integer LANGUAGE SQL IMMUTABLE AS $$ SELECT value + 1 $$`);
+        await mutate("overloaded routine", `CREATE FUNCTION "${testSchema}".catalog_fn(value text) RETURNS text LANGUAGE SQL IMMUTABLE AS $$ SELECT value || 'x' $$`);
+        await mutate("trigger routine", `CREATE FUNCTION "${testSchema}".catalog_trigger_fn() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END;$$`);
+        await mutate("trigger", `CREATE TRIGGER catalog_table_trigger BEFORE INSERT ON "${testSchema}".catalog_table FOR EACH ROW EXECUTE FUNCTION "${testSchema}".catalog_trigger_fn()`);
+        await mutate("sequence", `CREATE SEQUENCE "${testSchema}".catalog_sequence AS bigint START WITH 10 INCREMENT BY 2 MINVALUE 1 MAXVALUE 100 CACHE 3 CYCLE OWNED BY "${testSchema}".catalog_table.amount`);
+        await mutate("domain", `CREATE DOMAIN "${testSchema}".catalog_domain AS text NOT NULL DEFAULT 'domain-default'`);
+        await mutate("enum", `CREATE TYPE "${testSchema}".catalog_enum AS ENUM ('draft', 'posted')`);
+        await mutate("range", `CREATE TYPE "${testSchema}".catalog_range AS RANGE (subtype = numeric)`);
+        await mutate("composite", `CREATE TYPE "${testSchema}".catalog_composite AS (code text, amount numeric)`);
+        await mutate("view", `CREATE VIEW "${testSchema}".catalog_view AS SELECT id, name FROM "${testSchema}".catalog_table`);
+        await mutate("materialized view", `CREATE MATERIALIZED VIEW "${testSchema}".catalog_materialized AS SELECT count(*) AS count FROM "${testSchema}".catalog_table`);
 
-        // Capture snapshot with explicit schema
-        const snapshot = await captureCatalogSnapshot(testSql, "postgres", testSchema);
-        const snapshotObj = JSON.parse(snapshot);
-
-        // Verify all objects are captured
-        const hasTable1 = snapshotObj.some((obj: any) => obj.object_kind === "table" && obj.object_name === "test_table1");
-        const hasTable2 = snapshotObj.some((obj: any) => obj.object_kind === "table" && obj.object_name === "test_table2");
-        const hasFunc = snapshotObj.some((obj: any) => obj.object_kind === "routine" && obj.object_name === "test_func1");
-        const hasTrigger = snapshotObj.some((obj: any) => obj.object_kind === "trigger" && obj.object_name === "test_trigger1");
-
-        if (!hasTable1 || !hasTable2 || !hasFunc || !hasTrigger) {
-          recordProofFail(results, "SCOPE-ISOLATION-002", "PG", `Missing catalog objects: table1=${hasTable1}, table2=${hasTable2}, func=${hasFunc}, trigger=${hasTrigger}`);
+        const finalObjects = JSON.parse(snapshots[snapshots.length - 1]) as Array<Record<string, unknown>>;
+        const kinds = new Set(finalObjects.map((object) => object.object_kind));
+        const requiredKinds = ["relation", "column", "index", "constraint", "trigger", "routine", "sequence", "domain", "enum", "range", "composite", "view", "materialized_view"];
+        const missingKinds = requiredKinds.filter((kind) => !kinds.has(kind));
+        if (missingKinds.length > 0) {
+          recordProofFail(results, "SCOPE-ISOLATION-002", "PG", `catalog snapshot missing object kinds: ${missingKinds.join(",")}`);
         } else {
           recordProofPass(results, "SCOPE-ISOLATION-002", "PG", [
-            "catalog snapshot captures tables correctly",
-            "catalog snapshot captures functions correctly",
-            "catalog snapshot captures triggers correctly",
-            "all object types sorted deterministically",
+            `mutations=${snapshots.length - 1}`,
+            "every table/column/index/constraint/trigger/routine/sequence/type/view mutation changed the snapshot",
+            "overloaded routines are keyed by identity arguments",
+            "definitions, flags, predicates, ownership, and parameters are included",
+            "fresh explicit schema snapshot was []",
+            "deterministic object_kind/object_identity/object_definition ordering",
           ]);
         }
       } catch (error) {
@@ -1526,9 +1867,9 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
             await testSql.unsafe("SET search_path TO public");
             if (testSchema) await testSql.unsafe(`DROP SCHEMA IF EXISTS "${testSchema}" CASCADE`);
           } catch (error) {
-            recordProofFail(results, "CLEANUP-001", "PG", `scope2 test cleanup failed: ${sanitizeError(error)}`);
+            recordCleanupError(ctx, `scope2 test cleanup failed: ${sanitizeError(error)}`);
           }
-          try { await testSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `scope2 test client cleanup failed: ${sanitizeError(error)}`); }
+          try { await testSql.end({ timeout: 1000 }); } catch (error) { recordCleanupError(ctx, `scope2 test client cleanup failed: ${sanitizeError(error)}`); }
         }
       }
     }
@@ -1558,10 +1899,11 @@ INVALID SQL HERE TO FORCE FAILURE;
         }
 
         // Check if applying marker persists
-        const markerCount = await sql<{ count: number }[]>`
-          SELECT COUNT(*) as count FROM schema_migrations WHERE logical_id = ${'__applying_' + testMigrationId}
+        const markerCountRaw = await sql<Record<string, unknown>[]>`
+          SELECT COUNT(*) AS \`count\` FROM schema_migrations WHERE logical_id = ${'__applying_' + testMigrationId}
         `;
-        markerExists = markerCount[0]?.count === 1;
+        const markerCount = markerCountRaw.map(normalizeDatabaseRowKeys);
+        markerExists = Number(markerCount[0]?.count ?? 0) === 1;
 
         // Second attempt: should detect dirty state
         try {
@@ -1590,9 +1932,10 @@ INVALID SQL HERE TO FORCE FAILURE;
           ]);
           await recoverDirtyMigration(sql, testMigrationId, ["test_dirty_temp"]);
           const recoveredMarker = await getMigrationApplyingMarker(sql, testMigrationId);
-          const recoveredTable = await sql<{ count: bigint | number }[]>`
-            SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ${"test_dirty_temp"}
+          const recoveredTableRaw = await sql<Record<string, unknown>[]>`
+            SELECT COUNT(*) AS \`count\` FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ${"test_dirty_temp"}
           `;
+          const recoveredTable = recoveredTableRaw.map(normalizeDatabaseRowKeys);
           if (recoveredMarker || Number(recoveredTable[0]?.count ?? 0) !== 0) {
             recordProofFail(results, "MIG-DIRTY-RECOVERY", "MY", "Explicit recovery left marker or partial object behind");
           } else {
@@ -1649,7 +1992,7 @@ INVALID SQL HERE TO FORCE FAILURE;
         // Try to post to it as if it were in book-a
         await sql`
           INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units)
-          VALUES (${'t-a'}, ${'book-a'}, ${'cross-entry'}, ${1}, ${100n})
+          VALUES (${'t-a'}, ${'book-a'}, ${'cross-entry'}, ${1}, ${smallMinorUnits(100n)})
         `;
       } catch (error) {
         if (String(error).includes("FOREIGN") || String(error).includes("foreign")) {
@@ -1680,11 +2023,11 @@ INVALID SQL HERE TO FORCE FAILURE;
         `;
         await tx`
           INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units)
-          VALUES (${'t-a'}, ${'book-a'}, ${'balanced-entry'}, ${1}, ${100n})
+          VALUES (${'t-a'}, ${'book-a'}, ${'balanced-entry'}, ${1}, ${smallMinorUnits(100n)})
         `;
         await tx`
           INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units)
-          VALUES (${'t-a'}, ${'book-a'}, ${'balanced-entry'}, ${2}, ${100n})
+          VALUES (${'t-a'}, ${'book-a'}, ${'balanced-entry'}, ${2}, ${smallMinorUnits(100n)})
         `;
         await tx`
           UPDATE journal_entries
@@ -1737,11 +2080,11 @@ INVALID SQL HERE TO FORCE FAILURE;
           `;
           await tx`
             INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units)
-            VALUES (${'t-a'}, ${'book-a'}, ${'imbalanced-entry'}, ${1}, ${99n})
+            VALUES (${'t-a'}, ${'book-a'}, ${'imbalanced-entry'}, ${1}, ${smallMinorUnits(99n)})
           `;
           await tx`
             INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units)
-            VALUES (${'t-a'}, ${'book-a'}, ${'imbalanced-entry'}, ${2}, ${98n})
+            VALUES (${'t-a'}, ${'book-a'}, ${'imbalanced-entry'}, ${2}, ${smallMinorUnits(98n)})
           `;
           await tx`
             UPDATE journal_entries
@@ -1956,7 +2299,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       try {
         await sql`
           UPDATE postings
-          SET debit_minor_units = ${200n}
+          SET debit_minor_units = ${smallMinorUnits(200n)}
           WHERE tenant_id = ${'t-a'} AND book_set_id = ${'book-a'} AND journal_entry_id = ${'balanced-entry'} AND line_no = ${1}
         `;
       } catch (error) {
@@ -2074,11 +2417,11 @@ INVALID SQL HERE TO FORCE FAILURE;
         `;
         await sql`
           INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units)
-          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${1}, ${1n})
+          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${1}, ${smallMinorUnits(1n)})
         `;
         await sql`
           INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units)
-          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${2}, ${1n})
+          VALUES (${'t-a'}, ${'book-a'}, ${'posted-del-test'}, ${2}, ${smallMinorUnits(1n)})
         `;
         await sql`
           UPDATE journal_entries SET status = ${'POSTED'}
@@ -2266,28 +2609,28 @@ INVALID SQL HERE TO FORCE FAILURE;
         try {
           await connA.unsafe("ROLLBACK");
         } catch (error) {
-          recordProofFail(results, "CLEANUP-001", prefix, `connection A rollback failed: ${sanitizeError(error)}`);
+          recordCleanupError(ctx, `connection A rollback failed: ${sanitizeError(error)}`);
         }
       }
       if (bInTransaction && connB) {
         try {
           await connB.unsafe("ROLLBACK");
         } catch (error) {
-          recordProofFail(results, "CLEANUP-001", prefix, `connection B rollback failed: ${sanitizeError(error)}`);
+          recordCleanupError(ctx, `connection B rollback failed: ${sanitizeError(error)}`);
         }
       }
       if (connA) {
         try {
           await connA.release();
         } catch (error) {
-          recordProofFail(results, "CLEANUP-001", prefix, `connection A release failed: ${sanitizeError(error)}`);
+          recordCleanupError(ctx, `connection A release failed: ${sanitizeError(error)}`);
         }
       }
       if (connB) {
         try {
           await connB.release();
         } catch (error) {
-          recordProofFail(results, "CLEANUP-001", prefix, `connection B release failed: ${sanitizeError(error)}`);
+          recordCleanupError(ctx, `connection B release failed: ${sanitizeError(error)}`);
         }
       }
     }
@@ -2584,6 +2927,11 @@ INVALID SQL HERE TO FORCE FAILURE;
     // BIGINT-001: insert/query 9007199254740993n with `{ bigint: true }`; assert raw typeof === 'bigint' and exact value, keep DRAFT/unbalanced
     try {
       const testValue = 9007199254740993n;
+      // Bun's MySQL binder cannot encode BigInt parameters, but the server
+      // and result decoder do support exact BIGINT values. Use the decimal
+      // representation only at the parameter boundary for MySQL; PostgreSQL
+      // receives the actual BigInt parameter.
+      const insertValue: bigint | string = ctx.dbConfig.type === "mysql" ? testValue.toString() : testValue;
 
       // Create DRAFT parent entry first (required for FK)
       await sql`
@@ -2594,7 +2942,7 @@ INVALID SQL HERE TO FORCE FAILURE;
       // Insert single BigInt posting (unbalanced: only debit, no credit)
       await sql`
         INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units)
-        VALUES (${'t-b'}, ${'book-z'}, ${'bigint-test'}, ${1}, ${testValue})
+          VALUES (${'t-b'}, ${'book-z'}, ${'bigint-test'}, ${1}, ${insertValue})
       `;
 
       // Query and assert exact type and value
@@ -2638,18 +2986,16 @@ INVALID SQL HERE TO FORCE FAILURE;
       recordProofFail(results, "BIGINT-001", prefix, sanitizeError(error));
     }
 
-    const notApplicable: Record<string, string> = ctx.dbConfig.type === "postgres"
-      ? {
-          "MIG-DIRTY-MARKER": "MySQL-only dirty-marker proof; PostgreSQL has transactional rollback instead",
-          "MIG-DIRTY-RECOVERY": "MySQL-only explicit recovery proof",
-        }
-      : {
-          "MIG-DDL-ROLLBACK": "PostgreSQL-only fresh-namespace DDL rollback proof",
-          "DEL-001": "PostgreSQL-specific AB001 DELETE guard proof",
-        };
     for (const proofId of REQUIRED_SEMANTIC_PROOF_IDS) {
-      if (!results.some((result) => result.id === `${prefix}-${proofId}`)) {
-        recordProofPass(results, proofId, prefix, [`NOT_APPLICABLE=${notApplicable[proofId] ?? "covered by lifecycle summary"}`]);
+      if (!results.some((result) => result.id === `${prefix}-${proofId}`) && registryNotApplicable(ctx.dbConfig.type, proofId)) {
+        recordProofNotApplicable(
+          results,
+          proofId,
+          prefix,
+          ctx.dbConfig.type === "postgres"
+            ? "PostgreSQL uses transactional DDL rollback; MySQL dirty-marker proofs do not apply"
+            : "MySQL uses dirty-marker recovery; PostgreSQL rollback and schema DELETE guard do not apply",
+        );
       }
     }
   } catch (error) {
@@ -2667,13 +3013,17 @@ INVALID SQL HERE TO FORCE FAILURE;
   return results;
 }
 
-export async function runDatabaseIntegrationTests(dbConfig: DatabaseConfig): Promise<IntegrationTestResult[]> {
+export async function runDatabaseIntegrationTests(
+  dbConfig: DatabaseConfig,
+  cleanup?: () => Promise<void>,
+): Promise<IntegrationTestResult[]> {
   const prefix = dbConfig.type === "postgres" ? "PG" : "MY";
   const dialectName = dbConfig.type === "postgres" ? "PostgreSQL" : "MySQL";
   const results: IntegrationTestResult[] = [];
   let sql: SQL | null = null;
   let connected = false;
   let serverVersion = "unavailable-before-connection";
+  const cleanupErrors: string[] = [];
   try {
     sql = createBunSqlClient(dbConfig);
     try {
@@ -2718,6 +3068,7 @@ export async function runDatabaseIntegrationTests(dbConfig: DatabaseConfig): Pro
       migration,
       prefix,
       dialectName,
+      cleanupErrors,
     };
     results.push(...(await runSemanticMatrix(ctx)));
   } catch (error) {
@@ -2744,17 +3095,49 @@ export async function runDatabaseIntegrationTests(dbConfig: DatabaseConfig): Pro
       try {
         await sql.end({ timeout: 1000 });
       } catch (error) {
+        cleanupErrors.push(`main SQL client cleanup failed: ${sanitizeError(error)}`);
+      }
+    }
+    if (cleanup) {
+      try {
+        await cleanup();
+      } catch (error) {
+        cleanupErrors.push(`task-owned Docker cleanup failed: ${sanitizeError(error)}`);
+      }
+    } else if (connected) {
+      cleanupErrors.push("task-owned Docker cleanup callback was not supplied");
+    }
+
+    // Remove any nested/legacy entries and emit exactly one lifecycle proof
+    // after every SQL client and every task-owned Docker resource has finished.
+    // A pre-connection BLOCKED run has no owned resource to clean and retains
+    // its BLOCKED lifecycle result; it must never be upgraded to PASS.
+    if (cleanup || connected) {
+      for (let index = results.length - 1; index >= 0; index -= 1) {
+        if (results[index].id === `${prefix}-CLEANUP-001`) results.splice(index, 1);
+      }
+      if (cleanupErrors.length === 0 && cleanup) {
         results.push({
           id: `${prefix}-CLEANUP-001`,
-          name: `${dialectName} Bun SQL cleanup`,
+          name: `${dialectName} Gate0 lifecycle cleanup`,
+          status: "PASS",
+          evidence: ["all nested SQL clients closed", "task-owned container/network removed", "container/network absence verified"],
+          detail: "all nested SQL clients closed; task-owned container/network removed; absence verified",
+        });
+      } else {
+        const detail = cleanupErrors.join("; ") || "cleanup did not run";
+        results.push({
+          id: `${prefix}-CLEANUP-001`,
+          name: `${dialectName} Gate0 lifecycle cleanup`,
           status: "FAIL",
-          evidence: [sanitizeError(error)],
-          detail: sanitizeError(error),
-          error: sanitizeError(error),
+          evidence: [detail],
+          detail,
+          error: detail,
         });
       }
     }
   }
-  emitIntegrationSummary(dbConfig.type, serverVersion, results);
-  return results;
+  const finalized = finalizeProofResults(dbConfig.type, results);
+  emitIntegrationSummary(dbConfig.type, serverVersion, finalized);
+  return finalized;
 }
