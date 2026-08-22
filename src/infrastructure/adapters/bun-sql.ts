@@ -61,9 +61,32 @@ function rawErrorDetails(error: unknown): { code?: string; message: string } {
 
 function safeCause(error: unknown): string {
   const details = rawErrorDetails(error);
-  return `${details.code ? `${details.code}: ` : ""}${details.message}`
-    .replace(/(postgres(?:ql)?:\/\/[^\s/]+:)[^@\s]+@/gi, "$1[REDACTED]@")
-    .replace(/(mysql(?:2)?:\/\/[^\s/]+:)[^@\s]+@/gi, "$1[REDACTED]@");
+  const message = details.message.toLowerCase();
+  const category = message.includes("ssl") || message.includes("tls") || message.includes("certificate") || message.includes("private key")
+    ? "tls"
+    : message.includes("password") || message.includes("authentication") || message.includes("access denied")
+      ? "authentication"
+      : message.includes("timeout") || message.includes("timed out")
+        ? "timeout"
+        : message.includes("permission") || message.includes("authorized")
+          ? "permission"
+          : message.includes("connect") || message.includes("connection")
+            ? "connection"
+            : "query";
+  // Never retain raw driver text: it may contain URLs, usernames, passwords,
+  // or certificate/key material. Code plus category is the safe cause.
+  const safeCodes = new Set([
+    "ECONNREFUSED",
+    "ETIMEDOUT",
+    "28P01",
+    "42P01",
+    "42501",
+    "57014",
+    "ER_ACCESS_DENIED_ERROR",
+    "ER_NO_SUCH_TABLE",
+  ]);
+  const code = details.code && safeCodes.has(details.code.toUpperCase()) ? details.code.toUpperCase() : "UNKNOWN";
+  return `${code}:${category}`;
 }
 
 export function normalizeBunSqlError(error: unknown, dialect: Dialect): DomainError {
@@ -86,6 +109,13 @@ export function normalizeBunSqlError(error: unknown, dialect: Dialect): DomainEr
 
   if (message.includes("econnrefused") || message.includes("connection refused") || code === "ECONNREFUSED") {
     return new DomainError("DATABASE_CONNECTION_FAILED", `${dialect} database connection failed`, {
+      dialect,
+      cause: safeCause(error),
+    });
+  }
+
+  if (message.includes("ssl") || message.includes("tls") || message.includes("certificate") || message.includes("private key")) {
+    return new DomainError(dialect === "mysql" ? "MYSQL_SSL_ERROR" : "POSTGRES_TLS_ERROR", `${dialect} database TLS negotiation failed`, {
       dialect,
       cause: safeCause(error),
     });

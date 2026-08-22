@@ -458,6 +458,7 @@ export async function startDatabaseContainer(
   let networkCreated = false;
   let containerStarted = false;
   let startupSucceeded = false;
+  let startupFailure: Error | null = null;
 
   try {
     preflightDatabaseImage(image, secrets, runDocker);
@@ -583,13 +584,21 @@ export async function startDatabaseContainer(
     startupSucceeded = true;
     return started;
   } catch (error) {
-    if (error instanceof IntegrationBlockedError) throw error;
-    throw new Error(sanitizeError(error, secrets));
+    startupFailure = error instanceof IntegrationBlockedError
+      ? error
+      : new Error(sanitizeError(error, secrets));
   } finally {
     if (!startupSucceeded) {
-      await cleanupResource(containerName, networkName, networkCreated, containerStarted, runDocker)();
+      try {
+        await cleanupResource(containerName, networkName, networkCreated, containerStarted, runDocker)();
+      } catch (cleanupError) {
+        const original = startupFailure?.message ?? "database container startup failed";
+        throw new Error(`${original}; cleanup failed: ${sanitizeError(cleanupError)}`);
+      }
     }
   }
+  if (startupFailure) throw startupFailure;
+  throw new Error("database container startup did not complete");
 }
 
 export function startPostgresContainer(_uniqueSuffix: string): Promise<{ config: DatabaseConfig; cleanup: () => Promise<void> }> {
