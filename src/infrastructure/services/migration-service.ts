@@ -297,6 +297,15 @@ export class MigrationService {
       async (session: MigrationSession) => {
         await this.ensureMigrationTableOnSession(session);
 
+        // Preflight: fail if ANY migration is APPLYING or DIRTY (requires recovery first)
+        const blockingMigration = await session.executeSingle(
+          "SELECT id, status FROM schema_migrations WHERE status IN ('APPLYING', 'DIRTY') LIMIT 1",
+        );
+
+        if (blockingMigration) {
+          throw new DirtyMigrationError(blockingMigration.id as string);
+        }
+
         for (const migration of migrations) {
           // Check if already applied
           const existing = await session.executeSingle(

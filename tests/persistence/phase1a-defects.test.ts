@@ -15,7 +15,7 @@ import { MigrationService } from "../../src/infrastructure/services/migration-se
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
-import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp } from "../../src/core/types.ts";
+import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp, DirtyMigrationError } from "../../src/core/types.ts";
 
 describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
   let db: Database;
@@ -390,41 +390,47 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       }
     });
 
-    it("should detect DIRTY state via re-applying the same migration", async () => {
+    it("should block subsequent migrations while DIRTY marker is present", async () => {
       const migSvc = new MigrationService(db, "sqlite");
 
       // First migration fails
       try {
         await migSvc.migrate([
           {
-            id: "test-bad-retry",
+            id: "test-bad-1",
             sql: `
-              CREATE TABLE bad_retry (id TEXT);
-              CREATE TABLE bad_retry (id TEXT);
+              CREATE TABLE bad1 (id TEXT);
+              CREATE TABLE bad1 (id TEXT);
             `,
           },
         ]);
-      } catch {
-        // Expected
+      } catch (error) {
+        // Expected: migration failed
+        expect(error).toBeDefined();
       }
 
-      // Try to re-apply the same migration; should fail due to DIRTY state
+      // Try to apply a distinct migration; should be blocked by preflight
       try {
         await migSvc.migrate([
           {
-            id: "test-bad-retry",
-            sql: `
-              CREATE TABLE bad_retry (id TEXT);
-              CREATE TABLE bad_retry (id TEXT);
-            `,
+            id: "test-good-1",
+            sql: "CREATE TABLE good1 (id TEXT PRIMARY KEY)",
           },
         ]);
-        throw new Error("DEFECT: Should have blocked re-apply of DIRTY migration");
+        throw new Error("DEFECT: Should have blocked second migration while DIRTY exists");
       } catch (error) {
-        // Expected: should fail due to DIRTY state
-        if ((error as any).message.includes("DEFECT:")) throw error;
-        expect((error as any).code).toBe("DIRTY_MIGRATION");
+        if (error instanceof Error && error.message.includes("DEFECT:")) throw error;
+        // Expected: DirtyMigrationError from preflight check
+        expect(error).toBeInstanceOf(DirtyMigrationError);
+        const err = error as DirtyMigrationError;
+        expect(err.code).toBe("DIRTY_MIGRATION");
       }
+
+      // Verify good1 was never created in schema
+      const good1Exists = await db.querySingle(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='good1'"
+      );
+      expect(good1Exists).toBeFalsy();
     });
   });
 
