@@ -253,8 +253,7 @@ export class SqliteAdapter implements Database {
 
   async close(): Promise<void> {
     // Release all held locks
-    for (const lockKey of this.heldLocks) {
-      const lockName = lockKey.split(':')[1];
+    for (const [lockName] of this.heldLocks) {
       await this.releaseAdvisoryLock(lockName);
     }
     this.db.close();

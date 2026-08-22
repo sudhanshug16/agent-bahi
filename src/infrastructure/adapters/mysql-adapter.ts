@@ -3,35 +3,46 @@ import type { MysqlConfig } from "../config/database.ts";
 import { DomainError } from "../../core/types.ts";
 
 /**
- * MySQL Transaction using Bun.sql native adapter.
+ * MySQL Transaction using Bun.sql transaction callback (pinned connection).
+ * When created via UnitOfWork.begin(), this txSql is already in a transaction.
+ * When created via beginTransaction(), this is a pooled connection and caller must manage BEGIN/COMMIT.
  */
 class MysqlTransaction implements Transaction {
   private active = true;
+  private isFromBeginCallback: boolean;
 
-  constructor(private db: any) {
-    // Transaction started by acquireTransaction
+  constructor(private txSql: any, isFromBeginCallback: boolean = true) {
+    // isFromBeginCallback=true: Bun manages BEGIN/COMMIT
+    // isFromBeginCallback=false: we must manage BEGIN/COMMIT (legacy beginTransaction path)
+    this.isFromBeginCallback = isFromBeginCallback;
   }
 
   async commit(): Promise<void> {
     if (!this.active) throw new Error("Transaction not active");
     this.active = false;
-    await this.db.query("COMMIT");
+    // Only call COMMIT if we manually started the transaction
+    if (!this.isFromBeginCallback) {
+      await this.txSql.query("COMMIT");
+    }
   }
 
   async rollback(): Promise<void> {
     if (!this.active) throw new Error("Transaction not active");
     this.active = false;
-    try {
-      await this.db.query("ROLLBACK");
-    } catch {
-      // Already rolled back
+    // Only call ROLLBACK if we manually started the transaction
+    if (!this.isFromBeginCallback) {
+      try {
+        await this.txSql.query("ROLLBACK");
+      } catch {
+        // Already rolled back
+      }
     }
   }
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
     if (!this.active) throw new Error("Transaction not active");
 
-    const result = await this.db.query(sql, params || []);
+    const result = await this.txSql.query(sql, params || []);
     return {
       rows: Array.isArray(result) ? result : result?.rows || [],
       rowCount: (result?.length || result?.rows?.length || 0) as number,
@@ -41,17 +52,38 @@ class MysqlTransaction implements Transaction {
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
     if (!this.active) throw new Error("Transaction not active");
 
-    const result = await this.db.query(sql, params || []);
+    const result = await this.txSql.query(sql, params || []);
     return (Array.isArray(result) ? result[0] : result?.rows?.[0]) as Record<string, unknown> | undefined;
   }
 
   async executeRaw(sql: string): Promise<void> {
     if (!this.active) throw new Error("Transaction not active");
-    await this.db.query(sql);
+    await this.txSql.query(sql);
   }
 
   isActive(): boolean {
     return this.active;
+  }
+}
+
+/**
+ * MySQL UnitOfWork implementation.
+ * Uses Bun's .begin() callback to pin transaction to one reserved connection.
+ */
+class MysqlUnitOfWork implements UnitOfWork {
+  constructor(private db: any) {} // Bun SQL pool object
+
+  async execute<T>(
+    callback: (tx: Transaction) => Promise<T>,
+    config?: TransactionConfig,
+  ): Promise<T> {
+    // Bun.db.begin() pins txSql to one reserved connection for entire callback
+    // Auto-commits on success, auto-rollbacks on error
+    // No manual BEGIN/COMMIT needed
+    return this.db.begin(config, async (txSql: any) => {
+      const tx = new MysqlTransaction(txSql, true); // true = Bun manages BEGIN/COMMIT
+      return callback(tx);
+    });
   }
 }
 
@@ -141,7 +173,11 @@ export class MysqlAdapter implements Database {
 
     await this.db.query("START TRANSACTION");
 
-    return new MysqlTransaction(this.db);
+    return new MysqlTransaction(this.db, false); // false = caller manages BEGIN/COMMIT
+  }
+
+  unitOfWork(config?: TransactionConfig): UnitOfWork {
+    return new MysqlUnitOfWork(this.db);
   }
 
   async isConnected(): Promise<boolean> {
