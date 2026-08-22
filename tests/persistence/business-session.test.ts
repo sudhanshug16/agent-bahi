@@ -7,6 +7,7 @@ import { DatabaseControlService } from "../../src/infrastructure/services/databa
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
+import { V2_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 import { DomainError } from "../../src/core/types.ts";
 
 describe("BusinessSession Compatibility Fence (V1)", () => {
@@ -32,7 +33,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     ]);
 
     // Initialize database_control row via migration lease
-    const controlService = new DatabaseControlService(db, "sqlite");
+    const controlService = new DatabaseControlService(db, "sqlite", V2_SCHEMA_MANIFEST);
     await db.withMigrationLease(async (session) => {
       return await controlService.initialize(
         {
@@ -45,7 +46,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     });
 
     // Create session runner (reader protocol 1, writer protocol 1)
-    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
   });
 
   afterEach(async () => {
@@ -245,8 +246,8 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
   describe("Protocol Compatibility", () => {
     it("should check reader protocol compatibility", async () => {
       // Create session runner with protocol 999 that doesn't match DB defaults
-      const controlService = new DatabaseControlService(db, "sqlite");
-      const incompatibleRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 999, 1);
+      const controlService = new DatabaseControlService(db, "sqlite", V2_SCHEMA_MANIFEST);
+      const incompatibleRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 999, 1, V2_SCHEMA_MANIFEST);
 
       try {
         await incompatibleRunner.withBusinessSession("read", async (session) => {
@@ -260,8 +261,8 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
 
     it("should check writer protocol compatibility", async () => {
       // Create session runner with protocol 999 that doesn't match DB defaults
-      const controlService = new DatabaseControlService(db, "sqlite");
-      const incompatibleRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 999);
+      const controlService = new DatabaseControlService(db, "sqlite", V2_SCHEMA_MANIFEST);
+      const incompatibleRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 999, V2_SCHEMA_MANIFEST);
 
       try {
         await incompatibleRunner.withBusinessSession("write", async (session) => {

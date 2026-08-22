@@ -97,3 +97,47 @@ local deployments use stdio, hosted deployments use Streamable HTTP, HTTP and
 HTTPS are both allowed, the default bind is loopback, raw SQL is not exposed,
 and each deployment has one owner. Earlier PostgreSQL, MySQL, and PGlite plans
 are `SUPERSEDED`.
+
+## BookSet V2→V3 Migration — TENTATIVE - NOT OWNER-APPROVED (n122)
+
+The first serialized schema upgrade (0003-bookset-display-name) is an UpgradeCoordinator
+implementation slice following n116/n117. This migration adds required `display_name` to
+BookSets and removes UNIQUE(tenant_id, kind) cardinality in favor of partial UNIQUE indexes.
+
+**Schema and data changes:**
+- Add NOT NULL `display_name` column to `book_sets` table
+- Remove UNIQUE(tenant_id, kind) constraint by rebuilding table
+- Add partial UNIQUE indexes: `uq_book_set_tenant_company` and `uq_book_set_tenant_personal`
+- Allow unlimited PROPRIETORSHIP BookSets per tenant (no uniqueness constraint)
+- Backfill display_name deterministically: COMPANY→"Company", PERSONAL→"Personal", PROPRIETORSHIP→"Proprietorship"
+- Validate all names are non-null, non-blank, trimmed (stored trim(name)=name, COLLATE NOCASE for tenant-scoped case-insensitive uniqueness)
+
+**Constraints and implementation:**
+- Migration SQL contains no BEGIN/COMMIT (runs within UpgradeCoordinator transaction)
+- foreign_keys remain ON throughout
+- Tenants table never rebuilt; all BookSet/account IDs, parents, balances, timestamps preserved
+- Deterministic target probes validate exact v3 state (schema, indices, old constraints absent)
+- Default BookSet must exist, belong to same tenant, and be ACTIVE
+- Archiving current default or activating tenant with no ACTIVE default rejected by application layer
+- Repository enforces display_name trimming validation on inserts/updates
+- Auto-resolution scope resolver (single ACTIVE per tenant returns typed FOUND; zero/multiple return typed NOT_FOUND/AMBIGUOUS)
+
+**Implementation scope:**
+- TypeScript BookSet model, repository mappings, inserts updated
+- Minimal repository/service validation for non-null display_name
+- Bootstrap tenant creation updated with explicit display_name
+- Current manifest/version (schemaVersion→3, revision→2) reflects v3 as honest schema
+- Backup/verification tests include v3 path verification
+- CLI/MCP, identity/evidence ledger, and broader audit/idempotency orchestration NOT in this slice
+- Migration idempotency, old-reader rejection, current-reader acceptance, replay behavior tested
+
+**Test coverage:**
+1. Exact v2→v3 upgrade with non-null tenant default, all row equality and IDs
+2. Migration failure injection rolls back schema/data/control atomically
+3. Fresh initialization converges via 0001+0002→0003 to identical catalog/version as upgrade path
+4. Multiple PROPRIETORSHIP rows succeed; duplicate COMPANY/PERSONAL fail
+5. Duplicate/blank/untrimmed/case-only duplicate names rejected; cross-tenant isolation maintained
+6. Default validation: archived/inactive rejection, activation validation, cannot archive current default
+7. One-active auto-resolution typed success; zero/multiple return correct error types
+8. Backup catalog includes v3 verification; foreign_key_check empty after upgrade
+9. Idempotency and replay behavior correct; changed checksum rejected

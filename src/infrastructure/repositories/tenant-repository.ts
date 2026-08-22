@@ -30,14 +30,15 @@ export class SqliteTenantRepository implements TenantRepository {
       ],
     );
 
-    // Insert default BookSet
+    // Insert default BookSet with display_name
     await this.session.execute(
-      `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO book_sets (id, tenant_id, kind, display_name, lifecycle, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         defaultBookSet.id,
         tenant.id,
         defaultBookSet.kind,
+        defaultBookSet.displayName,
         "ACTIVE",
         defaultBookSet.createdAt,
         defaultBookSet.updatedAt,

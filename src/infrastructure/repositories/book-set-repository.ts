@@ -40,14 +40,20 @@ export class SqliteBookSetRepository implements BookSetRepository {
       );
     }
 
+    // Validate display_name: non-null, non-blank, trimmed
+    if (!bookSet.displayName || bookSet.displayName !== bookSet.displayName.trim() || !bookSet.displayName.trim()) {
+      throw new DomainError("INVALID_DISPLAY_NAME", "display_name must be non-null, non-blank, and trimmed");
+    }
+
     // Insert the BookSet
     await this.session.execute(
-      `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO book_sets (id, tenant_id, kind, display_name, lifecycle, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         bookSet.id,
         bookSet.tenantId,
         bookSet.kind,
+        bookSet.displayName,
         bookSet.lifecycle,
         bookSet.createdAt,
         bookSet.updatedAt,
@@ -57,7 +63,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
 
   async getById(bookSetId: BookSetId, tenantId: TenantId): Promise<BookSet> {
     const result = await this.session.querySingle(
-      `SELECT id, tenant_id, kind, lifecycle, created_at, updated_at
+      `SELECT id, tenant_id, kind, display_name, lifecycle, created_at, updated_at
        FROM book_sets WHERE id = ? AND tenant_id = ?`,
       [bookSetId, tenantId],
     );
@@ -74,6 +80,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
       id: brandBookSetId(result.id as string),
       tenantId: brandTenantId(result.tenant_id as string),
       kind: result.kind as "COMPANY" | "PERSONAL" | "PROPRIETORSHIP",
+      displayName: result.display_name as string,
       lifecycle: result.lifecycle as "ACTIVE" | "ARCHIVED",
       createdAt: result.created_at as string,
       updatedAt: result.updated_at as string,
@@ -82,7 +89,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
 
   async getDefault(tenantId: TenantId): Promise<BookSet> {
     const result = await this.session.querySingle(
-      `SELECT bs.id, bs.tenant_id, bs.kind, bs.lifecycle, bs.created_at, bs.updated_at
+      `SELECT bs.id, bs.tenant_id, bs.kind, bs.display_name, bs.lifecycle, bs.created_at, bs.updated_at
        FROM book_sets bs
        JOIN tenants t ON bs.id = t.default_book_set_id
        WHERE t.id = ?`,
@@ -97,6 +104,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
       id: brandBookSetId(result.id as string),
       tenantId: brandTenantId(result.tenant_id as string),
       kind: result.kind as "COMPANY" | "PERSONAL" | "PROPRIETORSHIP",
+      displayName: result.display_name as string,
       lifecycle: result.lifecycle as "ACTIVE" | "ARCHIVED",
       createdAt: result.created_at as string,
       updatedAt: result.updated_at as string,
@@ -108,7 +116,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
     kind: "COMPANY" | "PERSONAL" | "PROPRIETORSHIP",
   ): Promise<BookSet | null> {
     const result = await this.session.querySingle(
-      `SELECT id, tenant_id, kind, lifecycle, created_at, updated_at
+      `SELECT id, tenant_id, kind, display_name, lifecycle, created_at, updated_at
        FROM book_sets WHERE tenant_id = ? AND kind = ?`,
       [tenantId, kind],
     );
@@ -119,6 +127,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
       id: brandBookSetId(result.id as string),
       tenantId: brandTenantId(result.tenant_id as string),
       kind: result.kind as "COMPANY" | "PERSONAL" | "PROPRIETORSHIP",
+      displayName: result.display_name as string,
       lifecycle: result.lifecycle as "ACTIVE" | "ARCHIVED",
       createdAt: result.created_at as string,
       updatedAt: result.updated_at as string,
@@ -127,7 +136,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
 
   async listByTenant(tenantId: TenantId): Promise<BookSet[]> {
     const results = await this.session.query(
-      `SELECT id, tenant_id, kind, lifecycle, created_at, updated_at
+      `SELECT id, tenant_id, kind, display_name, lifecycle, created_at, updated_at
        FROM book_sets WHERE tenant_id = ? ORDER BY id`,
       [tenantId],
     );
@@ -136,6 +145,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
       id: brandBookSetId(row.id as string),
       tenantId: brandTenantId(row.tenant_id as string),
       kind: row.kind as "COMPANY" | "PERSONAL" | "PROPRIETORSHIP",
+      displayName: row.display_name as string,
       lifecycle: row.lifecycle as "ACTIVE" | "ARCHIVED",
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,

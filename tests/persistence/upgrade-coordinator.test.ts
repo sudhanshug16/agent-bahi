@@ -11,6 +11,7 @@ import { MigrationService } from "../../src/infrastructure/services/migration-se
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import {
   CURRENT_SCHEMA_MANIFEST,
+  V2_SCHEMA_MANIFEST,
   computeSqliteMigrationChecksum,
   schemaManifestHash,
   type SqliteSchemaManifest,
@@ -37,10 +38,10 @@ function planFor(sql: string = markerSql): UpgradePlan {
     },
   };
   const targetManifest: SqliteSchemaManifest = {
-    ...CURRENT_SCHEMA_MANIFEST,
+    ...V2_SCHEMA_MANIFEST,
     schemaVersion: 3,
     revision: 2,
-    migrations: [...CURRENT_SCHEMA_MANIFEST.migrations, {
+    migrations: [...V2_SCHEMA_MANIFEST.migrations, {
       id: migration.id,
       checksum: computeSqliteMigrationChecksum(sql),
       dialect: "sqlite",
@@ -48,7 +49,7 @@ function planFor(sql: string = markerSql): UpgradePlan {
     }],
   };
   return {
-    sourceManifest: CURRENT_SCHEMA_MANIFEST,
+    sourceManifest: V2_SCHEMA_MANIFEST,
     targetManifest,
     migration,
     preflightProbes: [{ id: "source-empty", sql: "SELECT id FROM tenants LIMIT 1", expectedRows: [] }],
@@ -74,7 +75,7 @@ async function setup(): Promise<void> {
     { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
     { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
   ]);
-  const control = new DatabaseControlService(db, "sqlite");
+  const control = new DatabaseControlService(db, "sqlite", V2_SCHEMA_MANIFEST);
   await db.withMigrationLease((session) => control.initialize({ cliVersion: "test", buildId: "setup", now: new Date("2026-01-01T00:00:00.000Z") }, session).then(() => undefined));
 }
 

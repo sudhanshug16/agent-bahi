@@ -20,6 +20,7 @@ export interface BookSet {
   id: BookSetId;
   tenantId: TenantId;
   kind: "COMPANY" | "PERSONAL" | "PROPRIETORSHIP";
+  displayName: string;
   lifecycle: "ACTIVE" | "ARCHIVED";
   createdAt: string;
   updatedAt: string;

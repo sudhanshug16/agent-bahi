@@ -11,6 +11,8 @@ import { BookSetService } from "../../src/application/services/book-set-service.
 import { AccountService } from "../../src/application/services/account-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
+import { V2_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
+import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp } from "../../src/core/types.ts";
 
 describe("Phase 1A: Production Persistence Foundation", () => {
@@ -31,7 +33,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     migrationService = new MigrationService(db, "sqlite");
     compatibilityService = new CompatibilityService(db, "sqlite");
 
-    // Initialize database schema (order matters: core first, then database-control)
+    // Initialize database schema (order matters: core first, then database-control, then bookset-v3)
     await migrationService.migrate([
       {
         id: CORE_MIGRATIONS.id,
@@ -41,10 +43,14 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         id: DATABASE_CONTROL_MIGRATIONS.id,
         sql: DATABASE_CONTROL_MIGRATIONS.sqlite,
       },
+      {
+        id: BOOKSET_V3_MIGRATION.id,
+        sql: BOOKSET_V3_MIGRATION.sqlite,
+      },
     ]);
 
-    // Initialize database_control row via migration lease
-    const controlService = new DatabaseControlService(db, "sqlite");
+    // Initialize database_control row via migration lease (v3 manifest)
+    const controlService = new DatabaseControlService(db, "sqlite", CURRENT_SCHEMA_MANIFEST);
     await db.withMigrationLease(async (session) => {
       return await controlService.initialize(
         {
@@ -56,8 +62,8 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       );
     });
 
-    // Now create the session runner (database is ready)
-    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
+    // Now create the session runner (database is v3)
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1, CURRENT_SCHEMA_MANIFEST);
     tenantService = new TenantService(sessionRunner);
     bookSetService = new BookSetService(sessionRunner);
     accountService = new AccountService(sessionRunner);
@@ -183,6 +189,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "COMPANY",
+          displayName: "Company 2",
           lifecycle: "ACTIVE",
           createdAt: currentTimestamp(),
           updatedAt: currentTimestamp(),
@@ -205,6 +212,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "PERSONAL",
+          displayName: "Personal 2",
           lifecycle: "ACTIVE",
           createdAt: currentTimestamp(),
           updatedAt: currentTimestamp(),
@@ -224,6 +232,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         id: propId,
         tenantId: tenant.id,
         kind: "PROPRIETORSHIP",
+        displayName: "Proprietorship 1",
         lifecycle: "ACTIVE",
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),
@@ -285,6 +294,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         id: brandBookSetId(randomUUID()),
         tenantId: tenant.id,
         kind: "PROPRIETORSHIP" as const,
+        displayName: "Proprietorship 1",
         lifecycle: "ACTIVE" as const,
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),

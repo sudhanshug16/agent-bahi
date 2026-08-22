@@ -19,6 +19,8 @@ import { BookSetService } from "../../src/application/services/book-set-service.
 import { AccountService } from "../../src/application/services/account-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
+import { CURRENT_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
+import { BOOKSET_V3_MIGRATION } from "../../src/infrastructure/schema/bookset-v3-migration.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp, DirtyMigrationError } from "../../src/core/types.ts";
 
 describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
@@ -34,14 +36,15 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
     db = new SqliteAdapter({ path: dbPath });
     migrationService = new MigrationService(db, "sqlite");
 
-    // Initialize database schema (order matters: core first, then database-control)
+    // Initialize database schema (order matters: core first, then database-control, then bookset-v3)
     await migrationService.migrate([
       { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
       { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
+      { id: BOOKSET_V3_MIGRATION.id, sql: BOOKSET_V3_MIGRATION.sqlite },
     ]);
 
-    // Initialize database_control row via migration lease
-    const controlService = new DatabaseControlService(db, "sqlite");
+    // Initialize database_control row via migration lease (v3 manifest)
+    const controlService = new DatabaseControlService(db, "sqlite", CURRENT_SCHEMA_MANIFEST);
     await db.withMigrationLease(async (session) => {
       return await controlService.initialize(
         {
@@ -53,8 +56,8 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       );
     });
 
-    // Now create the session runner and services
-    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
+    // Now create the session runner and services (v3 database)
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1, CURRENT_SCHEMA_MANIFEST);
     tenantService = new TenantService(sessionRunner);
     bookSetService = new BookSetService(sessionRunner);
     accountService = new AccountService(sessionRunner);
@@ -119,6 +122,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "PERSONAL",  // WRONG: COMPANY tenant can only have COMPANY BookSet
+          displayName: "Personal",
           lifecycle: "ACTIVE",
           createdAt: currentTimestamp(),
           updatedAt: currentTimestamp(),
@@ -139,6 +143,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "PROPRIETORSHIP",  // WRONG: COMPANY can only have COMPANY
+          displayName: "Proprietorship",
           lifecycle: "ACTIVE",
           createdAt: currentTimestamp(),
           updatedAt: currentTimestamp(),

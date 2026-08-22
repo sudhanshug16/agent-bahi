@@ -66,6 +66,7 @@ export class TenantService {
         const bookSetId = brandBookSetId(randomUUID());
         const now = currentTimestamp();
         const bookSetKind = tenantKind === "COMPANY" ? "COMPANY" : "PERSONAL";
+        const displayName = bookSetKind === "COMPANY" ? "Company" : "Personal";
 
         await session.execute(
           `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at)
@@ -73,9 +74,9 @@ export class TenantService {
           [tenantId, tenantKind, "CREATING", tenantName, baseCurrency, null, now, now],
         );
         await session.execute(
-          `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [bookSetId, tenantId, bookSetKind, "ACTIVE", now, now],
+          `INSERT INTO book_sets (id, tenant_id, kind, display_name, lifecycle, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [bookSetId, tenantId, bookSetKind, displayName, "ACTIVE", now, now],
         );
         await session.execute(
           "UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?",
@@ -83,7 +84,7 @@ export class TenantService {
         );
 
         const tenant: Tenant = { id: tenantId, kind: tenantKind, lifecycle: "CREATING", name: tenantName, baseCurrency, defaultBookSetId: bookSetId, createdAt: now, updatedAt: now };
-        const defaultBookSet: BookSet = { id: bookSetId, tenantId, kind: bookSetKind, lifecycle: "ACTIVE", createdAt: now, updatedAt: now };
+        const defaultBookSet: BookSet = { id: bookSetId, tenantId, kind: bookSetKind, displayName, lifecycle: "ACTIVE", createdAt: now, updatedAt: now };
         return { result: { tenant, defaultBookSet }, tenantId };
       }),
     );

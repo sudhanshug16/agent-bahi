@@ -7,6 +7,7 @@ import type { BusinessSessionRunner } from "../../src/application/ports/persiste
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL, DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
+import { V2_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 import { MIGRATION_SCHEMA_SQLITE } from "../../src/infrastructure/services/migration-service.ts";
 
 const dbControlMigrationChecksum = checksum(DATABASE_CONTROL_MIGRATIONS.sqlite);
@@ -86,7 +87,7 @@ async function mutate(path: string, sql: string): Promise<void> {
 }
 
 async function expectGateRejects(path: string): Promise<void> {
-  const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1);
+  const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
   let callbackCount = 0;
   await expect(
     runner.withBusinessSession("write", async () => {
@@ -170,7 +171,7 @@ describe("BusinessSession adversarial SQL policy", () => {
   test("rejects non-business read tables, quoted identifiers, comments, and subqueries", async () => {
     await withFixture(async (path) => {
       await mutate(path, "CREATE TABLE secret_data (value TEXT NOT NULL)");
-      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1);
+      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       const attempts = [
         "SELECT value FROM secret_data",
         "SELECT tenants.id FROM tenants JOIN secret_data ON 1 = 1",
@@ -192,7 +193,7 @@ describe("BusinessSession adversarial SQL policy", () => {
   test("rejects write-side subqueries, returning, CTE, metadata, attach, and quoted identifiers", async () => {
     await withFixture(async (path) => {
       await mutate(path, "CREATE TABLE secret_data (value TEXT NOT NULL)");
-      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1);
+      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       const attempts = [
         "INSERT INTO tenants (id) SELECT value FROM secret_data",
         "INSERT INTO tenants (id) VALUES (?) RETURNING id",
@@ -217,7 +218,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
   test("enables query_only only after the compatibility gate and before the read callback", async () => {
     await withFixture(async (path) => {
       await mutate(path, "CREATE TABLE tenants (id TEXT PRIMARY KEY)");
-      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1) as any;
+      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST) as any;
       const statements: string[] = [];
       const originalOpen = runner.openConnection.bind(runner);
       runner.openConnection = () => {
@@ -244,7 +245,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
 
   test("rejects nested sessions but reports independent connection contention as BUSY", async () => {
     await withFixture(async (path) => {
-      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1);
+      const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       await runner.withBusinessSession("read", async () => {
         await expect(runner.withBusinessSession("read", async () => undefined)).rejects.toMatchObject({ code: "BUSINESS_SESSION_NESTED" });
       });
@@ -259,7 +260,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
       });
       await startedPromise;
 
-      const independentRunner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1);
+      const independentRunner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       await expect(independentRunner.withBusinessSession("read", async () => {
         callbackCount += 1;
       })).rejects.toMatchObject({ code: "BUSINESS_SESSION_BUSY" });
@@ -273,7 +274,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
     const fixture = await createCanonicalFixture();
     let captured: import("../../src/application/ports/persistence.ts").BusinessSession | undefined;
     try {
-      const runner = BusinessSessionFactory.createSessionRunner(fixture.path, "sqlite", 1, 1);
+      const runner = BusinessSessionFactory.createSessionRunner(fixture, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       await expect(runner.withBusinessSession("write", async (session) => {
         captured = session;
         throw new Error("rollback-test");
@@ -288,7 +289,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
 
   test("sanitizes commit and close failures", async () => {
     await withFixture(async (path) => {
-      const commitRunner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1) as any;
+      const commitRunner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST) as any;
       const originalCommitOpen = commitRunner.openConnection.bind(commitRunner);
       commitRunner.openConnection = () => {
         const connection = originalCommitOpen();
@@ -301,7 +302,7 @@ describe("BusinessSession concurrency, lifetime, and cleanup", () => {
       };
       await expect(commitRunner.withBusinessSession("write", async () => undefined)).rejects.toMatchObject({ code: "DATABASE_QUERY_FAILED" });
 
-      const closeRunner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1) as any;
+      const closeRunner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST) as any;
       const originalCloseOpen = closeRunner.openConnection.bind(closeRunner);
       closeRunner.openConnection = () => {
         const connection = originalCloseOpen();

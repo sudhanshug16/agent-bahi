@@ -8,6 +8,7 @@ import { MigrationService } from "../../src/infrastructure/services/migration-se
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
+import { V2_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
 
 test("production composition exposes typed services without raw persistence handles", async () => {
   const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-application-"));
@@ -19,7 +20,7 @@ test("production composition exposes typed services without raw persistence hand
       { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
       { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
     ]);
-    const control = new DatabaseControlService(db, "sqlite");
+    const control = new DatabaseControlService(db, "sqlite", V2_SCHEMA_MANIFEST);
     await db.withMigrationLease((session) => control.initialize({ cliVersion: "0.0.0-test", buildId: "composition", now: new Date() }, session));
 
     const application = createSqliteApplication(dbPath);
