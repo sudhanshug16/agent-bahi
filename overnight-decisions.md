@@ -131,6 +131,15 @@ The earlier `docker exec` and lifecycle references in this decision are historic
 - **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING; LIVE DIALECT STATUS MUST MATCH THE COMMITTED SUMMARY`.
 - **Reversibility**: The harness and dialect migrations remain isolated under `spikes/gate0`; this decision authorizes neither production database changes nor Phase 1 implementation.
 
+## OD-012 — Local-image-first digest-pinned database preflight
+
+- **Date**: 2026-08-22
+- **Decision**: Before each Gate0 database container, inspect the exact pinned image reference locally. When present, perform no pull or other registry operation and run with `--pull never`. When absent, make one bounded `docker pull`, then inspect the same exact reference again before `docker run`; any inspection timeout, pull failure, or post-pull absence remains phase-correct `BLOCKED` and cannot claim a semantic `PASS`.
+- **Alternatives**: Unconditionally pull before every run; run with `--pull never` without proving the image exists; continue after a failed pull.
+- **Evidence**: `spikes/gate0/database-integration.ts` uses local `docker image inspect` before pull, a 120-second bounded pull only after a normal missing-image exit, a second exact-reference inspect, and focused lifecycle tests proving local presence skips pull and pull failure blocks before network/container startup.
+- **Reversibility**: Remove the preflight helper and focused tests without changing digest pins, migration SQL, proof IDs, cleanup scope, or database semantics.
+- **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING; LIVE DIALECT STATUS MUST MATCH THE COMMITTED SUMMARY`.
+
 ---
 
 **Blocking conditions for PostgreSQL/MySQL proofs:**

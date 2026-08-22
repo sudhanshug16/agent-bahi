@@ -141,6 +141,24 @@ export class IntegrationBlockedError extends Error {
   readonly code = "INTEGRATION_BLOCKED" as const;
 }
 
+export type DockerCommandResult = {
+  success?: boolean;
+  exitCode?: number | null;
+  signalCode?: string | null;
+  exitedDueToTimeout?: boolean;
+  stdout?: Uint8Array | string;
+  stderr?: Uint8Array | string;
+};
+
+export type DockerCommandRunner = (
+  args: string[],
+  secrets: readonly string[],
+  action: string,
+  timeoutMs?: number,
+  requireOutput?: boolean,
+  allowFailure?: boolean,
+) => DockerCommandResult;
+
 function generateTestCredentials(): { username: string; password: string; rootPassword: string } {
   const randomPassword = () =>
     crypto.getRandomValues(new Uint8Array(32)).reduce((value, byte) => value + byte.toString(16).padStart(2, "0"), "");
@@ -211,11 +229,18 @@ export function classifySpawnResult(result: {
   return { success: candidate.success === true && exitCode === 0 && signalCode === null && !timedOut, exitCode, signalCode, timedOut };
 }
 
-function processExitDetails(result: ReturnType<typeof spawnSync>): SpawnResultClassification {
+function processExitDetails(result: DockerCommandResult): SpawnResultClassification {
   return classifySpawnResult(result);
 }
 
-function docker(args: string[], secrets: readonly string[], action: string, timeoutMs: number = 30000, requireOutput = true) {
+function docker(
+  args: string[],
+  secrets: readonly string[],
+  action: string,
+  timeoutMs: number = 30000,
+  requireOutput = true,
+  allowFailure = false,
+): DockerCommandResult {
   let result: ReturnType<typeof spawnSync>;
   try {
     result = spawnSync(["docker", ...args], { timeout: timeoutMs });
@@ -224,6 +249,7 @@ function docker(args: string[], secrets: readonly string[], action: string, time
   }
   const exit = processExitDetails(result);
   if (!exit.success) {
+    if (allowFailure) return result;
     const detail = bytesToString(result.stderr) || bytesToString(result.stdout) || "docker command failed";
     throw new Error(
       `${action}: ${sanitizeError(detail, secrets)} (exit_code=${exit.exitCode === null ? "null" : exit.exitCode}; signal_code=${exit.signalCode ?? "none"}; timed_out=${exit.timedOut})`,
@@ -233,6 +259,74 @@ function docker(args: string[], secrets: readonly string[], action: string, time
     throw new Error(`${action}: docker returned empty output (possible timeout or failure)`);
   }
   return result;
+}
+
+const LOCAL_IMAGE_INSPECT_TIMEOUT_MS = 10_000;
+const IMAGE_PULL_TIMEOUT_MS = 120_000;
+
+function imageInspectFailureDetails(result: DockerCommandResult): string {
+  const exit = processExitDetails(result);
+  return `exit_code=${exit.exitCode === null ? "null" : exit.exitCode}; signal_code=${exit.signalCode ?? "none"}; timed_out=${exit.timedOut}`;
+}
+
+/**
+ * Resolve the exact digest-pinned reference without contacting a registry.
+ * Pull only after a bounded local inspect reports a normal missing-image exit,
+ * then inspect the same exact reference again before any container is run.
+ */
+export function preflightDatabaseImage(
+  image: string,
+  secrets: readonly string[] = [],
+  runDocker: DockerCommandRunner = docker,
+): "LOCAL" | "PULLED" {
+  const inspectArgs = ["image", "inspect", "--format={{.Id}}", image];
+  let localInspect: DockerCommandResult;
+  try {
+    localInspect = runDocker(
+      inspectArgs,
+      secrets,
+      `inspect local test image ${image}`,
+      LOCAL_IMAGE_INSPECT_TIMEOUT_MS,
+      true,
+      true,
+    );
+  } catch (error) {
+    throw new IntegrationBlockedError(`local image inspection unavailable for ${image}: ${sanitizeError(error, secrets)}`);
+  }
+  const localExit = processExitDetails(localInspect);
+  if (localExit.success && bytesToString(localInspect.stdout).trim()) return "LOCAL";
+  if (localExit.timedOut || localExit.signalCode !== null) {
+    throw new IntegrationBlockedError(
+      `local image inspection unavailable for ${image}: ${imageInspectFailureDetails(localInspect)}`,
+    );
+  }
+
+  try {
+    runDocker(["pull", image], secrets, `pull ${image} test image`, IMAGE_PULL_TIMEOUT_MS);
+  } catch (error) {
+    throw new IntegrationBlockedError(`image pull unavailable for ${image}: ${sanitizeError(error, secrets)}`);
+  }
+
+  let pulledInspect: DockerCommandResult;
+  try {
+    pulledInspect = runDocker(
+      inspectArgs,
+      secrets,
+      `verify pulled test image ${image}`,
+      LOCAL_IMAGE_INSPECT_TIMEOUT_MS,
+      true,
+      true,
+    );
+  } catch (error) {
+    throw new IntegrationBlockedError(`pulled image verification unavailable for ${image}: ${sanitizeError(error, secrets)}`);
+  }
+  const pulledExit = processExitDetails(pulledInspect);
+  if (!pulledExit.success || !bytesToString(pulledInspect.stdout).trim()) {
+    throw new IntegrationBlockedError(
+      `exact image reference not available after pull for ${image}: ${imageInspectFailureDetails(pulledInspect)}`,
+    );
+  }
+  return "PULLED";
 }
 
 function cleanupResource(containerName: string, networkName: string, networkCreated: boolean, containerStarted: boolean) {
@@ -277,8 +371,9 @@ function cleanupResource(containerName: string, networkName: string, networkCrea
   };
 }
 
-async function startDatabaseContainer(
+export async function startDatabaseContainer(
   type: DatabaseType,
+  runDocker: DockerCommandRunner = docker,
 ): Promise<{ config: DatabaseConfig; cleanup: () => Promise<void> }> {
   const runId = crypto.randomUUID();
   const containerName = `agent-bahi-${type}-${runId}`;
@@ -292,8 +387,8 @@ async function startDatabaseContainer(
   let startupSucceeded = false;
 
   try {
-    docker(["pull", image], secrets, `pre-pull ${type} test image`, 120000);
-    docker(
+    preflightDatabaseImage(image, secrets, runDocker);
+    runDocker(
       [
         "network",
         "create",
@@ -329,7 +424,7 @@ async function startDatabaseContainer(
     // Exact-name cleanup is safe even if docker creates the container before
     // reporting a startup failure.
     containerStarted = true;
-    const runResult = docker(
+    const runResult = runDocker(
       [
         "run",
         "--pull",
@@ -365,7 +460,7 @@ async function startDatabaseContainer(
     }
     let healthStatus = "";
     for (let attempt = 0; attempt < 180; attempt += 1) {
-      const healthResult = docker(
+      const healthResult = runDocker(
         ["inspect", "--format={{.State.Health.Status}}", containerName],
         secrets,
         `inspect ${type} health`,
@@ -378,7 +473,7 @@ async function startDatabaseContainer(
       throw new Error(`${type} test container did not become healthy (status=${healthStatus || "unknown"})`);
     }
 
-    const inspectResult = docker(
+    const inspectResult = runDocker(
       ["inspect", "--format={{json .NetworkSettings.Ports}}", containerName],
       secrets,
       `inspect ${type} published port`,
@@ -413,6 +508,7 @@ async function startDatabaseContainer(
     startupSucceeded = true;
     return started;
   } catch (error) {
+    if (error instanceof IntegrationBlockedError) throw error;
     throw new Error(sanitizeError(error, secrets));
   } finally {
     if (!startupSucceeded) {

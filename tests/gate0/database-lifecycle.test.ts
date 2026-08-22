@@ -1,10 +1,32 @@
 import { expect, test } from "bun:test";
 import {
+  blockedDialectResults,
   classifySpawnResult,
+  IntegrationBlockedError,
   integrationSummary,
+  POSTGRES_IMAGE,
+  preflightDatabaseImage,
   REQUIRED_SEMANTIC_PROOF_IDS,
+  startDatabaseContainer,
+  type DockerCommandRunner,
   type IntegrationTestResult,
 } from "../../spikes/gate0/database-integration.ts";
+
+const successfulDockerResult = (stdout = "ok") => ({
+  success: true,
+  exitCode: 0,
+  signalCode: null,
+  stdout,
+  stderr: "",
+});
+
+const missingDockerImageResult = {
+  success: false,
+  exitCode: 1,
+  signalCode: null,
+  stdout: "",
+  stderr: "No such image",
+};
 
 test("spawnSync lifecycle classification fails closed for null exit, timeout, and signal", () => {
   expect(classifySpawnResult({ success: true, exitCode: 0, signalCode: null })).toEqual({
@@ -63,4 +85,62 @@ test("integration summary is complete, sorted, and carries server version/detail
     detail: "same hash returned stored winner",
   });
   expect(summary.proofs.every((proof) => proof.detail.length > 0)).toBe(true);
+});
+
+test("an exact local image match skips pull and reports the local preflight", () => {
+  const calls: string[][] = [];
+  const runDocker: DockerCommandRunner = (args) => {
+    calls.push(args);
+    return successfulDockerResult("sha256:local-image");
+  };
+
+  expect(preflightDatabaseImage(POSTGRES_IMAGE, [], runDocker)).toBe("LOCAL");
+  expect(calls).toEqual([["image", "inspect", "--format={{.Id}}", POSTGRES_IMAGE]]);
+});
+
+test("a missing image pulls once and verifies the exact reference before use", () => {
+  const calls: string[][] = [];
+  let imageInspectCount = 0;
+  const runDocker: DockerCommandRunner = (args) => {
+    calls.push(args);
+    if (args[0] === "image") {
+      imageInspectCount += 1;
+      return imageInspectCount === 1 ? missingDockerImageResult : successfulDockerResult("sha256:pulled-image");
+    }
+    expect(args).toEqual(["pull", POSTGRES_IMAGE]);
+    return successfulDockerResult("pulled");
+  };
+
+  expect(preflightDatabaseImage(POSTGRES_IMAGE, [], runDocker)).toBe("PULLED");
+  expect(calls).toEqual([
+    ["image", "inspect", "--format={{.Id}}", POSTGRES_IMAGE],
+    ["pull", POSTGRES_IMAGE],
+    ["image", "inspect", "--format={{.Id}}", POSTGRES_IMAGE],
+  ]);
+});
+
+test("missing-image pull failure is blocked before network/run and cannot false-green", async () => {
+  const calls: string[][] = [];
+  const runDocker: DockerCommandRunner = (args) => {
+    calls.push(args);
+    if (args[0] === "image") return missingDockerImageResult;
+    throw new Error("pull timed out (exit_code=null; timed_out=true)");
+  };
+
+  let failure: unknown;
+  try {
+    await startDatabaseContainer("postgres", runDocker);
+  } catch (error) {
+    failure = error;
+  }
+
+  expect(failure).toBeInstanceOf(IntegrationBlockedError);
+  expect(String(failure)).toContain("image pull unavailable");
+  expect(calls).toEqual([
+    ["image", "inspect", "--format={{.Id}}", POSTGRES_IMAGE],
+    ["pull", POSTGRES_IMAGE],
+  ]);
+  const blocked = blockedDialectResults("postgres", String(failure));
+  expect(blocked.every((result) => result.status === "BLOCKED")).toBe(true);
+  expect(blocked.some((result) => result.status === "PASS")).toBe(false);
 });
