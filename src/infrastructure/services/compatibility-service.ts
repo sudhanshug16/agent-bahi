@@ -1,9 +1,8 @@
 import type { Database } from "../../application/ports/persistence.ts";
+import type { Dialect } from "../../core/types.ts";
 import { IncompatibleDatabaseError } from "../../core/types.ts";
+import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 
-/**
- * Compatibility matrix entry.
- */
 interface CompatibilityEntry {
   cliVersionMin: string;
   cliVersionMax: string;
@@ -12,23 +11,16 @@ interface CompatibilityEntry {
   readPolicy: "read_write" | "read_only" | "incompatible";
 }
 
-/**
- * Initial compatibility matrix.
- * Defines which CLI versions work with which schema versions.
- */
 const INITIAL_COMPATIBILITY_MATRIX: readonly CompatibilityEntry[] = [
   {
     cliVersionMin: "0.0.0-gate0",
     cliVersionMax: "0.0.0-gate0",
     schemaLogicalId: "gate0-001-core-sqlite",
     dataFormatVersion: "1.0.0",
-    readPolicy: "read_only", // Gate0 is proof-only, no production writes
+    readPolicy: "read_only",
   },
 ];
 
-/**
- * Compatibility tracking table schema (SQLite example).
- */
 const COMPATIBILITY_SCHEMA_SQLITE = `
 CREATE TABLE IF NOT EXISTS compatibility_matrix (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,8 +31,7 @@ CREATE TABLE IF NOT EXISTS compatibility_matrix (
   read_policy TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   UNIQUE(cli_version_min, cli_version_max, schema_logical_id)
-);
-`;
+);`;
 
 const COMPATIBILITY_SCHEMA_POSTGRES = `
 CREATE TABLE IF NOT EXISTS compatibility_matrix (
@@ -52,8 +43,7 @@ CREATE TABLE IF NOT EXISTS compatibility_matrix (
   read_policy TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   UNIQUE(cli_version_min, cli_version_max, schema_logical_id)
-);
-`;
+);`;
 
 const COMPATIBILITY_SCHEMA_MYSQL = `
 CREATE TABLE IF NOT EXISTS compatibility_matrix (
@@ -65,78 +55,35 @@ CREATE TABLE IF NOT EXISTS compatibility_matrix (
   read_policy VARCHAR(20) NOT NULL,
   recorded_at VARCHAR(50) NOT NULL,
   UNIQUE KEY uk_compat (cli_version_min, cli_version_max, schema_logical_id)
-);
-`;
+);`;
 
-/**
- * Compatibility service: ensures CLI version, schema version, and data format are compatible.
- * Prevents incompatible clients from reading/writing.
- */
 export class CompatibilityService {
   constructor(
-    private db: Database,
-    private dialect: "sqlite" | "postgresql" | "mysql",
+    private readonly db: Database,
+    private readonly dialect: Dialect,
   ) {}
 
-  /**
-   * Ensure compatibility table exists.
-   */
+  /** Explicit admin operation: create the metadata table. Inspection never calls this. */
   async ensureCompatibilityTable(): Promise<void> {
-    const schema =
-      this.dialect === "sqlite"
-        ? COMPATIBILITY_SCHEMA_SQLITE
-        : this.dialect === "postgresql"
-          ? COMPATIBILITY_SCHEMA_POSTGRES
-          : COMPATIBILITY_SCHEMA_MYSQL;
-
+    const schema = this.dialect === "sqlite"
+      ? COMPATIBILITY_SCHEMA_SQLITE
+      : this.dialect === "postgresql" ? COMPATIBILITY_SCHEMA_POSTGRES : COMPATIBILITY_SCHEMA_MYSQL;
     try {
       await this.db.executeRaw(schema);
     } catch (error) {
-      throw new IncompatibleDatabaseError(
-        `Failed to set up compatibility matrix table: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new IncompatibleDatabaseError("Failed to initialize compatibility metadata", {
+        dialect: this.dialect,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  /**
-   * Initialize default compatibility entries.
-   */
   async initializeDefaults(): Promise<void> {
-    try {
-      await this.ensureCompatibilityTable();
-
-      for (const entry of INITIAL_COMPATIBILITY_MATRIX) {
-        const existing = await this.db.querySingle(
-          "SELECT id FROM compatibility_matrix WHERE cli_version_min = ? AND cli_version_max = ? AND schema_logical_id = ?",
-          [entry.cliVersionMin, entry.cliVersionMax, entry.schemaLogicalId],
-        );
-
-        if (!existing) {
-          await this.db.execute(
-            `INSERT INTO compatibility_matrix (cli_version_min, cli_version_max, schema_logical_id, data_format_version, read_policy, recorded_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [
-              entry.cliVersionMin,
-              entry.cliVersionMax,
-              entry.schemaLogicalId,
-              entry.dataFormatVersion,
-              entry.readPolicy,
-              new Date().toISOString(),
-            ],
-          );
-        }
-      }
-    } catch (error) {
-      throw new IncompatibleDatabaseError(
-        `Failed to initialize compatibility matrix: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await this.ensureCompatibilityTable();
+    for (const entry of INITIAL_COMPATIBILITY_MATRIX) await this.upsertEntry(entry);
   }
 
-  /**
-   * Check if CLI version is compatible with current database state.
-   * Fails closed if incompatible.
-   */
+  /** Side-effect-free inspection: every statement in this method is SELECT. */
   async checkCompatibility(cliVersion: string): Promise<{
     compatible: boolean;
     cliVersion: string;
@@ -145,69 +92,85 @@ export class CompatibilityService {
     message?: string;
   }> {
     try {
-      await this.ensureCompatibilityTable();
+      const schema = await this.db.querySingle(
+        "SELECT id, status FROM schema_migrations ORDER BY executed_at DESC LIMIT 1",
+      );
+      if (!schema || schema.status !== "APPLIED") {
+        throw new IncompatibleDatabaseError("Database schema metadata is missing or not fully applied");
+      }
 
-      // Query compatibility matrix
+      const builder = new DialectSqlBuilder(this.dialect);
+      const first = builder.placeholder();
+      const second = builder.placeholder();
       const matches = await this.db.query(
         `SELECT schema_logical_id, data_format_version, read_policy
          FROM compatibility_matrix
-         WHERE cli_version_min <= ? AND cli_version_max >= ?`,
+         WHERE cli_version_min <= ${first} AND cli_version_max >= ${second}`,
         [cliVersion, cliVersion],
       );
-
-      if (matches.rows.length === 0) {
-        throw new IncompatibleDatabaseError(
-          `CLI version ${cliVersion} is not compatible with this database. No matching compatibility entry found.`,
-        );
-      }
-
       const entry = matches.rows[0];
-
-      // Check policy
-      if (entry.read_policy === "incompatible") {
-        throw new IncompatibleDatabaseError(
-          `CLI version ${cliVersion} is marked as incompatible with schema version ${entry.schema_logical_id}`,
-        );
+      if (!entry) {
+        throw new IncompatibleDatabaseError(`CLI version ${cliVersion} has no compatible schema entry`);
       }
-
+      if (entry.read_policy === "incompatible") {
+        throw new IncompatibleDatabaseError(`CLI version ${cliVersion} is marked incompatible`);
+      }
       return {
         compatible: true,
         cliVersion,
-        schemaVersion: entry.schema_logical_id as string,
-        dataFormatVersion: entry.data_format_version as string,
+        schemaVersion: String(entry.schema_logical_id),
+        dataFormatVersion: String(entry.data_format_version),
         message: entry.read_policy === "read_only" ? "Read-only mode: production writes disabled" : undefined,
       };
     } catch (error) {
       if (error instanceof IncompatibleDatabaseError) throw error;
-      throw new IncompatibleDatabaseError(
-        `Failed to check compatibility: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new IncompatibleDatabaseError("Compatibility inspection failed closed", {
+        dialect: this.dialect,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  /**
-   * Record a new compatibility matrix entry.
-   * Used when a new CLI version or schema version is released.
-   */
   async recordCompatibilityEntry(
     cliVersionMin: string,
     cliVersionMax: string,
     schemaLogicalId: string,
     dataFormatVersion: string,
   ): Promise<void> {
-    try {
-      await this.ensureCompatibilityTable();
+    await this.ensureCompatibilityTable();
+    await this.upsertEntry({
+      cliVersionMin,
+      cliVersionMax,
+      schemaLogicalId,
+      dataFormatVersion,
+      readPolicy: "read_write",
+    });
+  }
 
-      await this.db.execute(
-        `INSERT OR IGNORE INTO compatibility_matrix
-         (cli_version_min, cli_version_max, schema_logical_id, data_format_version, read_policy, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [cliVersionMin, cliVersionMax, schemaLogicalId, dataFormatVersion, "read_write", new Date().toISOString()],
-      );
+  private async upsertEntry(entry: CompatibilityEntry): Promise<void> {
+    const builder = new DialectSqlBuilder(this.dialect);
+    const placeholders = Array.from({ length: 6 }, () => builder.placeholder());
+    const values = [
+      entry.cliVersionMin,
+      entry.cliVersionMax,
+      entry.schemaLogicalId,
+      entry.dataFormatVersion,
+      entry.readPolicy,
+      new Date().toISOString(),
+    ];
+    const columns = "(cli_version_min, cli_version_max, schema_logical_id, data_format_version, read_policy, recorded_at)";
+    const sql = this.dialect === "sqlite"
+      ? `INSERT OR IGNORE INTO compatibility_matrix ${columns} VALUES (${placeholders.join(", ")})`
+      : this.dialect === "postgresql"
+        ? `INSERT INTO compatibility_matrix ${columns} VALUES (${placeholders.join(", ")}) ON CONFLICT (cli_version_min, cli_version_max, schema_logical_id) DO NOTHING`
+        : `INSERT INTO compatibility_matrix ${columns} VALUES (${placeholders.join(", ")}) ON DUPLICATE KEY UPDATE schema_logical_id = VALUES(schema_logical_id)`;
+    try {
+      await this.db.execute(sql, values);
     } catch (error) {
-      throw new IncompatibleDatabaseError(
-        `Failed to record compatibility entry: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new IncompatibleDatabaseError("Failed to write compatibility metadata", {
+        dialect: this.dialect,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

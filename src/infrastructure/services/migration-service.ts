@@ -3,30 +3,9 @@ import { randomUUID } from "crypto";
 import type { Database, MigrationRecord, MigrationSession } from "../../application/ports/persistence.ts";
 import type { Dialect } from "../../core/types.ts";
 import { DomainError, MigrationLockedError, MigrationChecksumError, DirtyMigrationError } from "../../core/types.ts";
+import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 
-/**
- * SQL dialect-aware builder: generates correct placeholders per dialect.
- * PostgreSQL: $1, $2, ... SQLite/MySQL: ?, ?, ...
- */
-class DialectSqlBuilder {
-  private placeholderIndex = 0;
-
-  constructor(private dialect: Dialect) {}
-
-  /**
-   * Generate placeholder for next parameter; resets after build().
-   */
-  placeholder(): string {
-    if (this.dialect === "postgresql") {
-      return `$${++this.placeholderIndex}`;
-    }
-    return "?";
-  }
-
-  reset(): void {
-    this.placeholderIndex = 0;
-  }
-}
+export { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 
 /**
  * Migration schema for all dialects.
@@ -42,7 +21,10 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   executed_at TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
   dirty_reason TEXT,
-  lease_token TEXT
+  lease_token TEXT,
+  manifest_version INTEGER,
+  verification_manifest_hash TEXT,
+  manifest_json TEXT
 );
 `;
 
@@ -55,7 +37,10 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   executed_at TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
   dirty_reason TEXT,
-  lease_token TEXT
+  lease_token TEXT,
+  manifest_version INTEGER,
+  verification_manifest_hash TEXT,
+  manifest_json TEXT
 );
 `;
 
@@ -68,7 +53,10 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   executed_at VARCHAR(50) NOT NULL,
   duration_ms INT NOT NULL,
   dirty_reason TEXT,
-  lease_token VARCHAR(255)
+  lease_token VARCHAR(255),
+  manifest_version INT,
+  verification_manifest_hash VARCHAR(64),
+  manifest_json TEXT
 );
 `;
 
@@ -86,10 +74,16 @@ CREATE TABLE IF NOT EXISTS migration_recovery_audit (
   reason TEXT NOT NULL,
   expected_status TEXT NOT NULL,
   expected_checksum TEXT NOT NULL,
-  expected_dirty_reason TEXT NOT NULL,
+  expected_dirty_reason_state TEXT NOT NULL CHECK (expected_dirty_reason_state IN ('NONE', 'PRESENT')),
+  expected_dirty_reason TEXT,
   actual_status TEXT NOT NULL,
   actual_checksum TEXT NOT NULL,
+  actual_dirty_reason_state TEXT NOT NULL CHECK (actual_dirty_reason_state IN ('NONE', 'PRESENT')),
   actual_dirty_reason TEXT,
+  verification_manifest_hash TEXT,
+  manifest_version INTEGER,
+  probe_results_json TEXT NOT NULL,
+  verification_status TEXT NOT NULL CHECK (verification_status IN ('PASS', 'FAIL')),
   success BOOLEAN NOT NULL,
   FOREIGN KEY (migration_id) REFERENCES schema_migrations(id)
 );
@@ -115,10 +109,16 @@ CREATE TABLE IF NOT EXISTS migration_recovery_audit (
   reason TEXT NOT NULL,
   expected_status TEXT NOT NULL,
   expected_checksum TEXT NOT NULL,
-  expected_dirty_reason TEXT NOT NULL,
+  expected_dirty_reason_state TEXT NOT NULL CHECK (expected_dirty_reason_state IN ('NONE', 'PRESENT')),
+  expected_dirty_reason TEXT,
   actual_status TEXT NOT NULL,
   actual_checksum TEXT NOT NULL,
+  actual_dirty_reason_state TEXT NOT NULL CHECK (actual_dirty_reason_state IN ('NONE', 'PRESENT')),
   actual_dirty_reason TEXT,
+  verification_manifest_hash TEXT,
+  manifest_version INTEGER,
+  probe_results_json TEXT NOT NULL,
+  verification_status TEXT NOT NULL CHECK (verification_status IN ('PASS', 'FAIL')),
   success BOOLEAN NOT NULL,
   FOREIGN KEY (migration_id) REFERENCES schema_migrations(id)
 );
@@ -159,10 +159,16 @@ CREATE TABLE IF NOT EXISTS migration_recovery_audit (
   reason TEXT NOT NULL,
   expected_status VARCHAR(20) NOT NULL,
   expected_checksum VARCHAR(64) NOT NULL,
+  expected_dirty_reason_state VARCHAR(10) NOT NULL,
   expected_dirty_reason TEXT,
   actual_status VARCHAR(20) NOT NULL,
   actual_checksum VARCHAR(64) NOT NULL,
+  actual_dirty_reason_state VARCHAR(10) NOT NULL,
   actual_dirty_reason TEXT,
+  verification_manifest_hash VARCHAR(64),
+  manifest_version INT,
+  probe_results_json TEXT NOT NULL,
+  verification_status VARCHAR(10) NOT NULL,
   success TINYINT(1) NOT NULL,
   FOREIGN KEY (migration_id) REFERENCES schema_migrations(id)
 );
@@ -179,6 +185,25 @@ FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'migration_recovery_audi
  * Validates exact expected state (id + dialect + checksum + status + dirty_reason).
  * expectedDirtyReason: null matches NULL in DB, string matches exact string.
  */
+export interface MigrationVerificationProbe {
+  id: string;
+  sql: string;
+  expectedRows: readonly Record<string, unknown>[];
+}
+
+export interface MigrationVerificationManifest {
+  version: number;
+  dialect: Dialect;
+  probes: readonly MigrationVerificationProbe[];
+  retrySafe: boolean;
+}
+
+export interface MigrationDefinition {
+  id: string;
+  sql: string;
+  manifest?: MigrationVerificationManifest;
+}
+
 export interface MigrationRecoveryRequest {
   migrationId: string;
   expectedDialect: Dialect;
@@ -187,6 +212,91 @@ export interface MigrationRecoveryRequest {
   expectedDirtyReason: string | null; // null = DB NULL, string = exact match
   actor: string;
   reason: string; // Operator's reason for recovery (appended to audit)
+  definition: MigrationDefinition;
+}
+
+type DirtyReasonState = "NONE" | "PRESENT";
+
+function dirtyReasonState(value: string | null): DirtyReasonState {
+  return value === null ? "NONE" : "PRESENT";
+}
+
+function canonicalize(value: unknown): unknown {
+  if (typeof value === "bigint") return `${value}n`;
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalize(item)]),
+    );
+  }
+  return value;
+}
+
+function canonicalRows(rows: readonly Record<string, unknown>[]): string[] {
+  return rows.map((row) => canonicalJson(row)).sort();
+}
+
+function canonicalManifest(manifest: MigrationVerificationManifest): MigrationVerificationManifest {
+  return {
+    version: manifest.version,
+    dialect: manifest.dialect,
+    retrySafe: manifest.retrySafe,
+    probes: [...manifest.probes]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((probe) => ({ id: probe.id, sql: probe.sql.trim(), expectedRows: canonicalRows(probe.expectedRows).map((row) => JSON.parse(row) as Record<string, unknown>) })),
+  };
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+function hashCanonical(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function hashRows(rows: readonly Record<string, unknown>[]): string {
+  return hashCanonical(canonicalRows(rows));
+}
+
+function manifestHash(manifest: MigrationVerificationManifest): string {
+  return hashCanonical(canonicalManifest(manifest));
+}
+
+function validateManifest(manifest: MigrationVerificationManifest, dialect: Dialect): void {
+  if (manifest.version !== 1 || manifest.dialect !== dialect || manifest.probes.length === 0) {
+    throw new DomainError("MIGRATION_MANIFEST_INVALID", "Migration verification manifest is incomplete or uses the wrong dialect");
+  }
+  const ids = new Set<string>();
+  for (const probe of manifest.probes) {
+    if (!probe.id || ids.has(probe.id) || !/^SELECT\b/i.test(probe.sql.trim()) || probe.sql.includes(";")) {
+      throw new DomainError("MIGRATION_MANIFEST_INVALID", "Migration verification probes must have unique IDs and be single read-only SELECT statements");
+    }
+    ids.add(probe.id);
+  }
+}
+
+function parseManifest(value: unknown): MigrationVerificationManifest | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (parsed === null || typeof parsed !== "object") return null;
+    const candidate = parsed as { version?: unknown; dialect?: unknown; probes?: unknown; retrySafe?: unknown };
+    if (candidate.version !== 1 || (candidate.dialect !== "sqlite" && candidate.dialect !== "postgresql" && candidate.dialect !== "mysql") || !Array.isArray(candidate.probes) || typeof candidate.retrySafe !== "boolean") return null;
+    const probes: MigrationVerificationProbe[] = [];
+    const ids = new Set<string>();
+    for (const probe of candidate.probes) {
+      if (probe === null || typeof probe !== "object") return null;
+      const item = probe as { id?: unknown; sql?: unknown; expectedRows?: unknown };
+      if (typeof item.id !== "string" || item.id.length === 0 || ids.has(item.id) || typeof item.sql !== "string" || !/^SELECT\b/i.test(item.sql.trim()) || item.sql.includes(";") || !Array.isArray(item.expectedRows)) return null;
+      if (item.expectedRows.some((row) => row === null || typeof row !== "object" || Array.isArray(row))) return null;
+      ids.add(item.id);
+      probes.push({ id: item.id, sql: item.sql, expectedRows: item.expectedRows as Record<string, unknown>[] });
+    }
+    return { version: 1, dialect: candidate.dialect, probes, retrySafe: candidate.retrySafe };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -305,9 +415,10 @@ export class MigrationService {
       // Copy legacy data to new table, setting defaults for missing columns
       // Assume legacy table has at least: id, version (or similar id column)
       // Set status=APPLIED for all legacy rows (assume they are applied)
+      const builder = new DialectSqlBuilder(this.dialect);
       const insertSql = `
-        INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token)
-        SELECT id, ?, ?, ?, ?, 0, NULL, NULL FROM schema_migrations
+        INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
+        SELECT id, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, 0, NULL, NULL, NULL, NULL, NULL FROM schema_migrations
       `;
       const checksum = "legacy-checksum-unknown"; // Placeholder for legacy migrations
       await this.db.execute(insertSql, [this.dialect, checksum, "APPLIED", timestamp]);
@@ -393,8 +504,10 @@ export class MigrationService {
     blockingRows?: Array<{ id: string; status: string; dialect: string }>;
   }> {
     try {
+      const builder = new DialectSqlBuilder(this.dialect);
       const migrations = await this.db.query(
         "SELECT id, dialect, checksum, status, executed_at, duration_ms FROM schema_migrations ORDER BY executed_at ASC",
+        [],
       );
 
       const appliedMigrations: MigrationRecord[] = [];
@@ -446,8 +559,8 @@ export class MigrationService {
         blockingRows: blockingRows.length > 0 ? blockingRows : undefined,
       };
     } catch (error) {
-      // If table doesn't exist, no schema yet
-      if (error instanceof DomainError) throw error;
+      // Only an explicitly classified missing control table means an uninitialized DB.
+      if (!(error instanceof DomainError) || error.code !== "CONTROL_TABLE_MISSING") throw error;
       return {
         hasSchema: false,
         isDirty: false,
@@ -468,7 +581,7 @@ export class MigrationService {
    *        execute DDL on reserved session, then APPLIED/DIRTY.
    */
   async migrate(
-    migrations: readonly { id: string; sql: string }[],
+    migrations: readonly MigrationDefinition[],
     timeoutMs: number = 30000,
   ): Promise<MigrationRecord[]> {
     const appliedMigrations: MigrationRecord[] = [];
@@ -522,9 +635,13 @@ export class MigrationService {
           const timestamp = new Date().toISOString();
           const checksum = this.computeChecksum(migration.sql);
           const leaseToken = session.leaseToken();
+          if (migration.manifest) validateManifest(migration.manifest, this.dialect);
+          const manifestJson = migration.manifest ? canonicalJson(canonicalManifest(migration.manifest)) : null;
+          const manifestVersion = migration.manifest?.version ?? null;
+          const verificationManifestHash = migration.manifest ? manifestHash(migration.manifest) : null;
 
           builder.reset();
-          const insertSql = `INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms, lease_token) VALUES (${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()})`;
+          const insertSql = `INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms, lease_token, manifest_version, verification_manifest_hash, manifest_json) VALUES (${Array.from({ length: 10 }, () => builder.placeholder()).join(", ")})`;
           await session.execute(insertSql, [
             migration.id,
             this.dialect,
@@ -533,6 +650,9 @@ export class MigrationService {
             timestamp,
             0,
             leaseToken,
+            manifestVersion,
+            verificationManifestHash,
+            manifestJson,
           ]);
 
           // Dialect-specific DDL execution
@@ -611,117 +731,140 @@ export class MigrationService {
    * expectedDirtyReason: null matches DB NULL, string matches exact value.
    */
   async recoverDirty(request: MigrationRecoveryRequest, timeoutMs: number = 30000): Promise<void> {
-    return this.db.withMigrationLease<void>(
+    const outcome: { error: DomainError | null } = { error: null };
+    await this.db.withMigrationLease<void>(
       async (session: MigrationSession) => {
         await this.ensureMigrationTableOnSession(session);
 
         const leaseToken = session.leaseToken();
         const auditId = randomUUID();
         const builder = new DialectSqlBuilder(this.dialect);
-
-        // Fetch actual state
         builder.reset();
-        const fetchSql = `SELECT id, dialect, checksum, status, dirty_reason FROM schema_migrations WHERE id = ${builder.placeholder()}`;
+        const fetchSql = `SELECT id, dialect, checksum, status, dirty_reason, manifest_version, verification_manifest_hash, manifest_json FROM schema_migrations WHERE id = ${builder.placeholder()}`;
         const record = await session.executeSingle(fetchSql, [request.migrationId]);
+        if (!record) throw new DomainError("RECOVERY_RECORD_NOT_FOUND", `Migration ${request.migrationId} not found`);
 
-        if (!record) {
-          throw new DomainError(
-            "RECOVERY_RECORD_NOT_FOUND",
-            `Migration ${request.migrationId} not found`,
-          );
-        }
+        const actualDialect = String(record.dialect);
+        const actualStatus = String(record.status);
+        const actualChecksum = String(record.checksum);
+        const actualDirtyReason = (record.dirty_reason as string | null | undefined) ?? null;
+        const expectedState = dirtyReasonState(request.expectedDirtyReason);
+        const actualState = dirtyReasonState(actualDirtyReason);
+        const storedManifestVersion = typeof record.manifest_version === "number" ? record.manifest_version : Number(record.manifest_version);
+        const storedManifestHash = typeof record.verification_manifest_hash === "string" ? record.verification_manifest_hash : null;
+        const probeResults: Array<Record<string, unknown>> = [];
 
-        const actualDialect = record.dialect as string;
-        const actualStatus = record.status as string;
-        const actualChecksum = record.checksum as string;
-        const actualDirtyReason = record.dirty_reason as string | null;
+        const appendAudit = async (success: boolean, verificationStatus: "PASS" | "FAIL"): Promise<void> => {
+          const auditBuilder = new DialectSqlBuilder(this.dialect);
+          const auditSql = `INSERT INTO migration_recovery_audit (id, migration_id, recovery_at, lease_token, actor, reason, expected_status, expected_checksum, expected_dirty_reason_state, expected_dirty_reason, actual_status, actual_checksum, actual_dirty_reason_state, actual_dirty_reason, verification_manifest_hash, manifest_version, probe_results_json, verification_status, success)
+             VALUES (${Array.from({ length: 19 }, () => auditBuilder.placeholder()).join(", ")})`;
+          await session.execute(auditSql, [
+            auditId,
+            request.migrationId,
+            new Date().toISOString(),
+            leaseToken,
+            request.actor,
+            request.reason,
+            request.expectedStatus,
+            request.expectedChecksum,
+            expectedState,
+            request.expectedDirtyReason,
+            actualStatus,
+            actualChecksum,
+            actualState,
+            actualDirtyReason,
+            storedManifestHash,
+            Number.isFinite(storedManifestVersion) ? storedManifestVersion : null,
+            canonicalJson(probeResults),
+            verificationStatus,
+            success ? 1 : 0,
+          ]);
+        };
 
-        // Validate expected dialect matches actual
+        const fail = async (error: DomainError): Promise<void> => {
+          outcome.error = error;
+          await appendAudit(false, "FAIL");
+        };
+
         if (actualDialect !== request.expectedDialect) {
-          throw new DomainError(
-            "RECOVERY_DIALECT_MISMATCH",
-            `Expected dialect ${request.expectedDialect}, found ${actualDialect}`,
-          );
+          await fail(new DomainError("RECOVERY_DIALECT_MISMATCH", "Recovery dialect does not match stored migration"));
+          return;
         }
-
-        // Validate expected state matches actual
         if (actualStatus !== request.expectedStatus) {
-          throw new DomainError(
-            "RECOVERY_STATE_MISMATCH",
-            `Expected status ${request.expectedStatus}, found ${actualStatus}`,
-          );
+          await fail(new DomainError("RECOVERY_STATE_MISMATCH", "Recovery status does not match stored migration"));
+          return;
         }
-
         if (actualChecksum !== request.expectedChecksum) {
-          throw new DomainError(
-            "RECOVERY_CHECKSUM_MISMATCH",
-            `Expected checksum ${request.expectedChecksum}, found ${actualChecksum}`,
-          );
+          await fail(new DomainError("RECOVERY_CHECKSUM_MISMATCH", "Recovery checksum does not match stored migration"));
+          return;
+        }
+        if (actualDirtyReason !== request.expectedDirtyReason) {
+          await fail(new DomainError("RECOVERY_DIRTY_REASON_MISMATCH", "Recovery dirty-reason state does not match stored migration"));
+          return;
+        }
+        const definition = request.definition;
+        if (!definition || definition.id !== request.migrationId || this.computeChecksum(definition.sql) !== actualChecksum || !definition.manifest) {
+          await fail(new DomainError("RECOVERY_VERIFICATION_REQUIRED", "Recovery requires a complete dialect-specific verification manifest"));
+          return;
+        }
+        try {
+          validateManifest(definition.manifest, this.dialect);
+        } catch {
+          await fail(new DomainError("RECOVERY_VERIFICATION_REQUIRED", "Recovery requires a complete dialect-specific verification manifest"));
+          return;
+        }
+        if (storedManifestHash === null || storedManifestVersion !== definition.manifest.version || storedManifestHash !== manifestHash(definition.manifest)) {
+          await fail(new DomainError("RECOVERY_VERIFICATION_REQUIRED", "Recovery definition does not match the persisted verification manifest"));
+          return;
+        }
+        const persistedManifest = parseManifest(record.manifest_json);
+        if (!persistedManifest || manifestHash(persistedManifest) !== storedManifestHash) {
+          await fail(new DomainError("RECOVERY_VERIFICATION_REQUIRED", "Persisted verification manifest is unavailable or corrupted"));
+          return;
         }
 
-        // Validate dirty_reason: null matches null, string matches exactly
-        if (request.expectedDirtyReason === null) {
-          if (actualDirtyReason !== null) {
-            throw new DomainError(
-              "RECOVERY_DIRTY_REASON_MISMATCH",
-              `Expected NULL dirty_reason, found "${actualDirtyReason}"`,
-            );
+        for (const probe of definition.manifest.probes) {
+          const normalizedSql = probe.sql.trim();
+          if (!/^SELECT\b/i.test(normalizedSql) || normalizedSql.includes(";")) {
+            await fail(new DomainError("RECOVERY_VERIFICATION_REQUIRED", "Recovery probes must be deterministic read-only SELECT statements"));
+            return;
           }
-        } else {
-          if (actualDirtyReason !== request.expectedDirtyReason) {
-            throw new DomainError(
-              "RECOVERY_DIRTY_REASON_MISMATCH",
-              `Expected dirty_reason "${request.expectedDirtyReason}", found "${actualDirtyReason}"`,
-            );
+          const queryHash = hashCanonical(normalizedSql);
+          const expectedResultHash = hashRows(probe.expectedRows);
+          let result: { rows: Record<string, unknown>[] };
+          try {
+            result = await session.execute(normalizedSql);
+          } catch {
+            await fail(new DomainError("RECOVERY_PROBE_MISMATCH", `Recovery probe ${probe.id} could not be evaluated`));
+            return;
+          }
+          const actualResultHash = hashRows(result.rows);
+          probeResults.push({ id: probe.id, queryHash, expectedResultHash, actualResultHash, pass: actualResultHash === expectedResultHash });
+          if (actualResultHash !== expectedResultHash) {
+            await fail(new DomainError("RECOVERY_PROBE_MISMATCH", `Recovery probe ${probe.id} did not match its canonical expected result`));
+            return;
           }
         }
 
-        // CAS: Update to APPLIED, clearing dirty marker
-        // Verify rowCount=1 to ensure exactly one row matched
-        // SQL: dirty_reason IS NULL vs = depends on expectedDirtyReason
         builder.reset();
-        let updateSql: string;
+        const updateSql = `UPDATE schema_migrations SET status = ${builder.placeholder()}, dirty_reason = NULL, lease_token = ${builder.placeholder()} WHERE id = ${builder.placeholder()} AND dialect = ${builder.placeholder()} AND status = ${builder.placeholder()} AND checksum = ${builder.placeholder()} AND dirty_reason ${request.expectedDirtyReason === null ? "IS NULL" : `= ${builder.placeholder()}`}`;
         const updateParams: unknown[] = ["APPLIED", leaseToken, request.migrationId, request.expectedDialect, request.expectedStatus, request.expectedChecksum];
-
-        if (request.expectedDirtyReason === null) {
-          updateSql = `UPDATE schema_migrations SET status = ${builder.placeholder()}, dirty_reason = NULL, lease_token = ${builder.placeholder()} WHERE id = ${builder.placeholder()} AND dialect = ${builder.placeholder()} AND status = ${builder.placeholder()} AND checksum = ${builder.placeholder()} AND dirty_reason IS NULL`;
-        } else {
-          updateSql = `UPDATE schema_migrations SET status = ${builder.placeholder()}, dirty_reason = NULL, lease_token = ${builder.placeholder()} WHERE id = ${builder.placeholder()} AND dialect = ${builder.placeholder()} AND status = ${builder.placeholder()} AND checksum = ${builder.placeholder()} AND dirty_reason = ${builder.placeholder()}`;
-          updateParams.push(request.expectedDirtyReason);
-        }
-
+        if (request.expectedDirtyReason !== null) updateParams.push(request.expectedDirtyReason);
         const updateResult = await session.execute(updateSql, updateParams);
-
-        if (!updateResult || updateResult.rowCount !== 1) {
-          throw new DomainError(
-            "RECOVERY_CAS_FAILED",
-            `Expected exactly 1 row updated, got ${updateResult?.rowCount || 0}`,
-          );
+        let updatedRows = updateResult.rowCount;
+        if (this.dialect === "sqlite" && updatedRows === 0) {
+          const changeRow = await session.executeSingle("SELECT changes() AS row_count");
+          updatedRows = Number(changeRow?.row_count ?? 0);
         }
-
-        // Append immutable audit trail (reason is NOT NULL)
-        const auditTimestamp = new Date().toISOString();
-        builder.reset();
-        const auditSql = `INSERT INTO migration_recovery_audit (id, migration_id, recovery_at, lease_token, actor, reason, expected_status, expected_checksum, expected_dirty_reason, actual_status, actual_checksum, actual_dirty_reason, success)
-           VALUES (${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()})`;
-        await session.execute(auditSql, [
-          auditId,
-          request.migrationId,
-          auditTimestamp,
-          leaseToken,
-          request.actor,
-          request.reason,
-          request.expectedStatus,
-          request.expectedChecksum,
-          request.expectedDirtyReason,
-          actualStatus,
-          actualChecksum,
-          actualDirtyReason,
-          1,
-        ]);
+        if (updatedRows !== 1) {
+          await fail(new DomainError("RECOVERY_CAS_FAILED", "Recovery compare-and-set did not update exactly one row"));
+          return;
+        }
+        await appendAudit(true, "PASS");
       },
       timeoutMs,
     );
+    if (outcome.error) throw outcome.error;
   }
 
   /**
@@ -729,8 +872,9 @@ export class MigrationService {
    * Fails if migration not found, dialect mismatch, or checksum mismatch.
    */
   async verifyChecksum(migrationId: string, expectedChecksum: string): Promise<void> {
+    const builder = new DialectSqlBuilder(this.dialect);
     const record = await this.db.querySingle(
-      "SELECT dialect, checksum FROM schema_migrations WHERE id = ?",
+      `SELECT dialect, checksum FROM schema_migrations WHERE id = ${builder.placeholder()}`,
       [migrationId],
     );
 

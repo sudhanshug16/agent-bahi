@@ -47,10 +47,9 @@ export class DatabaseFactory {
       }
 
       default: {
-        const unknownDialect = (config as any).dialect;
         throw new DomainError(
           "UNSUPPORTED_DIALECT",
-          `Unsupported database dialect: ${unknownDialect}`,
+          `Unsupported database dialect: ${String(config.dialect)}`,
         );
       }
     }

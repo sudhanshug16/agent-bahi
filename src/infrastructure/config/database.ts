@@ -66,7 +66,8 @@ export function parseDatabaseUrl(url: string): DatabaseConfig {
         };
       }
 
-      case "postgresql": {
+      case "postgresql":
+      case "postgres": {
         const host = parsed.hostname || "localhost";
         const port = parsed.port ? parseInt(parsed.port, 10) : 5432;
         const database = parsed.pathname.slice(1);

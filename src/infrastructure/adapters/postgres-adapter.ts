@@ -1,59 +1,62 @@
-import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession } from "../../application/ports/persistence.ts";
+import type {
+  Database,
+  MigrationSession,
+  QueryResult,
+  Transaction,
+  TransactionConfig,
+  UnitOfWork,
+} from "../../application/ports/persistence.ts";
 import type { PostgresConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { randomUUID } from "crypto";
+import {
+  createBunSqlClient,
+  firstBunSqlRow,
+  normalizeBunSqlError,
+  normalizeBunSqlResult,
+  type BunSqlClient,
+  type BunSqlExecutor,
+} from "./bun-sql.ts";
 
-// Narrow typed query-client interface for Bun SQL transaction/reserved handles
-interface BunSqlClient {
-  query(sql: string, params?: unknown[]): Promise<unknown>;
+const MIGRATION_LOCK_NAME = "agent-bahi-migration";
+
+export function buildPostgresSqlOptions(config: PostgresConfig) {
+  return {
+    adapter: "postgres" as const,
+    hostname: config.host,
+    port: config.port,
+    database: config.database,
+    username: config.username,
+    password: config.password,
+    connectionTimeout: 10,
+    bigint: true,
+    ssl: config.sslMode,
+    tls: config.sslMode !== "disable" && config.sslMode !== undefined,
+  };
 }
 
-/**
- * PostgreSQL Migration Session (callback-scoped): uses pinned connection with xact-scoped lock.
- * txSql held by db.begin() callback; never escape scope.
- * Commit/rollback handled automatically by Bun on callback return/error.
- * Active flag enforced; all methods reject after callback returns.
- */
 class PostgresMigrationSession implements MigrationSession {
-  private token: string;
+  private readonly token = randomUUID();
   private active = true;
 
-  constructor(private txSql: BunSqlClient) {
-    this.token = randomUUID();
-  }
+  constructor(private readonly client: BunSqlExecutor) {}
 
   private checkActive(): void {
-    if (!this.active) {
-      throw new DomainError(
-        "MIGRATION_SESSION_INACTIVE",
-        "MigrationSession has been finalized and is no longer active"
-      );
-    }
-  }
-
-  private normalizeResult(result: unknown): { rows: Record<string, unknown>[]; rowCount: number } {
-    return {
-      rows: Array.isArray(result) ? result : (result as any)?.rows || [],
-      rowCount: (Array.isArray(result) ? result.length : (result as any)?.rows?.length) || 0,
-    };
+    if (!this.active) throw new DomainError("MIGRATION_SESSION_INACTIVE", "MigrationSession is no longer active");
   }
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
     this.checkActive();
-    const result = await this.txSql.query(sql, params || []);
-    return this.normalizeResult(result);
+    return normalizeBunSqlResult(await this.client.unsafe(sql, params ?? []));
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
-    this.checkActive();
-    const result = await this.txSql.query(sql, params || []);
-    const normalized = this.normalizeResult(result);
-    return normalized.rows[0];
+    return (await this.execute(sql, params)).rows[0];
   }
 
   async executeRaw(sql: string): Promise<void> {
     this.checkActive();
-    await this.txSql.query(sql);
+    await this.client.unsafe(sql);
   }
 
   leaseToken(): string {
@@ -61,50 +64,30 @@ class PostgresMigrationSession implements MigrationSession {
     return this.token;
   }
 
-  _setInactive(): void {
+  setInactive(): void {
     this.active = false;
   }
 }
 
-/**
- * PostgreSQL Transaction using Bun.sql transaction callback (pinned connection).
- * When created via UnitOfWork.begin(), this txSql is already in a transaction.
- * When created via beginTransaction(), this is a pooled connection and caller must manage BEGIN/COMMIT.
- */
 class PostgresTransaction implements Transaction {
   private active = true;
   private finalized = false;
-  private isFromBeginCallback: boolean;
 
-  constructor(private txSql: BunSqlClient, isFromBeginCallback: boolean = true) {
-    // isFromBeginCallback=true: Bun manages BEGIN/COMMIT
-    // isFromBeginCallback=false: we must manage BEGIN/COMMIT (legacy beginTransaction path)
-    this.isFromBeginCallback = isFromBeginCallback;
-  }
+  constructor(
+    private readonly client: BunSqlExecutor,
+    private readonly managedByBun: boolean,
+  ) {}
 
   private checkActive(): void {
-    if (!this.active) {
-      throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
-    }
-  }
-
-  private normalizeResult(result: unknown): { rows: Record<string, unknown>[]; rowCount: number } {
-    return {
-      rows: Array.isArray(result) ? result : (result as any)?.rows || [],
-      rowCount: (Array.isArray(result) ? result.length : (result as any)?.rows?.length) || 0,
-    };
+    if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
   }
 
   async commit(): Promise<void> {
     this.checkActive();
-    if (this.finalized) return; // Idempotent
+    if (this.finalized) return;
     this.active = false;
     try {
-      // Only call COMMIT if we manually started the transaction
-      // If from .begin() callback, Bun handles commit automatically
-      if (!this.isFromBeginCallback) {
-        await this.txSql.query("COMMIT");
-      }
+      if (!this.managedByBun) await this.client.unsafe("COMMIT");
     } finally {
       this.finalized = true;
     }
@@ -112,15 +95,12 @@ class PostgresTransaction implements Transaction {
 
   async rollback(): Promise<void> {
     this.checkActive();
-    if (this.finalized) return; // Idempotent
+    if (this.finalized) return;
     this.active = false;
     try {
-      // Only call ROLLBACK if we manually started the transaction
-      if (!this.isFromBeginCallback) {
-        await this.txSql.query("ROLLBACK");
-      }
+      if (!this.managedByBun) await this.client.unsafe("ROLLBACK");
     } catch {
-      // Already rolled back
+      // The server may already have rolled back the connection.
     } finally {
       this.finalized = true;
     }
@@ -128,19 +108,16 @@ class PostgresTransaction implements Transaction {
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
     this.checkActive();
-    const result = await this.txSql.query(sql, params || []);
-    return this.normalizeResult(result);
+    return normalizeBunSqlResult(await this.client.unsafe(sql, params ?? []));
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
-    this.checkActive();
-    const result = await this.txSql.query(sql, params || []);
-    return this.normalizeResult(result).rows[0];
+    return (await this.execute(sql, params)).rows[0];
   }
 
   async executeRaw(sql: string): Promise<void> {
     this.checkActive();
-    await this.txSql.query(sql);
+    await this.client.unsafe(sql);
   }
 
   isActive(): boolean {
@@ -148,233 +125,123 @@ class PostgresTransaction implements Transaction {
   }
 }
 
-/**
- * PostgreSQL UnitOfWork implementation.
- * Uses Bun's .begin() callback to pin transaction to one reserved connection.
- */
 class PostgresUnitOfWork implements UnitOfWork {
-  constructor(private db: any) {} // Bun SQL pool object
+  constructor(private readonly client: BunSqlClient) {}
 
-  async execute<T>(
-    callback: (tx: Transaction) => Promise<T>,
-    config?: TransactionConfig,
-  ): Promise<T> {
-    // Bun.db.begin() pins txSql to one reserved connection for entire callback
-    // Auto-commits on success, auto-rollbacks on error
-    // No manual BEGIN/COMMIT needed
-    return this.db.begin(config, async (txSql: BunSqlClient) => {
-      const tx = new PostgresTransaction(txSql);
-      return callback(tx);
-    });
+  async execute<T>(callback: (tx: Transaction) => Promise<T>, _config?: TransactionConfig): Promise<T> {
+    return this.client.begin(async (transaction) => callback(new PostgresTransaction(transaction, true)));
   }
 }
 
-/**
- * PostgreSQL adapter using Bun.sql native connection.
- *
- * Guarantees:
- * - advisory_lock for migration serialization
- * - isolation level configuration
- * - statement timeouts for safety
- */
 export class PostgresAdapter implements Database {
-  private db: any; // Bun.sql connection
+  private client: BunSqlClient | null;
+  private readonly config: PostgresConfig;
 
   constructor(config: PostgresConfig) {
-    // Bun.sql will be instantiated at runtime via dynamic import
-    // For now, we define the interface and will initialize in methods
-    this.db = null;
+    this.config = { ...config };
+    this.client = createBunSqlClient(buildPostgresSqlOptions(config));
   }
 
-  private async ensureConnected(): Promise<void> {
-    if (!this.db) {
-      throw new DomainError(
-        "DATABASE_NOT_INITIALIZED",
-        "PostgreSQL adapter not initialized. Must call initialize() first.",
-      );
+  private getClient(): BunSqlClient {
+    if (!this.client) throw new DomainError("DATABASE_CLOSED", "PostgreSQL database client is closed");
+    return this.client;
+  }
+
+  private async run(sql: string, params?: unknown[]): Promise<QueryResult> {
+    try {
+      return normalizeBunSqlResult(await this.getClient().unsafe(sql, params ?? []));
+    } catch (error) {
+      throw normalizeBunSqlError(error, "postgresql");
     }
   }
 
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
-    await this.ensureConnected();
-
-    try {
-      const result = await this.db.query(sql, params || []);
-      return {
-        rows: Array.isArray(result) ? result : result?.rows || [],
-        rowCount: (result?.length || result?.rows?.length || 0) as number,
-      };
-    } catch (error) {
-      this.handlePostgresError(error);
-      throw error;
-    }
+    return this.run(sql, params);
   }
 
   async querySingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
-    await this.ensureConnected();
-
-    try {
-      const result = await this.db.query(sql, params || []);
-      return (Array.isArray(result) ? result[0] : result?.rows?.[0]) as Record<string, unknown> | undefined;
-    } catch (error) {
-      this.handlePostgresError(error);
-      throw error;
-    }
+    return (await this.run(sql, params)).rows[0];
   }
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
-    return this.query(sql, params);
+    return this.run(sql, params);
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
-    return this.querySingle(sql, params);
+    return (await this.run(sql, params)).rows[0];
   }
 
   async executeRaw(sql: string): Promise<void> {
-    await this.ensureConnected();
-
     try {
-      await this.db.query(sql);
+      await this.getClient().unsafe(sql);
     } catch (error) {
-      this.handlePostgresError(error);
-      throw error;
+      throw normalizeBunSqlError(error, "postgresql");
     }
   }
 
   async beginTransaction(config?: TransactionConfig): Promise<Transaction> {
-    await this.ensureConnected();
-
-    const isolationLevel = config?.isolationLevel || "read_committed";
-    const readOnly = config?.readOnly ? "READ ONLY" : "READ WRITE";
-
-    await this.db.query(`BEGIN ISOLATION LEVEL ${isolationLevel.toUpperCase()} ${readOnly}`);
-
-    return new PostgresTransaction(this.db, false); // false = caller manages BEGIN/COMMIT
+    const isolation = config?.isolationLevel ?? "read_committed";
+    const readOnly = config?.readOnly ? " READ ONLY" : " READ WRITE";
+    await this.executeRaw(`BEGIN ISOLATION LEVEL ${isolation.toUpperCase().replace(/_/g, " ")}${readOnly}`);
+    return new PostgresTransaction(this.getClient(), false);
   }
 
-  unitOfWork(config?: TransactionConfig): UnitOfWork {
-    return new PostgresUnitOfWork(this.db);
+  unitOfWork(_config?: TransactionConfig): UnitOfWork {
+    return new PostgresUnitOfWork(this.getClient());
   }
 
-  async withMigrationLease<T>(
-    callback: (session: MigrationSession) => Promise<T>,
-    timeoutMs: number = 30000,
-  ): Promise<T> {
-    await this.ensureConnected();
-    const lockId = this.hashToLockId("agent-bahi-migration");
+  async withMigrationLease<T>(callback: (session: MigrationSession) => Promise<T>, timeoutMs = 30000): Promise<T> {
     const deadline = Date.now() + timeoutMs;
-    const retryIntervalMs = 50;
-
-    // Use db.begin() to get pinned connection; acquire xact-scoped advisory lock with deadline retry.
-    return this.db.begin(async (txSql: BunSqlClient) => {
-      // Retry pg_try_advisory_xact_lock until deadline (not indefinitely blocking)
-      let lockAcquired = false;
+    return this.getClient().begin(async (transaction) => {
+      let acquired = false;
       while (Date.now() < deadline) {
-        const lockResult = await txSql.query(
-          "SELECT pg_try_advisory_xact_lock($1) as acquired",
-          [lockId],
-        );
-
-        const rows = Array.isArray(lockResult) ? lockResult : (lockResult as any)?.rows || [];
-        if (rows.length > 0 && (rows[0] as any)?.acquired === true) {
-          lockAcquired = true;
+        const row = firstBunSqlRow(await transaction.unsafe(
+          "SELECT pg_try_advisory_xact_lock($1) AS acquired",
+          [this.hashToLockId(MIGRATION_LOCK_NAME)],
+        ));
+        if (row?.acquired === true || row?.acquired === "t") {
+          acquired = true;
           break;
         }
-
-        // Not acquired; wait before retry
-        const remainingMs = deadline - Date.now();
-        if (remainingMs > 0) {
-          await new Promise(resolve => setTimeout(resolve, Math.min(retryIntervalMs, remainingMs)));
-        }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))));
       }
-
-      if (!lockAcquired) {
-        throw new MigrationLockedError(
-          `Failed to acquire migration advisory lock within ${timeoutMs}ms deadline`,
-        );
-      }
-
-      const session = new PostgresMigrationSession(txSql);
+      if (!acquired) throw new MigrationLockedError(`Failed to acquire migration lock within ${timeoutMs}ms`);
+      const session = new PostgresMigrationSession(transaction);
       try {
         return await callback(session);
       } finally {
-        session._setInactive();
-        // Bun automatically commits if callback returns, rolls back if callback throws
+        session.setInactive();
       }
     });
   }
 
   async isConnected(): Promise<boolean> {
     try {
-      if (!this.db) return false;
-      const result = await this.db.query("SELECT 1");
-      return !!result;
+      await this.run("SELECT 1");
+      return true;
     } catch {
       return false;
     }
   }
 
   async close(): Promise<void> {
-    if (this.db) {
-      await this.db.close();
-      this.db = null;
-    }
+    const client = this.client;
+    this.client = null;
+    if (client) await client.close({ timeout: 1000 });
   }
 
-  async acquireAdvisoryLock(lockName: string, timeoutMs: number = 5000): Promise<boolean> {
-    await this.ensureConnected();
-
-    try {
-      // PostgreSQL advisory locks are 64-bit integers.
-      // Convert lock name to hash for lock ID.
-      const lockId = this.hashToLockId(lockName);
-
-      // pg_advisory_lock blocks until acquired. Use pg_try_advisory_lock for non-blocking.
-      const result = await this.db.query(
-        "SELECT pg_try_advisory_lock($1) as acquired",
-        [lockId],
-      );
-
-      return (result[0]?.acquired || result[0]?.acquired_lock) === true;
-    } catch (error) {
-      this.handlePostgresError(error);
-      throw error;
-    }
+  async acquireAdvisoryLock(lockName: string, _timeoutMs = 5000): Promise<boolean> {
+    const row = (await this.run("SELECT pg_try_advisory_lock($1) AS acquired", [this.hashToLockId(lockName)])).rows[0];
+    return row?.acquired === true || row?.acquired === "t";
   }
 
   async releaseAdvisoryLock(lockName: string): Promise<void> {
-    await this.ensureConnected();
-
-    try {
-      const lockId = this.hashToLockId(lockName);
-      await this.db.query("SELECT pg_advisory_unlock($1)", [lockId]);
-    } catch (error) {
-      this.handlePostgresError(error);
-      throw error;
-    }
+    await this.run("SELECT pg_advisory_unlock($1)", [this.hashToLockId(lockName)]);
   }
 
   private hashToLockId(name: string): number {
     let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      const char = name.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
+    for (const character of name) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
     return Math.abs(hash) % 2147483647;
-  }
-
-  private handlePostgresError(error: unknown): void {
-    if (error instanceof Error) {
-      if (error.message.includes("connect ECONNREFUSED")) {
-        throw new DomainError("DATABASE_CONNECTION_FAILED", "PostgreSQL connection refused");
-      }
-      if (error.message.includes("FATAL")) {
-        throw new DomainError("POSTGRES_FATAL", `PostgreSQL fatal error: ${error.message}`);
-      }
-      if (error.message.includes("password")) {
-        throw new DomainError("POSTGRES_AUTH_FAILED", "PostgreSQL authentication failed");
-      }
-    }
   }
 }

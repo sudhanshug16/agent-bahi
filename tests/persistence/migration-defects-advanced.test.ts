@@ -156,6 +156,7 @@ describe("Advanced Migration Defects", () => {
           expectedDirtyReason: "wrong-reason",
           actor: "test",
           reason: "recovery test",
+          definition: { id: "reason-mismatch", sql: "", manifest: { version: 1, dialect: "sqlite", retrySafe: false, probes: [{ id: "probe", sql: "SELECT 1", expectedRows: [] }] } },
         });
         throw new Error("Should have failed on dirty_reason mismatch");
       } catch (err: any) {
@@ -197,6 +198,7 @@ describe("Advanced Migration Defects", () => {
           expectedDirtyReason: "reason",
           actor: "test",
           reason: "recovery",
+          definition: { id: "wrong-dialect", sql: "", manifest: { version: 1, dialect: "sqlite", retrySafe: false, probes: [{ id: "probe", sql: "SELECT 1", expectedRows: [] }] } },
         });
         throw new Error("Should have failed on dialect mismatch");
       } catch (err: any) {

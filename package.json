@@ -11,6 +11,7 @@
     "test:gate0": "bun test tests/gate0/gate0.test.ts",
     "test:gate0:integration": "bun test tests/gate0/database-integration.test.ts",
     "test:gate0:all": "bun test tests/gate0",
+    "gate:production-adapters": "bun scripts/production-adapter-gate.ts",
     "build:gate0": "bun build spikes/gate0/cli-smoke.ts --compile --outfile .gate0-build/agent-bahi-gate0"
   },
   "dependencies": {

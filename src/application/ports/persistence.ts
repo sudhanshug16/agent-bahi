@@ -88,14 +88,34 @@ export interface MigrationRecord {
  * Validates exact expected state (id + dialect + checksum + status + dirty_reason) before recovery.
  * CAS ensures operator-provided parameters match stored state exactly.
  */
+export interface MigrationVerificationProbe {
+  id: string;
+  sql: string;
+  expectedRows: readonly Record<string, unknown>[];
+}
+
+export interface MigrationVerificationManifest {
+  version: number;
+  dialect: Dialect;
+  probes: readonly MigrationVerificationProbe[];
+  retrySafe: boolean;
+}
+
+export interface MigrationDefinition {
+  id: string;
+  sql: string;
+  manifest?: MigrationVerificationManifest;
+}
+
 export interface MigrationRecoveryRequest {
   migrationId: string;
   expectedDialect: Dialect;
   expectedStatus: "DIRTY" | "APPLYING";
   expectedChecksum: string;
-  expectedDirtyReason: string; // Must match stored dirty_reason exactly
+  expectedDirtyReason: string | null; // null means the explicit NONE state
   actor: string; // Operator identity for audit trail
   reason: string; // Operator's reason for recovery (appended to immutable audit)
+  definition: MigrationDefinition;
 }
 
 /**
@@ -119,7 +139,7 @@ export interface MigrationService {
    * Never auto-run during business operations.
    * Callback-only; never call acquire/release separately.
    */
-  migrate(migrations: readonly { id: string; sql: string }[], timeoutMs?: number): Promise<MigrationRecord[]>;
+  migrate(migrations: readonly MigrationDefinition[], timeoutMs?: number): Promise<MigrationRecord[]>;
 
   /**
    * Verify checksum of a migration against what's stored in DB.

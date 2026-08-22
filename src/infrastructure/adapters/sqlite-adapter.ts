@@ -527,18 +527,32 @@ export class SqliteAdapter implements Database {
 
   private handleSqliteError(error: unknown): void {
     if (error instanceof Error) {
+      if (error.message.toLowerCase().includes("no such table") && error.message.toLowerCase().includes("schema_migrations")) {
+        throw new DomainError("CONTROL_TABLE_MISSING", "Migration control table is not initialized", {
+          dialect: "sqlite",
+          cause: error.message,
+        });
+      }
       if (error.message.includes("SQLITE_BUSY")) {
         throw new DomainError(
           "SQLITE_BUSY",
           "Database is locked. SQLite is configured with busy_timeout=0 to fail immediately. Ensure writer serialization.",
         );
       }
-      if (error.message.includes("SQLITE_CONSTRAINT")) {
+      if (
+        error.message.includes("SQLITE_CONSTRAINT") ||
+        /constraint|foreign key|unique|check constraint|tenant|book.?set/i.test(error.message)
+      ) {
         throw new DomainError(
           "SQLITE_CONSTRAINT",
           `Constraint violation: ${error.message}`,
         );
       }
+      throw new DomainError("DATABASE_QUERY_FAILED", "SQLite database query failed", {
+        dialect: "sqlite",
+        cause: error.message,
+      });
     }
+    throw new DomainError("DATABASE_QUERY_FAILED", "SQLite database query failed", { dialect: "sqlite" });
   }
 }

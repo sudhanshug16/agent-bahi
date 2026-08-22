@@ -241,3 +241,19 @@ Current advisory lock implementation is per-adapter-instance, not durable across
 
 ### Decided: No drop/weaken of FK/trigger constraints
 Tests required FK ON; composite trigger for default_book_set_id same-tenant enforcement; UNIQUE request_id for idempotency. All remain enforced in schema and verified by tests. Code now satisfies them correctly rather than bypassing.
+
+## TENTATIVE - NOT OWNER-APPROVED: Recovery verification manifests (2026-08-22)
+
+### Decision
+
+`MigrationDefinition` carries a versioned, deterministic, dialect-specific verification manifest. The manifest has unique non-empty probe IDs, single-statement read-only `SELECT` probes, canonical expected rows, and `retrySafe` metadata. When `APPLYING` is first persisted, the migration row also persists the manifest version and verification-manifest hash. `recoverDirty` requires the trusted canonical definition from the migration registry/catalog, recomputes the SQL checksum and manifest hash, exact-matches both persisted values, then runs every probe under the migration lease. Only exact id/dialect/checksum/status/dirty-reason CAS plus all matching probe results can transition to `APPLIED`.
+
+Probe result hashing canonicalizes each row, sorts row hashes while preserving duplicate rows, and records probe IDs, query hashes, expected/actual result hashes, and pass/fail in the immutable recovery audit. Missing manifests or hashes, malformed/unknown state, alternate definitions, invalid probes, and mismatches fail closed with stable recovery errors and leave `DIRTY`/`APPLYING` unchanged. Recovery does not parse arbitrary DDL and does not retry unless a later design proves zero effects and `retrySafe=true`.
+
+### Alternatives and rationale
+
+Keeping caller-supplied expected metadata without persisted provenance was rejected: an attacker could choose expected rows that describe a broken schema, and an in-memory map would disappear after process restart. Requiring the canonical definition plus persisted hash binds recovery to the migration catalog and makes restart recovery auditable. Full automatic retry remains deferred because probes alone do not establish zero effects.
+
+### Risks and remaining gates
+
+This is an interim recovery-correctness slice, not the operation barrier or backup capability. SQLite verified-backup integration and PostgreSQL/MySQL external-backup references remain required, along with maintenance-barrier integration, in later n68/n70 slices. Phase 1A must not be marked CLEAN from these probe results alone.
