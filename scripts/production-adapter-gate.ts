@@ -14,6 +14,12 @@ interface GateResult {
 interface OwnedDatabaseResource {
   config: DatabaseConfig;
   cleanup: () => Promise<void>;
+  capability: GateCapability;
+}
+
+interface GateCapability {
+  _brand: "GateCapability";
+  token: string;
 }
 
 export interface OwnedSqliteResource {
@@ -21,6 +27,19 @@ export interface OwnedSqliteResource {
   databasePath: string;
   sentinelPath: string;
   sentinel: string;
+  capability: GateCapability;
+}
+
+const gateCapabilityRegistry = new Set<string>();
+
+function createGateCapability(): GateCapability {
+  const token = crypto.randomUUID();
+  gateCapabilityRegistry.add(token);
+  return { _brand: "GateCapability", token };
+}
+
+function validateGateCapability(capability: GateCapability): boolean {
+  return capability._brand === "GateCapability" && gateCapabilityRegistry.has(capability.token);
 }
 
 export async function createOwnedSqliteResource(): Promise<{ config: DatabaseConfig; resource: OwnedSqliteResource }> {
@@ -30,10 +49,11 @@ export async function createOwnedSqliteResource(): Promise<{ config: DatabaseCon
   const databasePath = `${directory}/database.sqlite`;
   const sentinelPath = `${directory}/ownership.sentinel`;
   const sentinel = `agent-bahi-production-gate:${crypto.randomUUID()}`;
+  const capability = createGateCapability();
   await Bun.write(sentinelPath, sentinel);
   return {
     config: { dialect: "sqlite", sqlite: { path: databasePath } },
-    resource: { directory, databasePath, sentinelPath, sentinel },
+    resource: { directory, databasePath, sentinelPath, sentinel, capability },
   };
 }
 
@@ -59,7 +79,9 @@ function safeReason(error: unknown): string {
   if (error instanceof Error) {
     if (error.name === "IntegrationBlockedError") return "DISPOSABLE_RESOURCE_UNAVAILABLE";
     if (/docker|container|network|image|database container/i.test(error.message)) return "DISPOSABLE_RESOURCE_UNAVAILABLE";
-    return error.name || "adapter operation failed";
+    const allowedNames = new Set(["Error", "TypeError", "SyntaxError", "RangeError"]);
+    if (allowedNames.has(error.name)) return error.name;
+    return "adapter operation failed";
   }
   return "adapter operation failed";
 }
@@ -84,18 +106,24 @@ export async function runDialect(
   config: DatabaseConfig,
   ownedSqlite?: OwnedSqliteResource,
   ownedDatabase?: OwnedDatabaseResource,
+  capabilityToken?: string,
 ): Promise<GateResult> {
-  if (config.dialect === "sqlite" && (!ownedSqlite || config.sqlite?.path !== ownedSqlite.databasePath)) {
-    return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
-  }
-  if (config.dialect !== "sqlite" && (!ownedDatabase || ownedDatabase.config !== config)) {
-    return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
+  if (config.dialect === "sqlite") {
+    if (!ownedSqlite || config.sqlite?.path !== ownedSqlite.databasePath || !validateGateCapability(ownedSqlite.capability)) {
+      return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
+    }
+  } else {
+    if (!ownedDatabase || !validateGateCapability(ownedDatabase.capability)) {
+      return { dialect: config.dialect, status: "BLOCKED", reason: "GATE_OWNERSHIP_REQUIRED" };
+    }
   }
   let db: ReturnType<typeof DatabaseFactory.createDatabase> | null = null;
   const suffix = crypto.randomUUID().replace(/-/g, "");
   const table = `__agent_bahi_gate_${suffix}`;
   const migrationId = `production-gate-${config.dialect}-${suffix}`;
-  const sql = `CREATE TABLE ${table} (id TEXT PRIMARY KEY)`;
+  const sql = config.dialect === "mysql"
+    ? `CREATE TABLE ${table} (id VARCHAR(255) PRIMARY KEY)`
+    : `CREATE TABLE ${table} (id TEXT PRIMARY KEY)`;
   let result: GateResult = { dialect: config.dialect, status: "BLOCKED", reason: "adapter operation did not complete" };
   try {
     db = DatabaseFactory.createDatabase(config);
@@ -118,14 +146,6 @@ export async function runDialect(
       if (db) await db.close();
     } catch (error) {
       cleanupFailures.push(`database close failed: ${safeReason(error)}`);
-    }
-    if (ownedSqlite) {
-      try {
-        const failure = await cleanupOwnedSqliteResource(ownedSqlite);
-        if (failure) cleanupFailures.push(failure);
-      } catch (error) {
-        cleanupFailures.push(`SQLite cleanup failed: ${safeReason(error)}`);
-      }
     }
     if (ownedDatabase) {
       try {
@@ -152,10 +172,21 @@ async function main(): Promise<void> {
     results.push(await runDialect(ownedSqlite.config, ownedSqlite.resource));
   } catch (error) {
     results.push({ dialect: "sqlite", status: "BLOCKED", reason: safeReason(error) });
+  } finally {
+    if (ownedSqlite) {
+      try {
+        const failure = await cleanupOwnedSqliteResource(ownedSqlite.resource);
+        if (failure) {
+          results[0] = { ...results[0], status: "BLOCKED", reason: `cleanup failed: ${failure}` };
+        }
+      } catch (error) {
+        results[0] = { ...results[0], status: "BLOCKED", reason: `cleanup failed: ${safeReason(error)}` };
+      }
+    }
   }
 
   for (const dialect of ["postgresql", "mysql"] as const) {
-    let owned: { config: DatabaseConfig; cleanup: () => Promise<void> } | null = null;
+    let owned: OwnedDatabaseResource | null = null;
     try {
       // These helpers create and label a fresh container/network and return an
       // exact-name cleanup plus absence verification. External URLs are never
@@ -163,6 +194,7 @@ async function main(): Promise<void> {
       const started = dialect === "postgresql"
         ? await startPostgresContainer(`production-gate-${crypto.randomUUID()}`)
         : await startMySQLContainer(`production-gate-${crypto.randomUUID()}`);
+      const capability = createGateCapability();
       owned = {
         config: dialect === "postgresql"
           ? {
@@ -187,6 +219,7 @@ async function main(): Promise<void> {
               },
             },
         cleanup: started.cleanup,
+        capability,
       };
       results.push(await runDialect(owned.config, undefined, owned));
     } catch (error) {

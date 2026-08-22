@@ -367,7 +367,7 @@ export class MigrationService {
       const timestamp = new Date().toISOString();
       const tempTableName = "schema_migrations_new";
 
-      // Create new table with correct schema
+      // Create new table with correct schema (including all manifest fields)
       let createSql: string;
       if (this.dialect === "sqlite") {
         createSql = `
@@ -379,7 +379,10 @@ export class MigrationService {
             executed_at TEXT NOT NULL,
             duration_ms INTEGER NOT NULL,
             dirty_reason TEXT,
-            lease_token TEXT
+            lease_token TEXT,
+            manifest_version INTEGER,
+            verification_manifest_hash TEXT,
+            manifest_json TEXT
           )
         `;
       } else if (this.dialect === "postgresql") {
@@ -392,7 +395,10 @@ export class MigrationService {
             executed_at TEXT NOT NULL,
             duration_ms INTEGER NOT NULL,
             dirty_reason TEXT,
-            lease_token TEXT
+            lease_token TEXT,
+            manifest_version INTEGER,
+            verification_manifest_hash TEXT,
+            manifest_json TEXT
           )
         `;
       } else {
@@ -405,7 +411,10 @@ export class MigrationService {
             executed_at VARCHAR(50) NOT NULL,
             duration_ms INT NOT NULL,
             dirty_reason TEXT,
-            lease_token VARCHAR(255)
+            lease_token VARCHAR(255),
+            manifest_version INT,
+            verification_manifest_hash VARCHAR(64),
+            manifest_json TEXT
           )
         `;
       }
@@ -750,7 +759,7 @@ export class MigrationService {
         const actualDirtyReason = (record.dirty_reason as string | null | undefined) ?? null;
         const expectedState = dirtyReasonState(request.expectedDirtyReason);
         const actualState = dirtyReasonState(actualDirtyReason);
-        const storedManifestVersion = typeof record.manifest_version === "number" ? record.manifest_version : Number(record.manifest_version);
+        const storedManifestVersion = typeof record.manifest_version === "number" ? record.manifest_version : (record.manifest_version === null || record.manifest_version === undefined ? null : Number(record.manifest_version));
         const storedManifestHash = typeof record.verification_manifest_hash === "string" ? record.verification_manifest_hash : null;
         const probeResults: Array<Record<string, unknown>> = [];
 
@@ -774,7 +783,7 @@ export class MigrationService {
             actualState,
             actualDirtyReason,
             storedManifestHash,
-            Number.isFinite(storedManifestVersion) ? storedManifestVersion : null,
+            storedManifestVersion === null ? null : (typeof storedManifestVersion === "number" && Number.isFinite(storedManifestVersion) ? storedManifestVersion : null),
             canonicalJson(probeResults),
             verificationStatus,
             success ? 1 : 0,
