@@ -127,3 +127,29 @@ BEFORE DELETE ON audit_log
 BEGIN
   SELECT RAISE(ABORT, 'audit log is append-only');
 END;
+
+CREATE TRIGGER IF NOT EXISTS journal_entries_no_revert_from_posted
+BEFORE UPDATE ON journal_entries
+WHEN NEW.status = 'DRAFT' AND OLD.status = 'POSTED'
+BEGIN
+  SELECT RAISE(ABORT, 'posted journal entry cannot revert to draft');
+END;
+
+CREATE TRIGGER IF NOT EXISTS journal_entries_no_change_when_posted
+BEFORE UPDATE ON journal_entries
+WHEN OLD.status = 'POSTED'
+BEGIN
+  SELECT CASE
+    WHEN NEW.tenant_id != OLD.tenant_id THEN RAISE(ABORT, 'posted journal entry tenant_id is immutable')
+    WHEN NEW.book_set_id != OLD.book_set_id THEN RAISE(ABORT, 'posted journal entry book_set_id is immutable')
+    WHEN NEW.id != OLD.id THEN RAISE(ABORT, 'posted journal entry id is immutable')
+    WHEN NEW.idempotency_key != OLD.idempotency_key THEN RAISE(ABORT, 'posted journal entry idempotency_key is immutable')
+  END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS journal_entries_no_delete_when_posted
+BEFORE DELETE ON journal_entries
+WHEN OLD.status = 'POSTED'
+BEGIN
+  SELECT RAISE(ABORT, 'posted journal entry cannot be deleted');
+END;

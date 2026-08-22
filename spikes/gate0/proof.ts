@@ -29,6 +29,8 @@ export const REQUIRED_PROOFS = [
   "audit_log tenant FK rejection",
   "idempotency replay",
   "idempotency conflict detection",
+  "scoped postings queries per tenant/BookSet/journal",
+  "posted journal entry immutability",
 ] as const;
 
 const MIGRATION_ID = "gate0-001-core-sqlite";
@@ -168,7 +170,7 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     beginImmediate(db);
     try {
       insertBalancedEntry(db, "entry-balanced", "key-balanced");
-      const rows = db.query<{ debit_minor_units: number | bigint; credit_minor_units: number | bigint }, []>("SELECT debit_minor_units, credit_minor_units FROM postings WHERE journal_entry_id = 'entry-balanced' ORDER BY line_no").all();
+      const rows = db.query<{ debit_minor_units: number | bigint; credit_minor_units: number | bigint }, [string, string, string]>("SELECT debit_minor_units, credit_minor_units FROM postings WHERE tenant_id = ? AND book_set_id = ? AND journal_entry_id = ? ORDER BY line_no").all("tenant-a", "book-a", "entry-balanced");
       const postings: PostingAmount[] = rows.map((row) => ({
         debitMinorUnits: BigInt(row.debit_minor_units),
         creditMinorUnits: BigInt(row.credit_minor_units),
@@ -188,7 +190,7 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
       db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-a", "entry-imbalanced", "key-imbalanced");
       db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "entry-imbalanced", 1, 99n);
       db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "entry-imbalanced", 2, 98n);
-      const lines = db.query<{ debit: number | bigint; credit: number | bigint }, []>("SELECT SUM(debit_minor_units) AS debit, SUM(credit_minor_units) AS credit FROM postings WHERE journal_entry_id = 'entry-imbalanced'").get();
+      const lines = db.query<{ debit: number | bigint; credit: number | bigint }, [string, string, string]>("SELECT SUM(debit_minor_units) AS debit, SUM(credit_minor_units) AS credit FROM postings WHERE tenant_id = ? AND book_set_id = ? AND journal_entry_id = ?").get("tenant-a", "book-a", "entry-imbalanced");
       if (BigInt(lines?.debit ?? 0) === BigInt(lines?.credit ?? 0)) throw new Error("imbalance was not detected");
       throw new Error("intentional imbalance rollback");
     } catch (error) {
@@ -241,8 +243,57 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     insertBalancedEntry(db, "entry-same-book", "key-same-book", "book-a");
     pass("STK-003m", "same-BookSet balanced posting success", "balanced posting within same book_set_id commits");
 
+    // Test scoped queries: same journal_entry_id in two different BookSets should be isolated
+    insertBalancedEntry(db, "shared-id", "key-shared-book-a", "book-a");
+    insertBalancedEntry(db, "shared-id", "key-shared-book-b", "book-b");
+    const bookARows = db.query<{ tenant_id: string; book_set_id: string; journal_entry_id: string }, [string, string, string]>(
+      "SELECT tenant_id, book_set_id, journal_entry_id FROM postings WHERE tenant_id = ? AND book_set_id = ? AND journal_entry_id = ?"
+    ).all("tenant-a", "book-a", "shared-id");
+    const bookBRows = db.query<{ tenant_id: string; book_set_id: string; journal_entry_id: string }, [string, string, string]>(
+      "SELECT tenant_id, book_set_id, journal_entry_id FROM postings WHERE tenant_id = ? AND book_set_id = ? AND journal_entry_id = ?"
+    ).all("tenant-a", "book-b", "shared-id");
+    const unscoped = db.query<{ book_set_id: string; count: number | bigint }, [string]>(
+      "SELECT book_set_id, COUNT(*) AS count FROM postings WHERE journal_entry_id = ? GROUP BY book_set_id"
+    ).all("shared-id");
+    if (bookARows.length !== 2) throw new Error("scoped book-a query should return 2 rows");
+    if (bookBRows.length !== 2) throw new Error("scoped book-b query should return 2 rows");
+    if (unscoped.length !== 2 || Number(unscoped[0].count) !== 2 || Number(unscoped[1].count) !== 2) throw new Error("unscoped query should show both books have 2 rows each");
+    pass("STK-003q", "scoped postings queries per tenant/BookSet/journal", "identical journal_entry_id in two BookSets queries correctly scoped");
+
     expectThrow(() => db.query("INSERT INTO audit_log (tenant_id, event_id, entity_type, entity_id, action, payload) VALUES (?, ?, ?, ?, ?, ?)").run("tenant-b", "audit-orphan", "journal_entry", "entry", "post", "{}"), "FOREIGN KEY");
     pass("STK-003n", "audit_log tenant FK rejection", "audit insert with non-existent tenant rejected");
+
+    // Test posted journal entry immutability: create entry, post it, verify immutability
+    db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", "key-posted");
+    db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", 1, 100n);
+    db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", 2, 100n);
+    db.query("UPDATE journal_entries SET status = ? WHERE tenant_id = ? AND book_set_id = ? AND id = ?").run("POSTED", "tenant-a", "book-a", "posted-entry");
+
+    expectThrow(
+      () => db.query("UPDATE journal_entries SET status = ? WHERE tenant_id = ? AND book_set_id = ? AND id = ?").run("DRAFT", "tenant-a", "book-a", "posted-entry"),
+      "cannot revert to draft"
+    );
+    expectThrow(
+      () => db.query("UPDATE journal_entries SET tenant_id = ? WHERE tenant_id = ? AND book_set_id = ? AND id = ?").run("tenant-b", "tenant-a", "book-a", "posted-entry"),
+      "tenant_id is immutable"
+    );
+    expectThrow(
+      () => db.query("UPDATE journal_entries SET book_set_id = ? WHERE tenant_id = ? AND book_set_id = ? AND id = ?").run("book-b", "tenant-a", "book-a", "posted-entry"),
+      "book_set_id is immutable"
+    );
+    expectThrow(
+      () => db.query("UPDATE journal_entries SET id = ? WHERE tenant_id = ? AND book_set_id = ? AND id = ?").run("other-id", "tenant-a", "book-a", "posted-entry"),
+      "id is immutable"
+    );
+    expectThrow(
+      () => db.query("DELETE FROM journal_entries WHERE tenant_id = ? AND book_set_id = ? AND id = ?").run("tenant-a", "book-a", "posted-entry"),
+      "cannot be deleted"
+    );
+    expectThrow(
+      () => db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", 3, 50n),
+      "cannot insert postings for posted journal entry"
+    );
+    pass("STK-003r", "posted journal entry immutability", "posted journal entry cannot revert to draft, change identity/status, be deleted, or have postings added");
 
     // Test idempotency: same request_id + same hash returns original result
     const request1 = JSON.stringify({ action: "create_entry", amount: 100 });
@@ -258,7 +309,7 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
       "SELECT result_json FROM idempotency_records WHERE tenant_id = ? AND request_id = ?"
     ).get("tenant-a", "req-1");
     if (stored?.result_json !== result1) throw new Error("idempotency replay returned different result");
-    pass("STK-003o", "idempotency replay", "same request_id + same hash returns original result");
+    pass("STK-003s", "idempotency replay", "same request_id + same hash returns original result");
 
     // Test idempotency conflict: same request_id + different hash should fail
     const request2 = JSON.stringify({ action: "create_entry", amount: 200 });
@@ -271,7 +322,7 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
       },
       "UNIQUE"
     );
-    pass("STK-003p", "idempotency conflict detection", "same request_id + different hash rejected with conflict");
+    pass("STK-003t", "idempotency conflict detection", "same request_id + different hash rejected with conflict");
 
     if (pragmas.length === 0) throw new Error("pragma query unexpectedly empty");
     return results;
