@@ -14,7 +14,7 @@ This packet synthesizes existing canonical discovery documents and identifies th
 
 **Definition**: T-001 through T-011 owner approvals finalized; PT-001 through PT-016 (16 personal-tax decisions) owner-approved; verified statutory baseline collected; canonical contracts documented.
 
-**Actual State**: 
+**Actual State**:
 - [Owner Review Docket](owner-review-docket.md): T-001–T-011 **OWNER-APPROVED** (binding frameworks for external filing, Frappe reference, depreciation, FX, V1 scope, batch codes, full income-tax, corrections, Form 140/141, post-filing cases, TypeScript+Bun)
 - [Personal Tax Discovery Packet](personal-tax-scope.md): PT-001–PT-016 **OWNER-APPROVED; NOT ARCHITECT-REVIEWED** (individual/PAN tenant, BookSet independence, inter-BookSet transfers, subledgers, TaxCase lifecycle, form selection, rule immutability, external sources, hashed files, readiness catalog, GST routing, TDS/TCS, portal labels, explicit IDs, privacy/secrets, correction lineage)
 - [Verified Baseline § 2](personal-tax-scope.md#2-verified-official-baseline): Taxpayer/period/form boundary, information statements (AIS/TIS/26AS), acquisition authority (file-first, no credentials, AA future), every legal choice loads from immutable effective-dated official rule/schema snapshots
@@ -72,19 +72,19 @@ CURRENT STATE
 
 Each phase depends on the prior phase's exit gate **and** its applicable owner-approved T-/PT-decisions:
 
-| Phase | Duration | Prerequisites | Exit Gate | Decisions |
-|-------|----------|---------------|-----------|-----------|
-| Gate0 | 2–3 weeks | Owner authorization | All STK-001..006 spikes pass; Bun version recorded | T-011 (TypeScript+Bun selected; not implementation authorization) |
-| Phase 1 | 4–6 weeks | Gate0 complete; physical-schema RFC reviewed; Phase 1 decisions approved; explicit Phase 1 authorization | Tenant/GSTIN isolation contract; command registry; migration strategy proven | T-001..T-011 (gate this phase only where they apply) |
-| Phase 2 | 2–3 weeks | Phase 1 complete | Skill contract schema complete; 14-skill catalog declared | Phase 1 skills only; no forward references except marked DEFERRED |
-| Phase 3 | 6–8 weeks | Phase 1–2 complete | Document lifecycle complete; posting engine working; postings immutable/balanced | T-006 (batch partial-success), T-008 (corrections/deletions), PT-003 (inter-BookSet transfers) |
-| Phase 4 | 4–6 weeks | Phase 1–3 complete | Bank import/reconciliation proposals; evidence linking complete | T-001 (evidence recording in prepare/validate/export pattern) |
-| Phase 5 | 8–10 weeks | Phase 1–4 complete | P&L/BS/aging/FX/assets reports; employee-expense workflows | T-003 (depreciation), T-004 (FX), PT-004 (personal subledgers), PT-011 (GST routing) |
-| Phase 6 | 6–8 weeks | Phase 1–5 complete | Payroll finalization; statutory deductions; Form 16 draft | T-007 (full income-tax scope includes payroll) |
-| Phase 7 | 12–16 weeks | Phase 1–6 complete | GSTR-1/3B/2B; TDS/TCS; annual income-tax; corrections lineage | T-001 (filing fallback), T-007/T-009/T-010 (income-tax), PT-005..PT-016 (personal-tax compliance) |
-| Phase 8A | 4–6 weeks | Phase 7 complete | PostgreSQL/MySQL proven; schema migrations/upgrades on all dialects; release executables | SQLite default; multi-dialect proof; no Node/Bun subprocess |
-| Phase 8B | 4–6 weeks | Phase 8A complete | Bounded skills runtime; skill versioning; deprecation gates | Skills invoke CLI only via registry; no direct domain/persistence import |
-| Phase 9 | 4–6 weeks | Phase 8 complete; architect sign-off | Zoho import final; books remain authoritative during shadow | T-002 (Frappe reference only); no import-driven model changes |
+| Phase | Prerequisites | Exit Gate | Decisions |
+|-------|---------------|-----------|-----------|
+| Gate0 | Owner authorization | All STK-001..006 spikes pass; Bun version recorded | T-011 (TypeScript+Bun selected; not implementation authorization) |
+| Phase 1 | Gate0 complete; physical-schema RFC reviewed; Phase 1 decisions approved; explicit Phase 1 authorization | Tenant/GSTIN isolation contract; command registry; migration strategy proven | T-001..T-011 (gate this phase only where they apply) |
+| Phase 2 | Phase 1 complete | Skill contract schema complete; 14-skill catalog declared | Phase 1 skills only; no forward references except marked DEFERRED |
+| Phase 3 | Phase 1–2 complete | Document lifecycle complete; posting engine working; postings immutable/balanced | T-006 (batch partial-success), T-008 (corrections/deletions), PT-003 (inter-BookSet transfers) |
+| Phase 4 | Phase 1–3 complete | Bank import/reconciliation proposals; evidence linking complete | T-001 (evidence recording in prepare/validate/export pattern) |
+| Phase 5 | Phase 1–4 complete | P&L/BS/aging/FX/assets reports; employee-expense workflows | T-003 (depreciation), T-004 (FX), PT-004 (personal subledgers) |
+| Phase 6 | Phase 1–5 complete | Payroll finalization; statutory deductions; Form 16 draft | T-007 (full income-tax scope includes payroll) |
+| Phase 7 | Phase 1–6 complete | GSTR-1/3B/2B; TDS/TCS; annual income-tax; corrections lineage | T-001 (filing fallback), T-007/T-009/T-010 (income-tax), PT-005..PT-016 (personal-tax compliance including PT-011 GST routing) |
+| Phase 8A | Phase 7 complete | PostgreSQL/MySQL proven; schema migrations/upgrades on all dialects; release executables | SQLite default; multi-dialect proof; no Node/Bun subprocess |
+| Phase 8B | Phase 8A complete | Bounded skills runtime; skill versioning; deprecation gates | Skills invoke CLI only via registry; no direct domain/persistence import |
+| Phase 9 | Phase 8 complete; architect sign-off | Zoho import feature complete; imported books reconciled with live books; migration proof | T-002 (Frappe reference only); no import-driven model changes |
 
 ### Witness Dependencies (Not Blocking)
 
@@ -104,7 +104,7 @@ These arc across multiple phases but do not block phase start:
 
 **Invariants** (architect must verify these are enforced at database level; see [personal-tax-physical-schema.md § 2.2](personal-tax-physical-schema.md#22-book_sets)):
 - Exactly one personal BookSet per PAN tenant across full history (including archived rows). UNIQUE constraint full-history, never partial/active-only. Personal BookSet identity preserved across replacement/migration. Duplicate personal creation fails.
-- GSTIN→BookSet mapping: Each proprietorship BookSet may have one GSTIN. [GSTIN uniqueness](personal-tax-physical-schema.md#22-book_sets) includes owning tenant; review the canonical spec.
+- GSTIN→BookSet mapping: Canonical data-model requirements allow multiple GSTIN registrations within an entity scope; GSTIN cardinality (one-per-BookSet, many-per-BookSet, or tenant-wide) remains architect-unresolved. Architect must settle the exact GSTIN uniqueness constraint and mapping mechanics during contract review.
 - Per-BookSet balance enforced: Every posting belongs to exactly one BookSet; debit=credit verified after rounding within each BookSet independently.
 - Explicit mutation scope: BookSet-scoped mutations (create/edit/post/transfer) require explicit `book_set_id` in context; automatic resolution when one candidate exists is never performed. Engine returns `AMBIGUOUS_BOOKSET` if context omitted.
 - TaxCase membership: TaxCase enumerates all BookSets inside the PAN tenant. Updates to BookSet membership (new BookSet created mid-year, archived, activated) mark TaxCase `STALE` and require deliberate reconciliation before filing snapshot.
@@ -173,7 +173,7 @@ These arc across multiple phases but do not block phase start:
 
 ### Database Compatibility and Migration Policy (Owner-Stated Concern; Tentative Recommendation)
 
-**Owner-Stated Concern** ([Architecture § Dependency inward](architecture.md#dependency-inward-architecture)): Local SQLite default, PostgreSQL and MySQL adapters supported; driver, migrations, conformance, and target-platform proofs mandatory before release.
+**Owner-Stated Concern** ([Architecture § Dependency inward](../architecture.md#dependency-inward-architecture)): Local SQLite default, PostgreSQL and MySQL adapters supported; driver, migrations, conformance, and target-platform proofs mandatory before release.
 
 **Tentative Recommended Migration Matrix** (Architect decides final policy):
 
@@ -198,26 +198,26 @@ Each slice produces acceptance-testable deliverables and fail-closed invariants.
 
 ### Slice Inventory and Sequence
 
-| Order | Slice | Phase | Duration | Deliverables | Fail-Closed Gate |
-|-------|-------|-------|----------|--------------|-----------------|
-| 1 | Bun/TS CLI/help | Gate0 | 2–3w | Bun runtime stable; single-file executables; help/schema generation | Artifact checksums match; executable runs on all targets; no Node/Bun subprocess |
-| 2 | Tenant/BookSet/status | Phase 1 | 1–2w | Tenant CRUD; BookSet CRUD; isolation checks; status queries | Tenant mutation fails when BookSet ambiguous; personal BookSet uniqueness enforced; company tenants reject personal/proprietorship BookSets |
-| 3 | SQL/migrations/audit/evidence | Phase 1 | 1–2w | Migration infrastructure; SQLite/PostgreSQL/MySQL proof; audit trail schema; evidence linking schema | Migrations apply consistently; rollback behavior documented; audit rows immutable; evidence hashes verified |
-| 4 | Double-entry ledger | Phase 3 | 2–3w | Journal/posting model; debit=credit enforcement; base-currency balance; original-currency storage; FX snapshot | Every posting tagged with tenant/BookSet; balance fails if debit ≠ credit after rounding; original currency preserved; no posting crosses tenant/BookSet |
-| 5 | Documents/AR/AP | Phase 3 | 2–3w | Invoice/bill/payment state machines; draft→posted lifecycle; immutable reversal lineage; unapplied-payment mechanics | Draft editable; posted immutable; reversals linked; supplier-payment Dr-unapplied-payments leg posted exactly once; allocation clears control |
-| 6 | Bank import/reconciliation | Phase 4 | 2–3w | Bank statement parsing; ephemeral match proposals; evidence-linked reconciliation; explicit human confirmation gate | Proposals non-posting; stale/mismatched/missing confirmation fails closed; no reconciliation or posting without recorded human confirmation binding plan ID/digest, actor, timestamp, exact fields |
-| 7 | GST/TDS/TCS/assets | Phase 5–6 | 4–5w | GST registration/AATO/GSTR/ITC; TDS/TCS computation/Form 26Q; fixed-asset register; depreciation (book and tax) | GSTIN scoped; immutable rule snapshots required; missing/stale rules fail REVIEW/BLOCK; asset uniqueness on (tenant_id, source_document_id, source_line_id); depreciation immutable |
-| 8 | Payroll | Phase 6 | 3–4w | Payroll periods/inputs/runs/payables; statutory deductions (PF, ESI, PT, LWF); Form 16 draft | No attendance/leave/HRMS; inputs approved before run; payslip outputs for secure delivery; no hidden form logic outside rule snapshot |
-| 9 | Personal tax | Phase 7 | 4–5w | TaxCase lifecycle; live non-posting TaxCase; immutable FilingSnapshot; form selection; rule snapshot binding; reconciliation gates | Books remain authoritative; TaxCase aggregates without merging ledgers; correction lineage immutable; filing snapshot binds exact versions/hashes/evidence; missing/stale authority fails REVIEW/BLOCK |
-| 10 | Agent skills/help | Phase 8B | 2–3w | Skill contract versioning; job-skill catalog; CLI-only skill invocation; no direct domain/persistence imports; help/schema generation | All skills call agent-bahi CLI via registry; forward references marked DEFERRED; skill deprecation policy enforced |
-| 11 | Zoho import | Phase 9 | 2–3w | Zoho Books feature parity; entity/account/posting mapping; shadow books validation; live books remain authoritative during import; cutover/rollback/post-cutover monitoring | Books match before/after shadow period; trial balance matches; AR/AP/bank control reconciliation exact; deterministic replay; migration proof at Phase 9 only; no Phase 1–8 import-driven model changes |
+| Order | Slice | Phase | Deliverables | Fail-Closed Gate |
+|-------|-------|-------|--------------|-----------------|
+| 1 | Bun/TS CLI/help | Gate0 | Bun runtime stable; single-file executables; help/schema generation | Artifact checksums match; executable runs on all targets; no Node/Bun subprocess |
+| 2 | Tenant/BookSet/status | Phase 1 | Tenant CRUD; BookSet CRUD; isolation checks; status queries | Tenant mutation fails when BookSet ambiguous; personal BookSet uniqueness enforced; company tenants reject personal/proprietorship BookSets |
+| 3 | SQL/migrations/audit/evidence | Phase 1 | Migration infrastructure; SQLite/PostgreSQL/MySQL proof; audit trail schema; evidence linking schema | Migrations apply consistently; rollback behavior documented; audit rows immutable; evidence hashes verified |
+| 4 | Double-entry ledger | Phase 3 | Journal/posting model; debit=credit enforcement; base-currency balance; original-currency storage; FX snapshot | Every posting tagged with tenant/BookSet; balance fails if debit ≠ credit after rounding; original currency preserved; no posting crosses tenant/BookSet |
+| 5 | Documents/AR/AP | Phase 3 | Invoice/bill/payment state machines; draft→posted lifecycle; immutable reversal lineage; unapplied-payment mechanics | Draft editable; posted immutable; reversals linked; supplier-payment Dr-unapplied-payments leg posted exactly once; allocation clears control |
+| 6 | Bank import/reconciliation | Phase 4 | Bank statement parsing; ephemeral match proposals; evidence-linked reconciliation; explicit human confirmation gate | Proposals non-posting; stale/mismatched/missing confirmation fails closed; no reconciliation or posting without recorded human confirmation binding plan ID/digest, actor, timestamp, exact fields |
+| 7 | Reports/FX/Assets | Phase 5 | P&L/BS/aging/FX reports; realized and unrealized FX; fixed-asset register; depreciation (book and tax) | GSTIN scoped; immutable rule snapshots required; missing/stale rules fail REVIEW/BLOCK; asset uniqueness on (tenant_id, source_document_id, source_line_id); depreciation immutable |
+| 8 | Payroll | Phase 6 | Payroll periods/inputs/runs/payables; statutory deductions (PF, ESI, PT, LWF); Form 16 draft | No attendance/leave/HRMS; inputs approved before run; payslip outputs for secure delivery; no hidden form logic outside rule snapshot |
+| 9 | GST/TDS/TCS/Income-Tax/Compliance | Phase 7 | GSTR-1/3B/2B; TDS/TCS computation/Form 26Q; personal and business income-tax; TaxCase lifecycle; immutable FilingSnapshot | Books remain authoritative; TaxCase aggregates without merging ledgers; correction lineage immutable; filing snapshot binds exact versions/hashes/evidence; missing/stale authority fails REVIEW/BLOCK; GSTIN scoped; immutable rule snapshots required |
+| 10 | Agent skills/help | Phase 8B | Skill contract versioning; job-skill catalog; CLI-only skill invocation; no direct domain/persistence imports; help/schema generation | All skills call agent-bahi CLI via registry; forward references marked DEFERRED; skill deprecation policy enforced |
+| 11 | Zoho import | Phase 9 | Zoho Books feature parity; entity/account/posting mapping; imported books reconciliation with live books; unsupported row quarantine and count | Books match exactly after import; trial balance matches; AR/AP/bank control reconciliation exact; deterministic replay; every inventory/RBAC/custom-field row explicitly counted/quarantined; no silent drop; no Phase 1–8 model changes driven by import |
 
 ### Acceptance Criteria Template (All Slices)
 
 Each slice must satisfy:
 
 1. **Functional**: Contracts from canonical docs verified at integration level; test coverage for golden path + edge cases (e.g., BookSet ambiguity in Phase 1, personal-only CA access in Phase 1, stale rule in Phase 7).
-2. **Fail-Closed**: Every silent-failure listed in [Architecture § 2](architecture.md#2-architecture-drivers-and-silent-failures) is testable and must not pass without explicit error or gate rejection.
+2. **Fail-Closed**: Every silent-failure listed in [Architecture § 2](../architecture.md#2-architecture-drivers-and-silent-failures) is testable and must not pass without explicit error or gate rejection.
 3. **Audit**: Every mutation recorded with actor, source, reason, timestamp, version, request ID; immutability preserved for posted/locked records.
 4. **Isolation**: Tenant/BookSet/GSTIN scoped correctly; cross-boundary access fails at application and database relationship level.
 5. **Idempotency**: Duplicate requests with same ID return same result; no silent replay.
@@ -229,11 +229,11 @@ Each slice must satisfy:
 
 **Status**: TENTATIVE; owner acceptance and CA sign-off pending at Phase 9 cutover.
 
-### Shadow Books Invariant (Before Cutover)
+### Shadow Books and Reconciliation Invariants
 
-During shadow period, live books remain authoritative. Agent-bahi shadow books must reconcile exactly:
+After Phase 9 import completes, imported books are placed in shadow mode (separate database or read-only access, never live posting). Agent-bahi shadow books must reconcile exactly with live books before cutover:
 
-1. **Opening balances**: Reconcile opening trial balance from live books. Variance > 0 fails closed; explainable variance must be documented by operator or CA.
+1. **Opening balances**: Reconcile opening trial balance from live books. Variance > 0 fails closed; explainable variance must be documented by operator.
 2. **Trial balance**: Sum of all account balances matches by period. Debit = credit after rounding. Zero unexplained variance.
 3. **AR/AP aging**: Aged receivables and payables match live books detail-for-detail. Invoice/bill/payment sequence and amount match.
 4. **Bank control totals**: Bank reconciliation matches live books. Unmatched lines reconcile. Cleared/uncleared status matches.
@@ -242,34 +242,34 @@ During shadow period, live books remain authoritative. Agent-bahi shadow books m
 7. **Payroll**: Gross/net/statutory deductions match live payroll. Form 16 values match tax computation in agent-bahi.
 8. **Personal tax** (if applicable): TaxCase income/tax computation matches personal books + all proprietorship BookSets aggregated. All external evidence (AIS, 26AS) reconciled and immutable. Filing snapshot binds exact versions and hashes.
 
-**Failure Condition**: Any variance > 0 fails closed. Operator and CA must investigate and correct before phase progression.
+**Failure Condition**: Any variance > 0 fails closed. Finance Owner and CA must investigate and correct before cutover authorization.
 
-### Cutover and Rollback Authority
+### Import, Shadow Books, and Cutover Sequence
 
-**Current Books**: Live books remain authoritative and continue posting during shadow period.
+**Phase 9 Import Completion**: Zoho Books import feature implementation completes in Phase 9. Imported books must reconcile exactly with live books (trial balance, AR/AP, bank control, GST, TDS/TCS, payroll). Every unsupported row (inventory, RBAC/identity, custom fields, other) is explicitly quarantined, counted, and reported; no silent drop. Feature parity is validated (see [Zoho Books and Frappe Books Feature Parity Matrix](zoho-frappe-parity.md)), but canonical contracts remain independent of vendor behavior. No Phase 1–8 decisions are driven by import behavior.
 
-**Shadow Period Conditions**:
+**Current Books**: Live books remain authoritative and continue posting during shadow period. Imported books are placed in shadow/test mode (separate database or read-only access) until final cutover decision.
+
+**Shadow Period Conditions** (Phase 9 cutover planning):
 - **Duration**: TBD by owner at Phase 9.
 - **Tolerance**: Zero variance allowed; any mismatch fails closed.
-- **Cutover Decision**: Owner + CA (Finance Owner) joint decision. Owner decides go/no-go; CA verifies reconciliation complete and books match.
+- **Reconciliation gates**: Opening balances, trial balance, AR/AP aging, bank control totals, GST, TDS/TCS, payroll, personal tax all must reconcile exactly.
 
-**Cutover Mechanics**:
-- Explicit human finance-owner and CA sign-off bind exact artifact hashes (books/rule-snapshots/authority-packs).
+**Cutover Mechanics** (after import and shadow reconciliation complete):
+- **Finance Owner** (operational authority): Verifies reconciliation complete and books match; authorizes cutover; retains rollback authority.
+- **CA** (statutory authority): Independently reviews shadow books for accounting/tax correctness; signs statutory review artifacts; verifies evidence and compliance.
+- Both roles bind exact artifact hashes (books/rule-snapshots/authority-packs) to their respective sign-off. Signatures and binding are separate and independent.
 - Upload/export is not filing. Evidence remains in agent-bahi; export files are working papers only.
 - Specimen filing (e.g., GSTR-1 export, ITR form) generated and sent for CA review before any live filing.
 - Mixed-version failure tests completed: old client reads new schema safely; new client reads old schema returns error with guidance.
 - Restore-in-isolation verified: backup restored and reconciliation re-run in test environment; deterministic replay produces same trial balance.
-- Rollback plan documented: If post-cutover failure occurs, exact procedure and data recovery steps pre-agreed.
+- Rollback plan documented: If post-cutover failure occurs, exact procedure and data recovery steps pre-agreed with Finance Owner and CA.
 
 ### Post-Cutover Monitoring
 
 1. **Automated gates**: Daily trial-balance check; AR/AP reconciliation; bank control totals; GST liability/ITC reconciliation (if applicable).
-2. **Human/CA confirmations**: Weekly compliance review (TDS/TCS accrual, payroll, filing deadlines); monthly financial review.
+2. **Human/CA confirmations**: Finance Owner weekly review (bank, payroll, deposits); CA weekly compliance review (TDS/TCS accrual, payroll, filing deadlines); monthly financial review.
 3. **Stop conditions**: Trial balance variance > 0; unmatched bank control; unexplained ITC rejection from GST portal; missing rule snapshot at tax computation; audit trail gap.
-
-### Import Last (Phase 9 Only)
-
-Zoho Books import occurs **after** live cutover is complete and production books are stable. No Phase 1–8 decisions are driven by Zoho import behavior. Feature parity is validated (see [Zoho Books and Frappe Books Feature Parity Matrix](zoho-frappe-parity.md)), but canonical contracts remain independent of vendor behavior.
 
 ---
 
@@ -318,8 +318,10 @@ Zoho Books import occurs **after** live cutover is complete and production books
    - Future multi-entity consolidation (e.g., holding-company tenants with consolidated reporting): separate owner decision; not in scope for Phase 1.
 
 5. **Shadow Duration and Cutover Authority** (Phase 9 planning; not now)
-   - Sudhanshu + Finance-Owner + CA jointly decide acceptable shadow period duration and cutover date.
-   - Sudhanshu reserves right to halt cutover if shadow reconciliation shows unexplained variance.
+   - Sudhanshu, Finance Owner, and CA jointly plan acceptable shadow period duration and cutover date.
+   - Finance Owner retains cutover/rollback operational authority and decides go/no-go based on reconciliation completeness.
+   - CA independently verifies accounting/tax correctness and signs statutory review artifacts.
+   - Sudhanshu reserves right to halt cutover if shadow reconciliation shows unexplained variance or either Finance Owner or CA identifies risk.
 
 6. **Migration Dependency Policy** (architecture detail with business impact; deferred to Phase 1 detailed planning)
    - Can Phase 1 modify data-model contracts if an existing library proof fails, or must library choice wait for alternative proof?
