@@ -606,11 +606,112 @@ async function captureMultipleSnapshots(sql: SQL, tables: string[]): Promise<Tab
   for (const table of tables) {
     try {
       snapshots.push(await captureTableSnapshot(sql, table, "postgres")); // dialect not needed for this level
-    } catch {
-      snapshots.push({ table, count: 0, rows: [] }); // table may not exist yet
+    } catch (error) {
+      // Query error must not be swallowed; re-throw to fail the proof
+      throw new Error(`snapshot capture failed for ${table}: ${sanitizeError(error)}`);
     }
   }
   return snapshots;
+}
+
+export class IdempotencyConflictError extends Error {
+  readonly code = "IDEMPOTENCY_CONFLICT";
+
+  constructor(message: string = "idempotency conflict: same request_id with different request_hash") {
+    super(message);
+    this.name = "IdempotencyConflictError";
+  }
+}
+
+export type IdempotencyResult = {
+  result_json: string;
+  result_hash: string;
+};
+
+function extractLockErrorCode(error: unknown, dialect: DatabaseType): { isLockError: boolean; code: string } {
+  if (!error) return { isLockError: false, code: "" };
+
+  const err = error as unknown as Record<string, unknown>;
+  const errStr = String(error);
+
+  if (dialect === "postgres") {
+    // PostgreSQL: check structured sqlState field or SQLSTATE in message
+    const sqlState = err.sqlState || err.code;
+    if (sqlState === "55P03" || sqlState === "40P01") {
+      return { isLockError: true, code: String(sqlState) };
+    }
+    // Fallback to message parsing only if no structured field
+    if (errStr.includes("55P03") || errStr.includes("40P01")) {
+      return { isLockError: true, code: "SQLSTATE_in_message" };
+    }
+  } else {
+    // MySQL: check structured errno or sqlState field
+    const errno = err.errno || err.code;
+    const sqlState = err.sqlState;
+    if (errno === 1205 || errno === "1205" || sqlState === "40001") {
+      return { isLockError: true, code: String(errno || sqlState) };
+    }
+    // Fallback to message parsing only if no structured field
+    if (errStr.includes("1205") || errStr.includes("40001")) {
+      return { isLockError: true, code: "errno_in_message" };
+    }
+  }
+
+  return { isLockError: false, code: "" };
+}
+
+export async function getOrCreateIdempotencyRecord(
+  sql: SQL,
+  tenantId: string,
+  requestId: string,
+  requestHash: string,
+  resultJson: string,
+  resultHash: string,
+): Promise<IdempotencyResult> {
+  // Own the transaction; check PK, detect conflict, return/insert, commit atomically
+  let result: IdempotencyResult | null = null;
+  let conflictDetected = false;
+
+  await sql.begin(async (tx) => {
+    const existing = await tx<{ request_hash: string; result_json: string; result_hash: string }[]>`
+      SELECT request_hash, result_json, result_hash FROM idempotency_records
+      WHERE tenant_id = ${tenantId} AND request_id = ${requestId}
+    `;
+
+    if (existing.length > 0) {
+      if (existing[0].request_hash !== requestHash) {
+        // Conflict: same (tenant_id, request_id) with different hash
+        // Do NOT expose prior result; just throw typed error
+        conflictDetected = true;
+      } else {
+        // Same hash: return exact stored result
+        result = {
+          result_json: existing[0].result_json,
+          result_hash: existing[0].result_hash,
+        };
+      }
+    } else {
+      // New record: insert and return
+      await tx`
+        INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
+        VALUES (${tenantId}, ${requestId}, ${requestHash}, ${resultJson}, ${resultHash})
+      `;
+      result = {
+        result_json: resultJson,
+        result_hash: resultHash,
+      };
+    }
+  });
+
+  if (conflictDetected) {
+    throw new IdempotencyConflictError();
+  }
+
+  if (!result) {
+    throw new Error("idempotency record not returned");
+  }
+
+  return result;
 }
 
 async function seedFixtures(sql: SQL): Promise<void> {
@@ -1304,20 +1405,10 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
               FOR UPDATE NOWAIT
             `;
           } catch (conflictError) {
-            const errStr = String(conflictError);
-            // Classify by SQLSTATE/errno codes only, not broad message words
-            if (ctx.dbConfig.type === "postgres") {
-              // PostgreSQL: check for 40P01 (serialization_failure) or 55P03 (lock_not_available)
-              if (errStr.includes("40P01") || errStr.includes("55P03") || errStr.includes("lock") && errStr.includes("timeout")) {
-                lockConflictDetected = true;
-                detectedCode = "PostgreSQL lock/timeout (40P01 or 55P03)";
-              }
-            } else {
-              // MySQL: check for 40001 (ER_LOCK_WAIT_TIMEOUT) or 1205 error code
-              if (errStr.includes("40001") || errStr.includes("1205") || errStr.includes("NOWAIT")) {
-                lockConflictDetected = true;
-                detectedCode = "MySQL lock/timeout (40001 or 1205)";
-              }
+            const { isLockError, code } = extractLockErrorCode(conflictError, ctx.dbConfig.type);
+            if (isLockError) {
+              lockConflictDetected = true;
+              detectedCode = ctx.dbConfig.type === "postgres" ? `PostgreSQL ${code}` : `MySQL ${code}`;
             }
           }
 
@@ -1389,105 +1480,72 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       }
     }
 
-    // IDEM-001: invoke get-or-create with same tenant/req_id/req_hash + different candidate; return exact stored R1/RH1
+    // CON-001 negative: unrelated error must NOT be classified as lock conflict
+    try {
+      const unrelatedError = Object.assign(new Error("connection reset by peer"), { code: "ECONNRESET" });
+
+      const { isLockError: isUnrelatedLock } = extractLockErrorCode(unrelatedError, ctx.dbConfig.type);
+      if (isUnrelatedLock) {
+        recordProofFail(results, "CON-001-NEG", prefix, "Unrelated error incorrectly classified as lock conflict");
+      } else {
+        recordProofPass(results, "CON-001-NEG", prefix, [
+          "unrelated error (ECONNRESET) correctly rejected",
+          "not misclassified as lock/timeout conflict",
+          "error classification strict and accurate",
+        ]);
+      }
+    } catch (error) {
+      recordProofFail(results, "CON-001-NEG", prefix, sanitizeError(error));
+    }
+
+    // IDEM-001: invoke shared get-or-create with same tenant/req_id/req_hash + different candidate; return exact stored R1/RH1
     try {
       const reqHash1 = sha256MigrationText("request-1-content");
       const resultJson1 = JSON.stringify({ entry_id: "idem-1", success: true });
       const resultHash1 = sha256MigrationText(resultJson1);
 
-      // First invocation: create the record
-      let firstResult: { result_json: string; result_hash: string } | null = null;
-      await sql.begin(async (tx) => {
-        const existing = await tx<{ request_hash: string; result_json: string; result_hash: string }[]>`
-          SELECT request_hash, result_json, result_hash FROM idempotency_records
-          WHERE tenant_id = ${'t-a'} AND request_id = ${'req-1'}
-        `;
+      // First invocation: shared operation creates record
+      const firstResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-1", reqHash1, resultJson1, resultHash1);
 
-        if (existing.length === 0) {
-          await tx`
-            INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
-            VALUES (${'t-a'}, ${'req-1'}, ${reqHash1}, ${resultJson1}, ${resultHash1})
-          `;
-          firstResult = { result_json: resultJson1, result_hash: resultHash1 };
-        } else {
-          firstResult = { result_json: existing[0].result_json, result_hash: existing[0].result_hash };
-        }
-      });
+      // Replay with same tenant/req_id/req_hash but deliberately different candidate bytes
+      const differentCandidate = JSON.stringify({ entry_id: "different", success: false });
+      const differentCandidateHash = sha256MigrationText(differentCandidate);
 
-      if (!firstResult) {
-        recordProofFail(results, "IDEM-001", prefix, "First invocation failed");
+      // Replay with same hash: shared operation must return exact stored R1/RH1, ignoring candidate bytes
+      const replayResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-1", reqHash1, differentCandidate, differentCandidateHash);
+
+      if (
+        replayResult.result_json === resultJson1 &&
+        replayResult.result_hash === resultHash1
+      ) {
+        recordProofPass(results, "IDEM-001", prefix, [
+          "first invocation: shared operation created (t-a, req-1, H1) -> R1/RH1",
+          "replay with same tenant/req_id/H1",
+          "replay with different candidate bytes/hash",
+          "shared operation returned exact stored R1/RH1",
+          "candidate bytes ignored by shared operation",
+          "zero row mutations (enforced by shared transaction)",
+        ]);
       } else {
-        // Replay with same tenant/req_id/req_hash but deliberately different candidate bytes
-        const differentCandidate = JSON.stringify({ entry_id: "different", success: false });
-        const differentCandidateHash = sha256MigrationText(differentCandidate);
-
-        const replayResultValue: ({ result_json: string; result_hash: string } | null)[] = [null];
-        await sql.begin(async (tx) => {
-          const existing = await tx<{ request_hash: string; result_json: string; result_hash: string }[]>`
-            SELECT request_hash, result_json, result_hash FROM idempotency_records
-            WHERE tenant_id = ${'t-a'} AND request_id = ${'req-1'}
-          `;
-
-          if (existing.length > 0 && existing[0].request_hash === reqHash1) {
-            // Same hash: return stored result, ignore candidate
-            replayResultValue[0] = { result_json: existing[0].result_json, result_hash: existing[0].result_hash };
-          } else if (existing.length === 0) {
-            // No record yet: insert candidate
-            await tx`
-              INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
-              VALUES (${'t-a'}, ${'req-1'}, ${reqHash1}, ${differentCandidate}, ${differentCandidateHash})
-            `;
-            replayResultValue[0] = { result_json: differentCandidate, result_hash: differentCandidateHash };
-          }
-        });
-
-        const replayResult = replayResultValue[0];
-        if (
-          replayResult &&
-          replayResult.result_json === resultJson1 &&
-          replayResult.result_hash === resultHash1
-        ) {
-          recordProofPass(results, "IDEM-001", prefix, [
-            "first invocation: (t-a, req-1, H1) -> stored R1/RH1",
-            "replay with same tenant/req_id/H1",
-            "replay with different candidate bytes/hash",
-            "returned exact stored R1/RH1",
-            "candidate bytes ignored",
-            "zero row mutations",
-          ]);
-        } else {
-          recordProofFail(
-            results,
-            "IDEM-001",
-            prefix,
-            `Replay returned: ${replayResult?.result_json ?? "null"}, expected: ${resultJson1}`,
-          );
-        }
+        recordProofFail(
+          results,
+          "IDEM-001",
+          prefix,
+          `Replay returned: ${replayResult.result_json}, expected: ${resultJson1}`,
+        );
       }
     } catch (error) {
       recordProofFail(results, "IDEM-001", prefix, sanitizeError(error));
     }
 
-    // IDEM-002: same tenant/req_id + DIFFERENT hash -> typed IDEMPOTENCY_CONFLICT; no result exposed; unchanged
+    // IDEM-002: same tenant/req_id + DIFFERENT hash -> typed IDEMPOTENCY_CONFLICT from shared operation; no exposure
     try {
       const reqHash2 = sha256MigrationText("request-2-content");
       const resultJson2 = JSON.stringify({ entry_id: "idem-2", success: true });
       const resultHash2 = sha256MigrationText(resultJson2);
 
-      // Create first record
-      await sql.begin(async (tx) => {
-        const existing = await tx<{ request_hash: string }[]>`
-          SELECT request_hash FROM idempotency_records
-          WHERE tenant_id = ${'t-a'} AND request_id = ${'req-2'}
-        `;
-
-        if (existing.length === 0) {
-          await tx`
-            INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
-            VALUES (${'t-a'}, ${'req-2'}, ${reqHash2}, ${resultJson2}, ${resultHash2})
-          `;
-        }
-      });
+      // Create first record with shared operation
+      const firstResult = await getOrCreateIdempotencyRecord(sql, "t-a", "req-2", reqHash2, resultJson2, resultHash2);
 
       // Capture before state
       const snapBefore = await captureMultipleSnapshots(sql, ["idempotency_records"]);
@@ -1497,46 +1555,29 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
         WHERE tenant_id = ${'t-a'} AND request_id = ${'req-2'}
       `;
 
-      // Attempt with same tenant/req_id but DIFFERENT hash
+      // Conflict attempt: same tenant/req_id but DIFFERENT hash
       const differentReqHash = sha256MigrationText("request-2-different-content");
       const conflictCandidate = JSON.stringify({ entry_id: "conflict", success: false });
       const conflictCandidateHash = sha256MigrationText(conflictCandidate);
 
       let conflictThrown = false;
-      let conflictExposedResult = false;
+      let conflictWasTyped = false;
       try {
-        await sql.begin(async (tx) => {
-          const existing = await tx<{ request_hash: string; result_json: string; result_hash: string }[]>`
-            SELECT request_hash, result_json, result_hash FROM idempotency_records
-            WHERE tenant_id = ${'t-a'} AND request_id = ${'req-2'}
-          `;
-
-          if (existing.length > 0) {
-            if (existing[0].request_hash !== differentReqHash) {
-              // Conflict: same request_id with different hash
-              // Throw typed error and expose no result
-              throw new Error("IDEMPOTENCY_CONFLICT");
-            }
-            // Same hash: return stored result
-            conflictExposedResult = true; // Should not reach here
-          } else {
-            // No record: insert candidate
-            await tx`
-              INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash)
-              VALUES (${'t-a'}, ${'req-2'}, ${differentReqHash}, ${conflictCandidate}, ${conflictCandidateHash})
-            `;
-          }
-        });
+        // Invoke shared operation with different hash - must throw typed IdempotencyConflictError
+        await getOrCreateIdempotencyRecord(sql, "t-a", "req-2", differentReqHash, conflictCandidate, conflictCandidateHash);
       } catch (error) {
-        if (String(error).includes("IDEMPOTENCY_CONFLICT")) {
+        if (error instanceof IdempotencyConflictError && error.code === "IDEMPOTENCY_CONFLICT") {
+          conflictThrown = true;
+          conflictWasTyped = true;
+        } else if (error instanceof Error && error.message.includes("IDEMPOTENCY_CONFLICT")) {
           conflictThrown = true;
         }
       }
 
       if (!conflictThrown) {
         recordProofFail(results, "IDEM-002", prefix, "Idempotency conflict should be detected (different hash)");
-      } else if (conflictExposedResult) {
-        recordProofFail(results, "IDEM-002", prefix, "Conflict should not expose prior result");
+      } else if (!conflictWasTyped) {
+        recordProofFail(results, "IDEM-002", prefix, "Conflict must throw typed IdempotencyConflictError");
       } else {
         // Verify nothing changed
         const snapAfter = await captureMultipleSnapshots(sql, ["idempotency_records"]);
@@ -1556,9 +1597,9 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
           recordProofFail(results, "IDEM-002", prefix, "Rows changed despite IDEMPOTENCY_CONFLICT");
         } else {
           recordProofPass(results, "IDEM-002", prefix, [
-            "second invocation: same tenant/req_id with different request_hash",
-            "typed IDEMPOTENCY_CONFLICT thrown",
-            "no prior result exposed to caller",
+            "invocation: same tenant/req_id with different request_hash",
+            "shared operation threw typed IdempotencyConflictError",
+            "no prior result exposed (error thrown before return)",
             `row count before=${countBefore}, after=${countAfter}`,
             "original request_hash preserved",
             "original result_json preserved",
