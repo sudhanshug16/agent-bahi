@@ -9,10 +9,14 @@ import { resolve } from "path";
  * SQLite Migration Session (callback-scoped): holds BEGIN IMMEDIATE transaction.
  * Ensures all DDL, validation, and audit happen on same connection.
  * Never construct outside callback; never call commit/rollback (automatic).
+ * Active flag enforced; all methods reject after callback returns.
+ * Finalization (_commit/_rollback) ensures exactly-once semantics even if COMMIT/ROLLBACK throws.
  */
 class SqliteMigrationSession implements MigrationSession {
   private statements = new Map<string, ReturnType<BunDatabase["prepare"]>>();
   private token: string;
+  private active = true;
+  private finalized = false;
 
   constructor(private db: BunDatabase) {
     this.token = randomUUID();
@@ -26,7 +30,17 @@ class SqliteMigrationSession implements MigrationSession {
     return this.statements.get(sql)!;
   }
 
+  private checkActive(): void {
+    if (!this.active) {
+      throw new DomainError(
+        "MIGRATION_SESSION_INACTIVE",
+        "MigrationSession has been finalized and is no longer active"
+      );
+    }
+  }
+
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
+    this.checkActive();
     const stmt = this.prepareStatement(sql);
     const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
     return {
@@ -36,30 +50,43 @@ class SqliteMigrationSession implements MigrationSession {
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
+    this.checkActive();
     const stmt = this.prepareStatement(sql);
     return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
   }
 
   async executeRaw(sql: string): Promise<void> {
+    this.checkActive();
     this.db.exec(sql);
   }
 
   leaseToken(): string {
+    this.checkActive();
     return this.token;
   }
 
   // Commit/rollback handled by withMigrationLease; never expose here
   async _commit(): Promise<void> {
+    if (this.finalized) return; // Idempotent
+    this.active = false;
     this.statements.clear();
-    this.db.exec("COMMIT");
+    try {
+      this.db.exec("COMMIT");
+    } finally {
+      this.finalized = true;
+    }
   }
 
   async _rollback(): Promise<void> {
+    if (this.finalized) return; // Idempotent
+    this.active = false;
     this.statements.clear();
     try {
       this.db.exec("ROLLBACK");
     } catch {
       // Already rolled back
+    } finally {
+      this.finalized = true;
     }
   }
 }
@@ -69,6 +96,7 @@ class SqliteMigrationSession implements MigrationSession {
  */
 class SqliteTransaction implements Transaction {
   private active = true;
+  private finalized = false;
   private statements = new Map<string, ReturnType<BunDatabase["prepare"]>>();
 
   constructor(private db: BunDatabase) {
@@ -83,25 +111,33 @@ class SqliteTransaction implements Transaction {
   }
 
   async commit(): Promise<void> {
-    if (!this.active) throw new Error("Transaction not active");
+    if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
+    if (this.finalized) return; // Idempotent
     this.active = false;
     this.statements.clear();
-    this.db.exec("COMMIT");
+    try {
+      this.db.exec("COMMIT");
+    } finally {
+      this.finalized = true;
+    }
   }
 
   async rollback(): Promise<void> {
-    if (!this.active) throw new Error("Transaction not active");
+    if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
+    if (this.finalized) return; // Idempotent
     this.active = false;
     this.statements.clear();
     try {
       this.db.exec("ROLLBACK");
     } catch {
       // Already rolled back
+    } finally {
+      this.finalized = true;
     }
   }
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.active) throw new Error("Transaction not active");
+    if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
 
     const stmt = this.prepareStatement(sql);
     const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
@@ -113,14 +149,14 @@ class SqliteTransaction implements Transaction {
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
-    if (!this.active) throw new Error("Transaction not active");
+    if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
 
     const stmt = this.prepareStatement(sql);
     return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
   }
 
   async executeRaw(sql: string): Promise<void> {
-    if (!this.active) throw new Error("Transaction not active");
+    if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
     this.db.exec(sql);
   }
 
@@ -303,20 +339,60 @@ export class SqliteAdapter implements Database {
 
   async withMigrationLease<T>(
     callback: (session: MigrationSession) => Promise<T>,
-    timeoutMs?: number,
+    timeoutMs: number = 30000,
   ): Promise<T> {
-    // SQLite: BEGIN IMMEDIATE on main connection; entire callback executes in transaction.
-    // Timeout is advisory; SQLite has no native transaction timeout.
-    const session = new SqliteMigrationSession(this.db);
+    const deadline = Date.now() + timeoutMs;
+    let session: SqliteMigrationSession | undefined;
+
     try {
+      // BEGIN IMMEDIATE inside try to ensure ROLLBACK on error
+      // Try to acquire with bounded retries on SQLITE_BUSY
+      const retryIntervalMs = 50;
+      let beginAcquired = false;
+
+      while (Date.now() < deadline) {
+        try {
+          // Create session and attempt BEGIN IMMEDIATE
+          session = new SqliteMigrationSession(this.db);
+          beginAcquired = true;
+          break;
+        } catch (err) {
+          // Handle SQLITE_BUSY or SQLITE_LOCKED during BEGIN IMMEDIATE
+          const errMsg = (err instanceof Error ? err.message : String(err)).toUpperCase();
+          if (errMsg.includes("BUSY") || errMsg.includes("LOCKED")) {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs > 0) {
+              await new Promise(resolve =>
+                setTimeout(resolve, Math.min(retryIntervalMs, remainingMs))
+              );
+              continue;
+            } else {
+              throw new MigrationLockedError(
+                `Failed to acquire migration lease within ${timeoutMs}ms (SQLITE_BUSY/LOCKED)`
+              );
+            }
+          }
+          // Non-busy errors propagate
+          throw err;
+        }
+      }
+
+      if (!beginAcquired || !session) {
+        throw new MigrationLockedError(
+          `Failed to acquire migration lease within ${timeoutMs}ms deadline`
+        );
+      }
+
       const result = await callback(session);
       await session._commit();
       return result;
     } catch (error) {
-      try {
-        await session._rollback();
-      } catch {
-        // Already rolled back
+      if (session) {
+        try {
+          await session._rollback();
+        } catch {
+          // Already rolled back
+        }
       }
       throw error;
     }

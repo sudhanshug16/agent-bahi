@@ -3,37 +3,66 @@ import type { PostgresConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { randomUUID } from "crypto";
 
+// Narrow typed query-client interface for Bun SQL transaction/reserved handles
+interface BunSqlClient {
+  query(sql: string, params?: unknown[]): Promise<unknown>;
+}
+
 /**
  * PostgreSQL Migration Session (callback-scoped): uses pinned connection with xact-scoped lock.
  * txSql held by db.begin() callback; never escape scope.
  * Commit/rollback handled automatically by Bun on callback return/error.
+ * Active flag enforced; all methods reject after callback returns.
  */
 class PostgresMigrationSession implements MigrationSession {
   private token: string;
+  private active = true;
 
-  constructor(private txSql: any) {
+  constructor(private txSql: BunSqlClient) {
     this.token = randomUUID();
   }
 
-  async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
-    const result = await this.txSql.query(sql, params || []);
+  private checkActive(): void {
+    if (!this.active) {
+      throw new DomainError(
+        "MIGRATION_SESSION_INACTIVE",
+        "MigrationSession has been finalized and is no longer active"
+      );
+    }
+  }
+
+  private normalizeResult(result: unknown): { rows: Record<string, unknown>[]; rowCount: number } {
     return {
-      rows: Array.isArray(result) ? result : result?.rows || [],
-      rowCount: (result?.length || result?.rows?.length || 0) as number,
+      rows: Array.isArray(result) ? result : (result as any)?.rows || [],
+      rowCount: (Array.isArray(result) ? result.length : (result as any)?.rows?.length) || 0,
     };
   }
 
-  async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
+  async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
+    this.checkActive();
     const result = await this.txSql.query(sql, params || []);
-    return (Array.isArray(result) ? result[0] : result?.rows?.[0]) as Record<string, unknown> | undefined;
+    return this.normalizeResult(result);
+  }
+
+  async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
+    this.checkActive();
+    const result = await this.txSql.query(sql, params || []);
+    const normalized = this.normalizeResult(result);
+    return normalized.rows[0];
   }
 
   async executeRaw(sql: string): Promise<void> {
+    this.checkActive();
     await this.txSql.query(sql);
   }
 
   leaseToken(): string {
+    this.checkActive();
     return this.token;
+  }
+
+  _setInactive(): void {
+    this.active = false;
   }
 }
 
@@ -44,56 +73,73 @@ class PostgresMigrationSession implements MigrationSession {
  */
 class PostgresTransaction implements Transaction {
   private active = true;
+  private finalized = false;
   private isFromBeginCallback: boolean;
 
-  constructor(private txSql: any, isFromBeginCallback: boolean = true) {
+  constructor(private txSql: BunSqlClient, isFromBeginCallback: boolean = true) {
     // isFromBeginCallback=true: Bun manages BEGIN/COMMIT
     // isFromBeginCallback=false: we must manage BEGIN/COMMIT (legacy beginTransaction path)
     this.isFromBeginCallback = isFromBeginCallback;
   }
 
+  private checkActive(): void {
+    if (!this.active) {
+      throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
+    }
+  }
+
+  private normalizeResult(result: unknown): { rows: Record<string, unknown>[]; rowCount: number } {
+    return {
+      rows: Array.isArray(result) ? result : (result as any)?.rows || [],
+      rowCount: (Array.isArray(result) ? result.length : (result as any)?.rows?.length) || 0,
+    };
+  }
+
   async commit(): Promise<void> {
-    if (!this.active) throw new Error("Transaction not active");
+    this.checkActive();
+    if (this.finalized) return; // Idempotent
     this.active = false;
-    // Only call COMMIT if we manually started the transaction
-    // If from .begin() callback, Bun handles commit automatically
-    if (!this.isFromBeginCallback) {
-      await this.txSql.query("COMMIT");
+    try {
+      // Only call COMMIT if we manually started the transaction
+      // If from .begin() callback, Bun handles commit automatically
+      if (!this.isFromBeginCallback) {
+        await this.txSql.query("COMMIT");
+      }
+    } finally {
+      this.finalized = true;
     }
   }
 
   async rollback(): Promise<void> {
-    if (!this.active) throw new Error("Transaction not active");
+    this.checkActive();
+    if (this.finalized) return; // Idempotent
     this.active = false;
-    // Only call ROLLBACK if we manually started the transaction
-    if (!this.isFromBeginCallback) {
-      try {
+    try {
+      // Only call ROLLBACK if we manually started the transaction
+      if (!this.isFromBeginCallback) {
         await this.txSql.query("ROLLBACK");
-      } catch {
-        // Already rolled back
       }
+    } catch {
+      // Already rolled back
+    } finally {
+      this.finalized = true;
     }
   }
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.active) throw new Error("Transaction not active");
-
+    this.checkActive();
     const result = await this.txSql.query(sql, params || []);
-    return {
-      rows: Array.isArray(result) ? result : result?.rows || [],
-      rowCount: (result?.length || result?.rows?.length || 0) as number,
-    };
+    return this.normalizeResult(result);
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
-    if (!this.active) throw new Error("Transaction not active");
-
+    this.checkActive();
     const result = await this.txSql.query(sql, params || []);
-    return (Array.isArray(result) ? result[0] : result?.rows?.[0]) as Record<string, unknown> | undefined;
+    return this.normalizeResult(result).rows[0];
   }
 
   async executeRaw(sql: string): Promise<void> {
-    if (!this.active) throw new Error("Transaction not active");
+    this.checkActive();
     await this.txSql.query(sql);
   }
 
@@ -116,7 +162,7 @@ class PostgresUnitOfWork implements UnitOfWork {
     // Bun.db.begin() pins txSql to one reserved connection for entire callback
     // Auto-commits on success, auto-rollbacks on error
     // No manual BEGIN/COMMIT needed
-    return this.db.begin(config, async (txSql: any) => {
+    return this.db.begin(config, async (txSql: BunSqlClient) => {
       const tx = new PostgresTransaction(txSql);
       return callback(tx);
     });
@@ -220,7 +266,7 @@ export class PostgresAdapter implements Database {
     const retryIntervalMs = 50;
 
     // Use db.begin() to get pinned connection; acquire xact-scoped advisory lock with deadline retry.
-    return this.db.begin(async (txSql: any) => {
+    return this.db.begin(async (txSql: BunSqlClient) => {
       // Retry pg_try_advisory_xact_lock until deadline (not indefinitely blocking)
       let lockAcquired = false;
       while (Date.now() < deadline) {
@@ -229,7 +275,8 @@ export class PostgresAdapter implements Database {
           [lockId],
         );
 
-        if (lockResult && lockResult[0] && lockResult[0].acquired === true) {
+        const rows = Array.isArray(lockResult) ? lockResult : (lockResult as any)?.rows || [];
+        if (rows.length > 0 && (rows[0] as any)?.acquired === true) {
           lockAcquired = true;
           break;
         }
@@ -248,8 +295,12 @@ export class PostgresAdapter implements Database {
       }
 
       const session = new PostgresMigrationSession(txSql);
-      return await callback(session);
-      // Bun automatically commits if callback returns, rolls back if callback throws
+      try {
+        return await callback(session);
+      } finally {
+        session._setInactive();
+        // Bun automatically commits if callback returns, rolls back if callback throws
+      }
     });
   }
 
