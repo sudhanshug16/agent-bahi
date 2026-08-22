@@ -132,8 +132,8 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
     });
   });
 
-  describe("DEFECT-4: Account code can be reused after delete", () => {
-    it("should prevent reusing account code after deletion", async () => {
+  describe("DEFECT-4: Account code can be reused after archive", () => {
+    it("should prevent reusing account code even after archiving", async () => {
       const { tenant, defaultBookSet } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Test");
 
       const acct1Id = brandAccountId(randomUUID());
@@ -148,14 +148,10 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
         updatedAt: currentTimestamp(),
       });
 
-      // Delete the account (or archive)
-      try {
-        await db.execute("DELETE FROM accounts WHERE id = ?", [acct1Id]);
-      } catch {
-        // If delete is blocked, try archive approach
-      }
+      // Archive the account (mark as deleted but keep the row)
+      await accountRepo.archive(acct1Id, tenant.id, defaultBookSet.id);
 
-      // DEFECT: Code 1000 can be reused (should be blocked forever)
+      // Code 1000 should still be blocked from reuse (even though account is archived)
       try {
         await accountRepo.create({
           id: brandAccountId(randomUUID()),
@@ -167,59 +163,61 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
           createdAt: currentTimestamp(),
           updatedAt: currentTimestamp(),
         });
-        throw new Error("DEFECT: Account code reused after deletion");
+        throw new Error("DEFECT: Account code reused after archiving");
       } catch (error) {
         if ((error as any).message.includes("DEFECT:")) throw error;
         // Should reject with code uniqueness constraint
-        expect((error as any).code).toMatch(/UNIQUE|REUSE|CODE/i);
+        expect((error as any).code).toMatch(/ALREADY_EXISTS|CODE/i);
       }
     });
   });
 
-  describe("DEFECT-5: GST UNIQUE(tenant_id, gstin) blocks history", () => {
-    it("should allow multiple GSTIN records with different effective dates", async () => {
+  describe("DEFECT-5: GST effective-dated history (now fixed)", () => {
+    it("should allow multiple GSTIN records with non-overlapping effective dates", async () => {
       const { tenant } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "TestCorp");
 
-      // First registration
+      // First registration: 2023-01-01 to 2024-05-31
+      const id1 = brandBookSetId(randomUUID());
       await db.execute(
-        `INSERT INTO gst_registrations 
-         (id, tenant_id, gstin, status, effective_from, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO gst_registrations
+         (id, tenant_id, gstin, status, effective_from, effective_to, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          brandBookSetId(randomUUID()),
+          id1,
           tenant.id,
           "27AABCT1234H1Z0",
           "ACTIVE",
           "2023-01-01T00:00:00Z",
+          "2024-05-31T23:59:59Z",  // Ends before next one starts
           currentTimestamp(),
           currentTimestamp(),
         ]
       );
 
-      // DEFECT: Second record with same GSTIN but different effective_from (effective-dated history)
-      // This SHOULD work but UNIQUE(tenant_id, gstin) blocks it
-      try {
-        await db.execute(
-          `INSERT INTO gst_registrations 
-           (id, tenant_id, gstin, status, effective_from, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            brandBookSetId(randomUUID()),
-            tenant.id,
-            "27AABCT1234H1Z0",  // SAME GSTIN
-            "AMENDED",
-            "2024-06-01T00:00:00Z",  // Different effective date
-            currentTimestamp(),
-            currentTimestamp(),
-          ]
-        );
-        throw new Error("DEFECT: GST history allowed but UNIQUE constraint should prevent it");
-      } catch (error) {
-        if ((error as any).message.includes("DEFECT:")) throw error;
-        // Current behavior: UNIQUE constraint fails
-        // Expected: should support effective-dated history
-        expect((error as any).code).toMatch(/UNIQUE/i);
-      }
+      // Second registration: 2024-06-01 onwards (different effective date, non-overlapping)
+      // This should work - demonstrates support for historical records
+      const id2 = brandBookSetId(randomUUID());
+      await db.execute(
+        `INSERT INTO gst_registrations
+         (id, tenant_id, gstin, status, effective_from, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id2,
+          tenant.id,
+          "27AABCT1234H1Z0",  // SAME GSTIN
+          "AMENDED",
+          "2024-06-01T00:00:00Z",  // After first one ends - OK
+          currentTimestamp(),
+          currentTimestamp(),
+        ]
+      );
+
+      // Both should exist now
+      const all = await db.query(
+        "SELECT id FROM gst_registrations WHERE tenant_id = ? AND gstin = ? ORDER BY effective_from",
+        [tenant.id, "27AABCT1234H1Z0"]
+      );
+      expect(all.rows.length).toBe(2);
     });
   });
 
@@ -246,20 +244,58 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
     });
   });
 
-  describe("DEFECT-7: Tenant creation non-idempotent", () => {
-    it("should return same result for same request_id and request_hash", async () => {
-      // Test idempotent tenant creation via tenant_creation_requests table
-      // This requires tenant service to use idempotency mechanism
-      
+  describe("DEFECT-7: Tenant creation idempotency", () => {
+    it("should return same result for same request_id", async () => {
+      // Idempotency requires: same request_id -> same result
+      // If client retries with same request_id, should get cached result, not duplicate tenant
+
+      const requestId = randomUUID();  // Fixed request ID for this operation
+
+      // First call with this request_id creates new tenant
+      const result1 = await tenantService.createTenantWithDefaultBookSet(
+        "COMPANY",
+        "IdempTest",
+        "INR",
+        requestId
+      );
+
+      // Second call with same request_id should return cached result
+      const result2 = await tenantService.createTenantWithDefaultBookSet(
+        "COMPANY",
+        "IdempTest",
+        "INR",
+        requestId  // SAME request_id
+      );
+
+      // Should get exact same tenant (not a new one)
+      expect(result1.tenant.id).toBe(result2.tenant.id);
+      expect(result1.defaultBookSet.id).toBe(result2.defaultBookSet.id);
+    });
+
+    it("should reject conflicting request parameters for same request_id", async () => {
       const requestId = randomUUID();
-      const result1 = await tenantService.createTenantWithDefaultBookSet("COMPANY", "IdempTest");
-      
-      // Try to create again with same parameters - should get same result
-      const result2 = await tenantService.createTenantWithDefaultBookSet("COMPANY", "IdempTest");
-      
-      // DEFECT: If idempotency not implemented, result2 creates new tenant
-      if (result1.tenant.id !== result2.tenant.id) {
-        throw new Error("DEFECT: Tenant creation is not idempotent - same params create different tenants");
+
+      // First call creates tenant
+      const result1 = await tenantService.createTenantWithDefaultBookSet(
+        "COMPANY",
+        "First",
+        "INR",
+        requestId
+      );
+
+      // Second call with SAME request_id but DIFFERENT parameters should conflict
+      try {
+        await tenantService.createTenantWithDefaultBookSet(
+          "COMPANY",
+          "Different",  // DIFFERENT name
+          "INR",
+          requestId  // SAME request_id
+        );
+        throw new Error("DEFECT: Should reject conflicting request parameters");
+      } catch (error) {
+        if ((error as any).message.includes("DEFECT:")) throw error;
+        // Expected: IdempotencyConflictError
+        expect((error as any).code).toBe("IDEMPOTENCY_CONFLICT");
       }
     });
   });

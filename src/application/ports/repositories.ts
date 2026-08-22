@@ -107,6 +107,7 @@ export interface BookSetRepository {
 export interface AccountRepository {
   /**
    * Create account.
+   * Code must be unique per (tenantId, bookSetId) scope, including archived accounts.
    */
   create(account: Account): Promise<void>;
 
@@ -130,6 +131,12 @@ export interface AccountRepository {
    * Update account.
    */
   update(account: Account): Promise<void>;
+
+  /**
+   * Archive account (mark as deleted but preserve code reservation).
+   * Code cannot be reused even for archived accounts.
+   */
+  archive(accountId: AccountId, tenantId: TenantId, bookSetId: BookSetId): Promise<void>;
 }
 
 export interface LegalIdentity {
