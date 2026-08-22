@@ -5,5 +5,10 @@
 # Private configuration and credentials
 private/
 
+# Local dependency and Gate0 compile outputs
+node_modules/
+.gate0-build/*
+!.gate0-build/.gitkeep
+
 # Private fixtures containing sensitive accounting data
 fixtures/private/
