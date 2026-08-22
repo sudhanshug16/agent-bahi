@@ -257,3 +257,56 @@ Keeping caller-supplied expected metadata without persisted provenance was rejec
 ### Risks and remaining gates
 
 This is an interim recovery-correctness slice, not the operation barrier or backup capability. SQLite verified-backup integration and PostgreSQL/MySQL external-backup references remain required, along with maintenance-barrier integration, in later n68/n70 slices. Phase 1A must not be marked CLEAN from these probe results alone.
+
+## TENTATIVE - NOT OWNER-APPROVED: Legacy schema_migrations/control-schema upgrade (N80/N81) (2026-08-22)
+
+### Decision
+
+Extend MigrationSession with pinned-connection table metadata API: `getTableMetadata(tableName)` returns table/view kind and column metadata (name, type, nullable, default, primaryKey). Implement for SQLite (PRAGMA table_info), PostgreSQL (information_schema), MySQL (INFORMATION_SCHEMA). All operations use session methods; never expose raw connections.
+
+Public `upgradeControlSchema()` acquires `db.withMigrationLease` and calls private `upgradeControlSchemaOnSession(session)` helper. Migrate and recoverDirty call the upgrade helper inside their lease before ensureMigrationTableOnSession.
+
+Detect and upgrade legacy schema types:
+- **Gate0**: logical_id, checksum, applied_at → current 11-column schema
+- **Dirty flag**: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason → preserve dirty state as DIRTY/APPLIED
+- **Nullable-status**: status column (preserve APPLIED/APPLYING/DIRTY; NULL → DIRTY + LEGACY_UNKNOWN_STATUS reason)
+- **Simple legacy**: id, version, dirty fallback
+- **Current 11-column**: validate schema structure and no-op
+
+Data preservation: extract canonical rows with BigInt normalization (SQLite safeIntegers), create staging table with current schema, copy rows exactly, validate row counts before/after, validate exact rows via canonical JSON, SQLite/PostgreSQL drop original + atomic rename staging, MySQL atomic RENAME original→backup staging→original with optional backup cleanup.
+
+### Reversibility
+
+Schema detection logic can be rearranged; staging/backup naming scheme changed to fixed names or sequential counters; validation switched from canonical JSON to field-by-field comparison; BigInt handling adjusted if type mismatches emerge; dirty_reason messages reworded (currently use "legacy migration..." strings containing substring "legacy" to match test assertions).
+
+### Risks
+
+Legacy schema variability not yet encountered (Gate0, dirty flag, nullable-status, simple are candidates based on existing code and tests; unknown patterns fail closed as upgrade-not-attempted). Type coercion between legacy INTEGER columns and current schema (handled via BigInt for safeIntegers=true). Empty table upgrade is no-op; if future work requires structure-only upgrades, empty-table check can be removed. MySQL backup cleanup failure leaves recoverable state; operator manual cleanup required.
+
+### Rationale
+
+Operator upgrades existing databases from pre-current schema before running migrations. Lease ensures exclusive upgrade (no concurrent writes). Session pinning ensures all metadata reads, staging, swap, and validation occur on same connection (critical for transaction consistency). Staged upgrade with validation prevents silent data loss on type mismatches or copy failures. Dialect-specific swap strategy accounts for MySQL implicit DDL commits.
+
+### Test coverage
+
+Tests pass for:
+- Legacy dirty=1 → DIRTY status with reason
+- Row count and identity preservation across all schema types
+- Empty table handling (no-op)
+- Canonical type normalization (BigInt for INTEGER columns via safeIntegers)
+
+Real behavior integration tests using production SQLite/PostgreSQL/MySQL adapters pending dialect-neutral test harness.
+
+### Known limitations
+
+- PostgreSQL/MySQL upgrade logic not yet live-tested (blocked by integration test environment)
+- Only SQLite tests passing (tests/docs/n77-behavioral-repairs.test.ts)
+- MySQL atomic RENAME with backup cleanup assumes DDL success; failure recovery leaves documented state for operator
+- Schema detection assumes no unknown hybrid schemas (e.g., Gate0 with dirty flag columns together); first matching pattern wins
+
+### Open gates
+
+- Live PostgreSQL upgrade tests (transaction isolation, advisory lock interaction)
+- Live MySQL upgrade tests (GET_LOCK interaction, DDL autocommit behavior, atomic RENAME edge cases)
+- Unknown legacy schema pattern discovery (error messages fail closed; operator feedback required)
+- Concurrent upgrade attempt (lease serialization verified by existing migration lease tests)
