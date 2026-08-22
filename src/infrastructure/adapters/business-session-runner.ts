@@ -6,16 +6,7 @@ import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.t
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService } from "../services/database-control-service.ts";
 import { MigrationService, MIGRATION_SCHEMA_SQLITE } from "../services/migration-service.ts";
-import {
-  CURRENT_DATA_FORMAT_VERSION,
-  CURRENT_DATABASE_GENERATION,
-  CURRENT_DATABASE_REVISION,
-  CURRENT_READER_PROTOCOL_MAX,
-  CURRENT_READER_PROTOCOL_MIN,
-  CURRENT_SCHEMA_VERSION,
-  CURRENT_SQLITE_MIGRATIONS,
-  CURRENT_WRITER_PROTOCOL,
-} from "../schema/current-manifest.ts";
+import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
 
 const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tenants",
@@ -288,6 +279,7 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
     private dbPath: string,
     private readerProtocol: number,
     private writerProtocol: number,
+    private expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST,
   ) {
     assertSafeSqlitePath(dbPath);
   }
@@ -392,22 +384,22 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
       if (controlRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control row cardinality is invalid");
       const control = controlRows[0];
       if (normalizeInteger(control.id, "id") !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control identity is invalid");
-      if (normalizeInteger(control.schema_version, "schema_version") !== CURRENT_SCHEMA_VERSION || normalizeInteger(control.data_format_version, "data_format_version") !== CURRENT_DATA_FORMAT_VERSION) {
+      if (normalizeInteger(control.schema_version, "schema_version") !== this.expectedManifest.schemaVersion || normalizeInteger(control.data_format_version, "data_format_version") !== this.expectedManifest.dataFormatVersion) {
         throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database schema version is incompatible");
       }
       if (String(control.state) !== "READY") throw new DomainError("DATABASE_CONTROL_NOT_READY", "Database control is not READY");
-      if (normalizeInteger(control.generation, "generation") !== CURRENT_DATABASE_GENERATION || normalizeInteger(control.revision, "revision") !== CURRENT_DATABASE_REVISION) {
+      if (normalizeInteger(control.generation, "generation") !== this.expectedManifest.generation || normalizeInteger(control.revision, "revision") !== this.expectedManifest.revision) {
         throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database generation is incompatible");
       }
-      if (String(control.last_migration_id) !== CURRENT_SQLITE_MIGRATIONS.at(-1)!.id || String(control.last_migration_checksum) !== CURRENT_SQLITE_MIGRATIONS.at(-1)!.checksum) {
+      if (String(control.last_migration_id) !== this.expectedManifest.migrations.at(-1)!.id || String(control.last_migration_checksum) !== this.expectedManifest.migrations.at(-1)!.checksum) {
         throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database migration identity is incompatible");
       }
 
       const migrationRows = connection.prepare("SELECT rowid, id, dialect, checksum, status FROM schema_migrations ORDER BY rowid").all() as Array<Record<string, unknown>>;
-      if (migrationRows.length !== CURRENT_SQLITE_MIGRATIONS.length) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration history cardinality is invalid");
+      if (migrationRows.length !== this.expectedManifest.migrations.length) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration history cardinality is invalid");
       migrationRows.forEach((row, index) => {
-        const expected = CURRENT_SQLITE_MIGRATIONS[index];
-        if (String(row.id) !== expected.id || String(row.dialect) !== "sqlite" || String(row.checksum) !== expected.checksum || String(row.status) !== "APPLIED") {
+        const expected = this.expectedManifest.migrations[index];
+        if (!expected || String(row.id) !== expected.id || String(row.dialect) !== expected.dialect || String(row.checksum) !== expected.checksum || String(row.status) !== expected.status) {
           throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration history is not canonical");
         }
       });
@@ -415,7 +407,7 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
       const readerMin = normalizeInteger(control.reader_compatibility_min, "reader_compatibility_min");
       const readerMax = normalizeInteger(control.reader_compatibility_max, "reader_compatibility_max");
       const writer = normalizeInteger(control.required_writer_protocol, "required_writer_protocol");
-      if (readerMin !== CURRENT_READER_PROTOCOL_MIN || readerMax !== CURRENT_READER_PROTOCOL_MAX || writer !== CURRENT_WRITER_PROTOCOL) {
+      if (readerMin !== this.expectedManifest.readerCompatibilityMin || readerMax !== this.expectedManifest.readerCompatibilityMax || writer !== this.expectedManifest.writerProtocol) {
         throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database protocol metadata is incompatible");
       }
       return { readerCompatibilityMin: readerMin, readerCompatibilityMax: readerMax, requiredWriterProtocol: writer };

@@ -1,4 +1,6 @@
 import type { BusinessSessionRunner } from "../../application/ports/persistence.ts";
+import type { SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { CURRENT_SCHEMA_MANIFEST } from "../schema/current-manifest.ts";
 import { SqliteBusinessSessionRunner } from "./business-session-runner.ts";
 import type { Dialect } from "../../core/types.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
@@ -27,6 +29,7 @@ export class BusinessSessionFactory {
     dialect: Dialect = "sqlite",
     readerProtocol: number = 1,
     writerProtocol: number = 1,
+    expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST,
   ): BusinessSessionRunner {
     assertSafeSqlitePath(dbPath);
 
@@ -36,6 +39,6 @@ export class BusinessSessionFactory {
 
     // Create and return the session runner
     // The runner validates database_control and schema directly on the fresh connection
-    return new SqliteBusinessSessionRunner(dbPath, readerProtocol, writerProtocol);
+    return new SqliteBusinessSessionRunner(dbPath, readerProtocol, writerProtocol, expectedManifest);
   }
 }

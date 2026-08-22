@@ -247,13 +247,13 @@ export interface BackupService {
    * This slice does not provide restore, remote-dialect, or automatic-lock
    * behavior.
    */
-  createBackup(destinationPath: string): Promise<BackupResult>;
+  createBackup(destinationPath: string, expectedSourceManifest?: import("../../infrastructure/schema/current-manifest.ts").SqliteSchemaManifest): Promise<BackupResult>;
 
   /**
    * Verify SQLite integrity, foreign keys, schema, migration history, and
    * database-control readiness before a caller decides what to do with it.
    */
-  verifyBackup(backupPath: string): Promise<boolean>;
+  verifyBackup(backupPath: string, expectedSourceManifest?: import("../../infrastructure/schema/current-manifest.ts").SqliteSchemaManifest): Promise<boolean>;
 }
 
 /**

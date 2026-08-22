@@ -3,6 +3,7 @@ import type { Dialect } from "../../core/types.ts";
 import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
+import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
 
 /**
  * Database control inspection status.
@@ -99,6 +100,7 @@ export class DatabaseControlService {
   constructor(
     private db: Database,
     private dialect: Dialect,
+    private expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST,
   ) {}
 
   /**
@@ -122,16 +124,12 @@ export class DatabaseControlService {
       if (schemaError) return { status: "UNAVAILABLE", reason: schemaError };
 
       const migrationHistory = await this.db.query(
-        "SELECT id, checksum, status FROM schema_migrations WHERE id = ?",
-        ["0002-database-control"],
+        "SELECT id, dialect, checksum, status FROM schema_migrations ORDER BY rowid",
       );
-      const migration = migrationHistory.rows[0];
-      if (
-        migrationHistory.rowCount !== 1 ||
-        migration?.id !== "0002-database-control" ||
-        migration?.checksum !== DATABASE_CONTROL_CHECKSUM ||
-        migration?.status !== "APPLIED"
-      ) {
+      if (migrationHistory.rowCount !== this.expectedManifest.migrations.length || this.expectedManifest.migrations.some((expected, index) => {
+        const actual = migrationHistory.rows[index];
+        return !actual || actual.id !== expected.id || actual.dialect !== expected.dialect || actual.checksum !== expected.checksum || actual.status !== expected.status;
+      })) {
         return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
       }
 
@@ -159,7 +157,7 @@ export class DatabaseControlService {
       const row = rows.rows[0];
 
       // Validate row structure and parse record
-      const validation = this.validateAndParseRecord(row);
+      const validation = this.validateAndParseRecord(row, this.expectedManifest);
       if (validation.error) {
         return { status: "UNAVAILABLE", reason: "ROW_DATA_INVALID" };
       }
@@ -356,7 +354,7 @@ export class DatabaseControlService {
     );
 
     if (!row) return undefined;
-    return this.validateAndParseRecord(row).record;
+    return this.validateAndParseRecord(row, this.expectedManifest).record;
   }
 
   /**
@@ -533,6 +531,7 @@ export class DatabaseControlService {
    */
   private validateAndParseRecord(
     row: Record<string, unknown>,
+    expectedManifest: SqliteSchemaManifest = this.expectedManifest,
   ): { record?: DatabaseControlRecord; error?: string } {
     try {
       // Validate id is exactly 1
@@ -553,7 +552,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse schema_version: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (schemaVersion < 1) return { error: "schema_version must be >= 1" };
+      if (schemaVersion < 1 || schemaVersion !== expectedManifest.schemaVersion) return { error: "schema_version is not canonical" };
 
       let dataFormatVersion: number;
       try {
@@ -561,7 +560,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse data_format_version: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (dataFormatVersion < 1) return { error: "data_format_version must be >= 1" };
+      if (dataFormatVersion < 1 || dataFormatVersion !== expectedManifest.dataFormatVersion) return { error: "data_format_version is not canonical" };
 
       let readerMin: number;
       try {
@@ -569,7 +568,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse reader_compatibility_min: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (readerMin < 1) return { error: "reader_compatibility_min must be >= 1" };
+      if (readerMin < 1 || readerMin !== expectedManifest.readerCompatibilityMin) return { error: "reader_compatibility_min is not canonical" };
 
       let readerMax: number;
       try {
@@ -577,7 +576,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse reader_compatibility_max: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (readerMax < readerMin) return { error: "reader_compatibility_max must be >= reader_compatibility_min" };
+      if (readerMax < readerMin || readerMax !== expectedManifest.readerCompatibilityMax) return { error: "reader_compatibility_max is not canonical" };
 
       let writerProtocol: number;
       try {
@@ -585,7 +584,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse required_writer_protocol: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (writerProtocol < 1) return { error: "required_writer_protocol must be >= 1" };
+      if (writerProtocol < 1 || writerProtocol !== expectedManifest.writerProtocol) return { error: "required_writer_protocol is not canonical" };
 
       let revision: number;
       try {
@@ -593,7 +592,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse revision: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (revision < 1) return { error: "revision must be >= 1" };
+      if (revision < 1 || revision !== expectedManifest.revision) return { error: "revision is not canonical" };
 
       let generation: number;
       try {
@@ -601,7 +600,7 @@ export class DatabaseControlService {
       } catch (e) {
         return { error: `Failed to parse generation: ${e instanceof Error ? e.message : String(e)}` };
       }
-      if (generation < 1) return { error: "generation must be >= 1" };
+      if (generation < 1 || generation !== expectedManifest.generation) return { error: "generation is not canonical" };
 
       // Parse state
       const state = String(row.state);
@@ -626,7 +625,8 @@ export class DatabaseControlService {
         return { error: `Failed to parse last_migration_id: ${e instanceof Error ? e.message : String(e)}` };
       }
       if (!lastMigrationId) return { error: "last_migration_id is blank" };
-      if (lastMigrationId !== "0002-database-control") return { error: "last_migration_id is not canonical" };
+      const expectedMigration = expectedManifest.migrations.at(-1);
+      if (!expectedMigration || lastMigrationId !== expectedMigration.id) return { error: "last_migration_id is not canonical" };
 
       let lastMigrationChecksum: string;
       try {
@@ -638,7 +638,7 @@ export class DatabaseControlService {
       if (!this.isValidHexChecksum(lastMigrationChecksum)) {
         return { error: "last_migration_checksum is not 64 hex characters" };
       }
-      if (lastMigrationChecksum !== DATABASE_CONTROL_CHECKSUM) {
+      if (!expectedMigration || lastMigrationChecksum !== expectedMigration.checksum) {
         return { error: "last_migration_checksum is not canonical" };
       }
 

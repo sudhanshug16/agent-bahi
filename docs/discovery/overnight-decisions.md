@@ -61,6 +61,23 @@ Singleton `database_control` table holds schema versions, compatibility, and dat
   of the production baseline. All table schema validation includes exact column types, defaults, nullability,
   and named CHECK constraints. Malformed/partial schemas fail UNAVAILABLE; no repair or coercion.
 
+## SQLite upgrade foundation — TENTATIVE - NOT OWNER-APPROVED (n116/n117)
+
+The generic SQLite `UpgradeCoordinator` foundation is an implementation slice,
+not an owner approval for product schema expansion. It keeps the production
+manifest at v2 and permits only a strict one-migration manifest extension under
+the existing `BEGIN IMMEDIATE` lease. The coordinator performs deterministic
+read-only preflight, creates and verifies a no-replace `VACUUM INTO` backup while
+the lease remains held, and commits migration history plus `database_control`
+atomically. Commit/connection uncertainty remains explicitly recoverable and
+never reports false success.
+
+Identity/bookset migrations remain blocked behind this foundation and a later
+owner decision. No identity or bookset DDL is included here; the v2 production
+schema and existing `MigrationService.migrate()` DIRTY contract remain
+unchanged. The owner may approve, revise, or reject n116/n117 without requiring
+the v2 reader/default composition boundary to change.
+
 ## MCP HTTP binding — OWNER-APPROVED n95
 
 Hosted MCP endpoint supports http:// and https://. Both protocols are valid.
