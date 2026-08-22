@@ -5,6 +5,8 @@ import type {
   Transaction,
   TransactionConfig,
   UnitOfWork,
+  TableMetadata,
+  ColumnMetadata,
 } from "../../application/ports/persistence.ts";
 import type { PostgresConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
@@ -62,6 +64,63 @@ class PostgresMigrationSession implements MigrationSession {
   leaseToken(): string {
     this.checkActive();
     return this.token;
+  }
+
+  async getTableMetadata(tableName: string): Promise<TableMetadata | null> {
+    this.checkActive();
+    try {
+      // Check if table or view exists
+      const tableExists = (await this.execute(
+        `SELECT table_type FROM information_schema.tables WHERE table_name = $1 AND table_schema = 'public'`,
+        [tableName]
+      )).rows[0] as { table_type: string } | undefined;
+
+      if (!tableExists) return null;
+
+      const kind = tableExists.table_type === "VIEW" ? "VIEW" : "TABLE";
+
+      // Get column metadata
+      const columns = (await this.execute(
+        `SELECT column_name, data_type, is_nullable, column_default, ordinal_position
+         FROM information_schema.columns
+         WHERE table_name = $1 AND table_schema = 'public'
+         ORDER BY ordinal_position`,
+        [tableName]
+      )).rows as Array<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+        ordinal_position: number;
+      }>;
+
+      // Check for primary key columns
+      const pkQuery = (await this.execute(
+        `SELECT a.attname
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         JOIN pg_class t ON t.oid = i.indrelid
+         WHERE t.relname = $1 AND i.indisprimary`,
+        [tableName]
+      )).rows.map(row => (row.attname as string).toLowerCase());
+
+      const columnMetadata: ColumnMetadata[] = columns.map(col => ({
+        name: col.column_name,
+        type: col.data_type,
+        nullable: col.is_nullable === "YES",
+        default: col.column_default,
+        primaryKey: pkQuery.includes(col.column_name.toLowerCase()),
+      }));
+
+      return {
+        name: tableName,
+        kind,
+        columns: columnMetadata,
+      };
+    } catch (error) {
+      // If table doesn't exist or can't be queried, return null
+      return null;
+    }
   }
 
   setInactive(): void {

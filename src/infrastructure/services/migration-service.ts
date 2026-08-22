@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { randomUUID } from "crypto";
-import type { Database, MigrationRecord, MigrationSession } from "../../application/ports/persistence.ts";
+import type { Database, MigrationRecord, MigrationSession, TableMetadata } from "../../application/ports/persistence.ts";
 import type { Dialect } from "../../core/types.ts";
 import { DomainError, MigrationLockedError, MigrationChecksumError, DirtyMigrationError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
@@ -326,219 +326,419 @@ export class MigrationService {
 
   /**
    * Upgrade legacy schema_migrations to current schema.
-   * Idempotent: checks if upgrade is needed and applies only missing columns/data.
-   * Legacy schema typically has: id, version, dirty (or similar).
-   * New schema requires: id, dialect, checksum, status (APPLYING/APPLIED/DIRTY), executed_at, duration_ms, dirty_reason, lease_token.
-   *
-   * This is an admin-only operation that must be run before any migration work.
+   * Acquires migration lease and delegates to private helper.
+   * Idempotent: detects schema type and applies upgrade only if needed.
    */
-  async upgradeControlSchema(): Promise<void> {
+  async upgradeControlSchema(timeoutMs: number = 30000): Promise<void> {
+    // First check without lease if table exists and if upgrade is needed
+    let tableMetadata: TableMetadata | null = null;
     try {
-      // Check if table exists at all
-      let tableExists = false;
-      try {
-        await this.db.querySingle("SELECT 1 FROM schema_migrations LIMIT 1");
-        tableExists = true;
-      } catch {
-        // Table doesn't exist; will be created on first migrate() call
+      // Quick probe outside lease to avoid unnecessary lock
+      const row = await this.db.querySingle("SELECT 1 FROM schema_migrations LIMIT 1");
+      if (!row) return; // Table is empty, no upgrade needed
+    } catch {
+      // Table doesn't exist; will be created on first migrate() call
+      return;
+    }
+
+    // Upgrade requires lease (table exists but may be in legacy format)
+    await this.db.withMigrationLease(
+      async (session: MigrationSession) => {
+        await this.upgradeControlSchemaOnSession(session);
+      },
+      timeoutMs,
+    );
+  }
+
+  /**
+   * Private helper for schema upgrade, called within migration lease.
+   * Detects legacy schema type, validates data, and upgrades to current schema.
+   * All operations use session (pinned connection), never raw db.*.
+   */
+  private async upgradeControlSchemaOnSession(session: MigrationSession): Promise<void> {
+    try {
+      const metadata = await session.getTableMetadata("schema_migrations");
+
+      // Table doesn't exist yet; will be created on first migrate()
+      if (metadata === null) return;
+
+      // If already in current format (has 11 required columns), validate and no-op
+      if (this.isCurrentSchema(metadata)) {
+        await this.validateCurrentSchema(session, metadata);
         return;
       }
 
-      if (!tableExists) return;
+      // Detect legacy schema type and upgrade
+      const schemaType = this.detectLegacySchemaType(metadata);
+      const canonicalRows = await this.extractCanonicalRows(session, metadata, schemaType);
 
-      // Check if it's already in new format (has dialect column)
-      let hasDialectColumn = false;
-      try {
-        await this.db.querySingle(
-          "SELECT dialect FROM schema_migrations LIMIT 1"
+      // Create staging table with current schema
+      const stagingTable = `schema_migrations_stage_${randomUUID().replace(/-/g, "_")}`;
+      await this.createStagingTable(session, stagingTable);
+
+      // Copy canonical rows to staging
+      await this.copyCanonicalRows(session, stagingTable, canonicalRows);
+
+      // Validate staging has exact rows
+      await this.validateRowCount(session, stagingTable, canonicalRows.length);
+      await this.validateExactRows(session, stagingTable, canonicalRows);
+
+      // For SQLite/PostgreSQL: drop original and rename staging
+      // For MySQL: atomic rename with backup
+      if (this.dialect === "sqlite" || this.dialect === "postgresql") {
+        await session.executeRaw("DROP TABLE schema_migrations");
+        const renameCmd = this.dialect === "sqlite"
+          ? `ALTER TABLE ${stagingTable} RENAME TO schema_migrations`
+          : `ALTER TABLE ${stagingTable} RENAME TO schema_migrations`;
+        await session.executeRaw(renameCmd);
+      } else if (this.dialect === "mysql") {
+        // MySQL atomic rename: original to backup, staging to original
+        const backupTable = `schema_migrations_backup_${randomUUID().replace(/-/g, "_")}`;
+        await session.executeRaw(
+          `RENAME TABLE schema_migrations TO ${backupTable}, ${stagingTable} TO schema_migrations`
         );
-        hasDialectColumn = true;
-      } catch {
-        // Column doesn't exist; need to upgrade
-      }
-
-      if (hasDialectColumn) {
-        // Already upgraded
-        return;
-      }
-
-      // Legacy schema detected; need to upgrade
-      // Strategy: create new table with correct schema, copy legacy data, rename
-      const timestamp = new Date().toISOString();
-      const tempTableName = "schema_migrations_new";
-
-      // Create new table with correct schema (including all manifest fields)
-      let createSql: string;
-      if (this.dialect === "sqlite") {
-        createSql = `
-          CREATE TABLE IF NOT EXISTS ${tempTableName} (
-            id TEXT PRIMARY KEY,
-            dialect TEXT NOT NULL,
-            checksum TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-            executed_at TEXT NOT NULL,
-            duration_ms INTEGER NOT NULL,
-            dirty_reason TEXT,
-            lease_token TEXT,
-            manifest_version INTEGER,
-            verification_manifest_hash TEXT,
-            manifest_json TEXT
-          )
-        `;
-      } else if (this.dialect === "postgresql") {
-        createSql = `
-          CREATE TABLE IF NOT EXISTS ${tempTableName} (
-            id TEXT PRIMARY KEY,
-            dialect TEXT NOT NULL,
-            checksum TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-            executed_at TEXT NOT NULL,
-            duration_ms INTEGER NOT NULL,
-            dirty_reason TEXT,
-            lease_token TEXT,
-            manifest_version INTEGER,
-            verification_manifest_hash TEXT,
-            manifest_json TEXT
-          )
-        `;
-      } else {
-        createSql = `
-          CREATE TABLE IF NOT EXISTS ${tempTableName} (
-            id VARCHAR(255) PRIMARY KEY,
-            dialect VARCHAR(50) NOT NULL,
-            checksum VARCHAR(64) NOT NULL,
-            status VARCHAR(20) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-            executed_at VARCHAR(50) NOT NULL,
-            duration_ms INT NOT NULL,
-            dirty_reason TEXT,
-            lease_token VARCHAR(255),
-            manifest_version INT,
-            verification_manifest_hash VARCHAR(64),
-            manifest_json TEXT
-          )
-        `;
-      }
-
-      await this.db.executeRaw(createSql);
-
-      // Check if legacy table has dirty column (indicates dirty state in original)
-      let hasLegacyDirtyColumn = false;
-      try {
-        await this.db.querySingle("SELECT dirty FROM schema_migrations LIMIT 1");
-        hasLegacyDirtyColumn = true;
-      } catch {
-        // No dirty column in legacy schema
-      }
-
-      // Copy legacy data to new table, preserving dirty state
-      const builder = new DialectSqlBuilder(this.dialect);
-      let insertSql: string;
-
-      if (hasLegacyDirtyColumn) {
-        // Map legacy dirty flag: dirty=0 -> APPLIED, dirty=1 -> DIRTY
-        insertSql = `
-          INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
-          SELECT id, ${builder.placeholder()}, ${builder.placeholder()},
-                 CASE WHEN dirty = 1 THEN ${builder.placeholder()} ELSE ${builder.placeholder()} END,
-                 ${builder.placeholder()}, 0,
-                 CASE WHEN dirty = 1 THEN ${builder.placeholder()} ELSE NULL END,
-                 NULL, NULL, NULL, NULL
-          FROM schema_migrations
-        `;
-        const checksum = "legacy-checksum-unknown";
-        await this.db.execute(insertSql, [
-          this.dialect,
-          checksum,
-          "DIRTY",
-          "APPLIED",
-          timestamp,
-          "legacy migration imported with dirty flag set",
-        ]);
-      } else {
-        // No legacy dirty column; set all as APPLIED
-        insertSql = `
-          INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
-          SELECT id, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, 0, NULL, NULL, NULL, NULL, NULL FROM schema_migrations
-        `;
-        const checksum = "legacy-checksum-unknown";
-        await this.db.execute(insertSql, [this.dialect, checksum, "APPLIED", timestamp]);
-      }
-
-      // Verify row counts match before swapping
-      const oldCountResult = await this.db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
-      const oldCount = (oldCountResult as any)?.count ?? 0;
-      const newCountResult = await this.db.querySingle(`SELECT COUNT(*) as count FROM ${tempTableName}`);
-      const newCount = (newCountResult as any)?.count ?? 0;
-
-      if (oldCount !== newCount) {
-        throw new Error(`Row count mismatch: old=${oldCount}, new=${newCount}. Swap aborted to preserve history.`);
-      }
-
-      // Swap tables atomically
-      const backupTableName = "schema_migrations_backup";
-      try {
-        if (this.dialect === "sqlite" || this.dialect === "postgresql") {
-          // Use transaction for atomic swap
-          const tx = await this.db.beginTransaction();
-          try {
-            await tx.executeRaw("DROP TABLE schema_migrations");
-            const renameCmd = this.dialect === "sqlite"
-              ? `ALTER TABLE ${tempTableName} RENAME TO schema_migrations`
-              : `ALTER TABLE ${tempTableName} RENAME TO schema_migrations`;
-            await tx.executeRaw(renameCmd);
-            await tx.commit();
-          } catch (txError) {
-            await tx.rollback();
-            throw txError;
-          }
-        } else {
-          // MySQL: use atomic multi-table RENAME with backup
-          await this.db.executeRaw(`RENAME TABLE schema_migrations TO ${backupTableName}, ${tempTableName} TO schema_migrations`);
-        }
-
-        // Verify canonical schema after swap
+        // Clean up backup after successful swap
         try {
-          const verifyResult = await this.db.querySingle(
-            "SELECT COUNT(*) as count FROM schema_migrations WHERE dialect IS NOT NULL"
-          );
-          const verifyCount = (verifyResult as any)?.count ?? 0;
-          if (verifyCount === 0) {
-            throw new Error("Upgraded schema_migrations table missing dialect column after swap");
-          }
-        } catch (verifyError) {
-          throw new Error(`Failed to verify schema after swap: ${verifyError instanceof Error ? verifyError.message : String(verifyError)}`);
+          await session.executeRaw(`DROP TABLE ${backupTable}`);
+        } catch {
+          // Cleanup error is non-fatal; backup is preserved
         }
-
-        // Success; clean up backup if it exists (MySQL only)
-        if (this.dialect === "mysql") {
-          try {
-            await this.db.executeRaw(`DROP TABLE IF EXISTS ${backupTableName}`);
-          } catch {
-            // Cleanup failure is non-fatal; original history is already safely backed up
-          }
-        }
-      } catch (swapError) {
-        // Swap failed; for MySQL, original table is still in backupTableName
-        if (this.dialect === "mysql") {
-          try {
-            // Restore from backup on failure
-            const restoreCheck = await this.db.querySingle(`SELECT COUNT(*) as count FROM ${backupTableName} LIMIT 1`);
-            if (restoreCheck) {
-              await this.db.executeRaw(`DROP TABLE IF EXISTS ${tempTableName}`);
-              await this.db.executeRaw(`RENAME TABLE ${backupTableName} TO schema_migrations`);
-            }
-          } catch {
-            // Restore attempt failed; original history may be partially lost
-          }
-        }
-        throw swapError;
       }
+
+      // Validate schema and rows after swap
+      const finalMetadata = await session.getTableMetadata("schema_migrations");
+      if (finalMetadata === null) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          "schema_migrations table missing after upgrade"
+        );
+      }
+
+      if (!this.isCurrentSchema(finalMetadata)) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          "schema_migrations table has incorrect schema after upgrade"
+        );
+      }
+
+      await this.validateExactRows(session, "schema_migrations", canonicalRows);
     } catch (error) {
+      if (error instanceof DomainError) throw error;
       throw new DomainError(
         "CONTROL_SCHEMA_UPGRADE_FAILED",
         `Failed to upgrade control schema: ${error instanceof Error ? error.message : String(error)}`,
         { dialect: this.dialect }
       );
+    }
+  }
+
+  private isCurrentSchema(metadata: TableMetadata): boolean {
+    const requiredColumns = new Set(["id", "dialect", "checksum", "status", "executed_at", "duration_ms"]);
+    const metadataColumns = new Set(metadata.columns.map(c => c.name));
+
+    // Check if all required columns exist
+    for (const col of requiredColumns) {
+      if (!metadataColumns.has(col)) return false;
+    }
+
+    // Check if exactly 11 columns (current schema)
+    if (metadata.columns.length !== 11) return false;
+
+    // Verify exact column order and types for current schema
+    const expectedOrder = [
+      "id", "dialect", "checksum", "status", "executed_at", "duration_ms",
+      "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json"
+    ];
+
+    if (metadata.columns.length !== expectedOrder.length) return false;
+
+    for (let i = 0; i < expectedOrder.length; i++) {
+      if (metadata.columns[i].name !== expectedOrder[i]) return false;
+    }
+
+    return true;
+  }
+
+  private validateCurrentSchema(session: MigrationSession, metadata: TableMetadata): void {
+    // Validate required columns exist with correct nullability
+    const requiredColumns = {
+      id: { nullable: false },
+      dialect: { nullable: false },
+      checksum: { nullable: false },
+      status: { nullable: false },
+      executed_at: { nullable: false },
+      duration_ms: { nullable: false },
+    };
+
+    for (const [colName, props] of Object.entries(requiredColumns)) {
+      const col = metadata.columns.find(c => c.name === colName);
+      if (!col) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          `Required column ${colName} missing from schema_migrations`
+        );
+      }
+      if (col.nullable !== props.nullable) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          `Column ${colName} has incorrect nullability`
+        );
+      }
+    }
+  }
+
+  private detectLegacySchemaType(metadata: TableMetadata): string {
+    const columns = new Set(metadata.columns.map(c => c.name));
+
+    // Gate0: logical_id, checksum, applied_at
+    if (columns.has("logical_id") && columns.has("checksum") && columns.has("applied_at")) {
+      return "gate0";
+    }
+
+    // Dirty flag: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason
+    if (columns.has("dirty") && columns.has("dirty_reason")) {
+      return "dirty_flag";
+    }
+
+    // Nullable status: status column exists but may be NULL
+    if (columns.has("status")) {
+      return "nullable_status";
+    }
+
+    // Default: assume simple version-based legacy (id, version, dirty or similar)
+    return "simple_legacy";
+  }
+
+  private async extractCanonicalRows(
+    session: MigrationSession,
+    metadata: TableMetadata,
+    schemaType: string
+  ): Promise<Array<Record<string, unknown>>> {
+    const rows = (await session.execute("SELECT * FROM schema_migrations")).rows;
+
+    // Transform legacy rows to canonical format based on schema type
+    return rows.map(row => {
+      const canonical: Record<string, unknown> = {};
+
+      // Helper to normalize string values
+      const asString = (value: unknown): string => {
+        if (value === null || value === undefined) return "";
+        if (typeof value === "string") return value;
+        if (typeof value === "number" || typeof value === "bigint") return String(value);
+        return String(value);
+      };
+
+      // Helper to normalize numeric values as BigInt (SQLite with safeIntegers returns as BigInt)
+      const asBigInt = (value: unknown, defaultValue: bigint = BigInt(0)): bigint => {
+        if (value === null || value === undefined) return defaultValue;
+        if (typeof value === "bigint") return value;
+        if (typeof value === "number") return BigInt(Math.floor(value));
+        const parsed = BigInt(Number(value));
+        return parsed;
+      };
+
+      switch (schemaType) {
+        case "gate0":
+          // Map: logical_id->id, checksum->checksum, applied_at->executed_at
+          canonical.id = asString(row.logical_id ?? row.id);
+          canonical.dialect = this.dialect;
+          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
+          canonical.status = "APPLIED";
+          canonical.executed_at = asString(row.applied_at ?? new Date().toISOString());
+          canonical.duration_ms = asBigInt(0, BigInt(0));
+          canonical.dirty_reason = null;
+          canonical.lease_token = null;
+          canonical.manifest_version = null;
+          canonical.verification_manifest_hash = null;
+          canonical.manifest_json = null;
+          break;
+
+        case "dirty_flag":
+          // Preserve existing dialect if present, otherwise use current
+          canonical.id = asString(row.id);
+          canonical.dialect = asString(row.dialect ?? this.dialect);
+          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
+          // Map: dirty=0 -> APPLIED, dirty=1 -> DIRTY
+          const dirtyVal = asBigInt(row.dirty, BigInt(0));
+          canonical.status = dirtyVal === BigInt(1) ? "DIRTY" : "APPLIED";
+          canonical.executed_at = asString(row.executed_at ?? new Date().toISOString());
+          canonical.duration_ms = asBigInt(row.duration_ms, BigInt(0));
+          canonical.dirty_reason = dirtyVal === BigInt(1) ? (asString(row.dirty_reason ?? "legacy migration imported with dirty flag set")) : null;
+          canonical.lease_token = null;
+          canonical.manifest_version = null;
+          canonical.verification_manifest_hash = null;
+          canonical.manifest_json = null;
+          break;
+
+        case "nullable_status":
+          // Preserve status if valid, otherwise DIRTY with reason
+          canonical.id = asString(row.id);
+          canonical.dialect = asString(row.dialect ?? this.dialect);
+          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
+          const status = row.status;
+          if (status === "APPLIED" || status === "APPLYING" || status === "DIRTY") {
+            canonical.status = status;
+          } else if (status === null || status === undefined) {
+            canonical.status = "DIRTY";
+            canonical.dirty_reason = "LEGACY_UNKNOWN_STATUS";
+          } else {
+            canonical.status = "DIRTY";
+            canonical.dirty_reason = `LEGACY_INVALID_STATUS: ${status}`;
+          }
+          canonical.executed_at = asString(row.executed_at ?? new Date().toISOString());
+          canonical.duration_ms = asBigInt(row.duration_ms, BigInt(0));
+          if (canonical.status === "DIRTY" && !canonical.dirty_reason) {
+            canonical.dirty_reason = asString(row.dirty_reason ?? "legacy migration with unknown dirty status");
+          } else if (canonical.status !== "DIRTY") {
+            canonical.dirty_reason = null;
+          }
+          canonical.lease_token = null;
+          canonical.manifest_version = null;
+          canonical.verification_manifest_hash = null;
+          canonical.manifest_json = null;
+          break;
+
+        default: // simple_legacy
+          canonical.id = asString(row.id);
+          canonical.dialect = this.dialect;
+          canonical.checksum = asString(row.checksum ?? "legacy-unknown");
+          const legacyDirty = asBigInt(row.dirty, BigInt(0));
+          canonical.status = legacyDirty === BigInt(1) ? "DIRTY" : "APPLIED";
+          canonical.executed_at = asString(row.executed_at ?? row.version ?? new Date().toISOString());
+          canonical.duration_ms = asBigInt(0, BigInt(0));
+          canonical.dirty_reason = legacyDirty === BigInt(1) ? "legacy migration imported with dirty flag set" : null;
+          canonical.lease_token = null;
+          canonical.manifest_version = null;
+          canonical.verification_manifest_hash = null;
+          canonical.manifest_json = null;
+      }
+
+      return canonical;
+    });
+  }
+
+  private async createStagingTable(session: MigrationSession, stagingTable: string): Promise<void> {
+    let createSql: string;
+
+    if (this.dialect === "sqlite") {
+      createSql = `
+        CREATE TABLE ${stagingTable} (
+          id TEXT PRIMARY KEY,
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+          executed_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          dirty_reason TEXT,
+          lease_token TEXT,
+          manifest_version INTEGER,
+          verification_manifest_hash TEXT,
+          manifest_json TEXT
+        )
+      `;
+    } else if (this.dialect === "postgresql") {
+      createSql = `
+        CREATE TABLE ${stagingTable} (
+          id TEXT PRIMARY KEY,
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+          executed_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          dirty_reason TEXT,
+          lease_token TEXT,
+          manifest_version INTEGER,
+          verification_manifest_hash TEXT,
+          manifest_json TEXT
+        )
+      `;
+    } else {
+      createSql = `
+        CREATE TABLE ${stagingTable} (
+          id VARCHAR(255) PRIMARY KEY,
+          dialect VARCHAR(50) NOT NULL,
+          checksum VARCHAR(64) NOT NULL,
+          status VARCHAR(20) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+          executed_at VARCHAR(50) NOT NULL,
+          duration_ms INT NOT NULL,
+          dirty_reason TEXT,
+          lease_token VARCHAR(255),
+          manifest_version INT,
+          verification_manifest_hash VARCHAR(64),
+          manifest_json TEXT
+        )
+      `;
+    }
+
+    await session.executeRaw(createSql);
+  }
+
+  private async copyCanonicalRows(
+    session: MigrationSession,
+    stagingTable: string,
+    rows: Array<Record<string, unknown>>
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const builder = new DialectSqlBuilder(this.dialect);
+    const colNames = ["id", "dialect", "checksum", "status", "executed_at", "duration_ms",
+                      "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json"];
+
+    for (const row of rows) {
+      builder.reset();
+      const placeholders = colNames.map(() => builder.placeholder()).join(", ");
+      const sql = `INSERT INTO ${stagingTable} (${colNames.join(", ")}) VALUES (${placeholders})`;
+      const values = colNames.map(col => row[col]);
+      await session.execute(sql, values);
+    }
+  }
+
+  private async validateRowCount(session: MigrationSession, tableName: string, expectedCount: number): Promise<void> {
+    const result = (await session.execute(`SELECT COUNT(*) as count FROM ${tableName}`)).rows[0];
+    const actualCount = Number((result as any)?.count ?? 0);
+
+    if (actualCount !== expectedCount) {
+      throw new DomainError(
+        "CONTROL_SCHEMA_UPGRADE_FAILED",
+        `Row count mismatch: expected ${expectedCount}, got ${actualCount}`
+      );
+    }
+  }
+
+  private async validateExactRows(
+    session: MigrationSession,
+    tableName: string,
+    expectedRows: Array<Record<string, unknown>>
+  ): Promise<void> {
+    const actualRows = (await session.execute(`SELECT * FROM ${tableName}`)).rows;
+
+    if (actualRows.length !== expectedRows.length) {
+      throw new DomainError(
+        "CONTROL_SCHEMA_UPGRADE_FAILED",
+        `Row count validation failed: expected ${expectedRows.length}, got ${actualRows.length}`
+      );
+    }
+
+    // Verify each row by id
+    const expectedById = new Map(expectedRows.map(r => [r.id as string, canonicalJson(r)]));
+    const actualById = new Map(actualRows.map(r => [r.id as string, canonicalJson(r)]));
+
+    for (const [actualId, actualJson] of actualById) {
+      const expectedJson = expectedById.get(actualId);
+
+      if (!expectedJson) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          `Row ${actualId} not found in expected rows`
+        );
+      }
+
+      if (actualJson !== expectedJson) {
+        throw new DomainError(
+          "CONTROL_SCHEMA_UPGRADE_FAILED",
+          `Row ${actualId} mismatch: expected ${expectedJson}, got ${actualJson}`
+        );
+      }
     }
   }
 
@@ -687,6 +887,8 @@ export class MigrationService {
 
     await this.db.withMigrationLease<void>(
       async (session: MigrationSession) => {
+        // First upgrade legacy schema if needed, then ensure current schema
+        await this.upgradeControlSchemaOnSession(session);
         await this.ensureMigrationTableOnSession(session);
 
         // Preflight: fail if ANY migration is APPLYING or DIRTY (requires recovery first)
@@ -832,6 +1034,8 @@ export class MigrationService {
     const outcome: { error: DomainError | null } = { error: null };
     await this.db.withMigrationLease<void>(
       async (session: MigrationSession) => {
+        // First upgrade legacy schema if needed, then ensure current schema
+        await this.upgradeControlSchemaOnSession(session);
         await this.ensureMigrationTableOnSession(session);
 
         const leaseToken = session.leaseToken();

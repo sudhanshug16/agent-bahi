@@ -154,6 +154,20 @@ export interface MigrationService {
   recoverDirty(request: MigrationRecoveryRequest, timeoutMs?: number): Promise<void>;
 }
 
+export interface ColumnMetadata {
+  name: string;
+  type: string;
+  nullable: boolean;
+  default?: string | null;
+  primaryKey: boolean;
+}
+
+export interface TableMetadata {
+  name: string;
+  kind: "TABLE" | "VIEW";
+  columns: ColumnMetadata[];
+}
+
 /**
  * MigrationSession: passed to withMigrationLease callback; lifetime-bound to callback scope.
  * Never expose outside callback; never call commit/rollback—that's automatic per dialect.
@@ -164,6 +178,9 @@ export interface MigrationSession {
   execute(sql: string, params?: unknown[]): Promise<QueryResult>;
   executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined>;
   executeRaw(sql: string): Promise<void>;
+
+  // Table metadata inspection (pinned session only)
+  getTableMetadata(tableName: string): Promise<TableMetadata | null>;
 
   // Lease metadata
   leaseToken(): string; // Unique token for this session/lease owner

@@ -1,6 +1,6 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import { randomUUID } from "crypto";
-import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession } from "../../application/ports/persistence.ts";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession, TableMetadata, ColumnMetadata } from "../../application/ports/persistence.ts";
 import type { SqliteConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { resolve } from "path";
@@ -63,6 +63,50 @@ class SqliteMigrationSession implements MigrationSession {
   leaseToken(): string {
     this.checkActive();
     return this.token;
+  }
+
+  async getTableMetadata(tableName: string): Promise<TableMetadata | null> {
+    this.checkActive();
+    try {
+      // Check if table or view exists
+      const tableExists = this.db.prepare(
+        "SELECT type FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?"
+      ).get(tableName) as { type: string } | undefined;
+
+      if (!tableExists) return null;
+
+      const kind = tableExists.type === "view" ? "VIEW" : "TABLE";
+
+      // Get column metadata via PRAGMA
+      const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+        cid: number;
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: unknown;
+        pk: number;
+      }>;
+
+      const columnMetadata: ColumnMetadata[] = columns.map(col => ({
+        name: col.name,
+        type: col.type,
+        nullable: col.notnull === 0,
+        default: col.dflt_value === null ? null : String(col.dflt_value),
+        primaryKey: col.pk > 0,
+      }));
+
+      return {
+        name: tableName,
+        kind,
+        columns: columnMetadata,
+      };
+    } catch (error) {
+      // If table doesn't exist or can't be queried, return null
+      if (error instanceof Error && error.message.toLowerCase().includes("no such table")) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   // Commit/rollback handled by withMigrationLease; never expose here
