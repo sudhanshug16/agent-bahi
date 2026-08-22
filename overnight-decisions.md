@@ -71,7 +71,7 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Alternatives**: Single unified DDL with #ifdefs per dialect; Drizzle migrations for all three targets; ORM-generated schemas.
 - **Evidence**: `spikes/gate0/sql/postgres/001-core.sql` (PL/pgSQL triggers) and `spikes/gate0/sql/mysql/001-core.sql` (MySQL SIGNAL-based triggers) implement the same semantic constraints—tenant/BookSet FK, balance validation on posting, append-only guards, posted immutability—using dialect-native facilities. `docker exec ... psql/mysql` reliably applies migrations to local disposable containers without introducing npm dependencies for database clients. Integration test harness in `spikes/gate0/database-integration.ts` uses `spawnSync` with Docker CLI; no pg/mysql2 imports.
 - **Reversibility**: Drop dialect-specific implementations and consolidate to Drizzle if proof coverage expands; or keep native SQL and replace Drizzle entirely. Migration logical IDs remain stable.
-- **Status**: `AGENT-IMPLEMENTED; EXECUTION BLOCKED ON CONTAINER STARTUP`.
+- **Status**: `SUPERSEDED BY OD-010 (BUNNATIVE DRIVERS)`.
 
 ### Implementation details
 
@@ -104,6 +104,28 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Evidence**: Integration test harness is implemented but blocked on container startup (Docker images not yet pulled, environment may need explicit setup). No evidence will be written until tests fully pass.
 - **Reversibility**: Run integration tests after environment setup; update evidence and status mappings upon success.
 - **Status**: `AGENT-IMPLEMENTED; EXECUTION BLOCKED / EVIDENCE NOT YET RECORDED`.
+
+## OD-010 — Bun-native SQL drivers supersede docker-exec for PostgreSQL/MySQL Gate0
+
+- **Date**: 2026-08-22 (updated)
+- **Decision**: Replace `docker exec psql/mysql` with Bun-native SQL connections via postgres@3.4.9 and mysql2@3.23.4 drivers. Application logic runs in Bun process; Docker CLI used only for container/network lifecycle (create, run, inspect, rm). All SQL uses parameterized/tagged queries; no DELIMITER client assumptions in migrations.
+- **Rationale (supersedes OD-007)**: The docker-exec approach leaks container internals (psql/mysql CLI behavior) into the semantic proof. The Bun-native approach executes the actual proof logic in the target application runtime (Bun) over TCP, eliminating docker-specific command leakage and proving portable database-neutral semantics. Parameterized queries prevent SQL injection and ensure dialect portability.
+- **Alternatives**: Keep docker-exec (proof contaminated by CLI tool versions/flags); use ORM migrations (loses hand-reviewed constraint/trigger provenance); use Node.js pg/mysql drivers (not Bun-native).
+- **Evidence**: `spikes/gate0/database-integration.ts` establishes connections via postgres/mysql2 drivers with parameterized queries; migrations in `sql/{postgres,mysql}/` have no DELIMITER/client syntax; bun.lock records postgres@3.4.9, mysql2@3.23.4.
+- **Reversibility**: Switch back to docker-exec (documented in git history); replace drivers later if incompatibilities emerge; migrations are version-independent.
+- **Status**: `AGENT-IMPLEMENTED / CONTAINER LIFECYCLE READY / SEMANTIC PROOFS BLOCKED ON DRIVER STABILIZATION`.
+
+### Current blocking issue
+
+Integration test harness established container lifecycle (network create, docker run with health checks, scoped cleanup). Semantic proof execution via native postgres/mysql2 drivers requires driver API stabilization (statement execution, transaction handling, result type compatibility with Bun). Current implementation marks PostgreSQL/MySQL tests as BLOCKED pending resolution. SQLite local proofs all PASS (20+ cases including idempotency race-safety, balance validation, posted-entry immutability, FK constraints, append-only guards, BigInt round-trip).
+
+### Implementation updates
+
+- **Driver connections**: postgres pool connecting to localhost:5432+X with generated credentials; mysql2 pool to localhost:3306+Y.
+- **Migration format**: No DELIMITER statements (removed from mysql/001-core.sql); triggers split across single-statement boundaries via `;` only.
+- **Logical IDs**: gate0-001-core-postgres and gate0-001-core-mysql; checksum validation at application layer.
+- **Container lifecycle**: Docker CLI used only for network create, container run/inspect/rm; no docker exec inside semantic tests.
+- **ro284 findings applied**: getOrCreateIdempotencyRecord is race-safe via BEGIN IMMEDIATE; error.code='IDEMPOTENCY_CONFLICT'; replay/conflict/POSTED-guard proofs strengthened to verify stored row immutability and zero side effects.
 
 ---
 
