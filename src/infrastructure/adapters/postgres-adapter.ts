@@ -217,23 +217,33 @@ export class PostgresAdapter implements Database {
     await this.ensureConnected();
     const lockId = this.hashToLockId("agent-bahi-migration");
     const deadline = Date.now() + timeoutMs;
+    const retryIntervalMs = 50;
 
-    // Use db.begin() to get pinned connection; acquire xact-scoped advisory lock inside.
-    // Set lock_timeout to enforce deadline; pg_try_advisory_xact_lock returns false if timeout.
+    // Use db.begin() to get pinned connection; acquire xact-scoped advisory lock with deadline retry.
     return this.db.begin(async (txSql: any) => {
-      // Set lock_timeout to enforce deadline
-      const lockTimeoutMs = Math.max(100, timeoutMs);
-      await txSql.query(`SET lock_timeout = '${lockTimeoutMs}ms'`);
+      // Retry pg_try_advisory_xact_lock until deadline (not indefinitely blocking)
+      let lockAcquired = false;
+      while (Date.now() < deadline) {
+        const lockResult = await txSql.query(
+          "SELECT pg_try_advisory_xact_lock($1) as acquired",
+          [lockId],
+        );
 
-      // Acquire transaction-scoped advisory lock; pg_advisory_xact_lock holds until COMMIT/ROLLBACK
-      // Use pg_try_advisory_xact_lock(id) which returns true/false instead of blocking
-      const lockResult = await txSql.query(
-        "SELECT pg_advisory_xact_lock($1) as acquired",
-        [lockId],
-      );
-      if (!lockResult || !lockResult[0]) {
+        if (lockResult && lockResult[0] && lockResult[0].acquired === true) {
+          lockAcquired = true;
+          break;
+        }
+
+        // Not acquired; wait before retry
+        const remainingMs = deadline - Date.now();
+        if (remainingMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, Math.min(retryIntervalMs, remainingMs)));
+        }
+      }
+
+      if (!lockAcquired) {
         throw new MigrationLockedError(
-          "Failed to acquire migration advisory lock within timeout",
+          `Failed to acquire migration advisory lock within ${timeoutMs}ms deadline`,
         );
       }
 

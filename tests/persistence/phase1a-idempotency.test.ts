@@ -24,14 +24,12 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
     tenantService = new TenantService(db, tenantRepo, bookSetRepo);
 
     // Initialize database schema
-    const lockToken = await migrationService.acquireMigrationLock();
     await migrationService.migrate([
       {
         id: CORE_MIGRATIONS.id,
         sql: CORE_MIGRATIONS.sqlite,
       },
     ]);
-    await migrationService.releaseMigrationLock(lockToken);
   });
 
   afterEach(async () => {

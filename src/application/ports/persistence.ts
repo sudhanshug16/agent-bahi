@@ -3,6 +3,8 @@
  * Implementations are in infrastructure/adapters.
  */
 
+import type { Dialect } from "../../core/types.ts";
+
 export interface QueryResult {
   rows: Record<string, unknown>[];
   rowCount: number;
@@ -82,6 +84,21 @@ export interface MigrationRecord {
 }
 
 /**
+ * MigrationRecoveryRequest: parameters for recoverDirty.
+ * Validates exact expected state (id + dialect + checksum + status + dirty_reason) before recovery.
+ * CAS ensures operator-provided parameters match stored state exactly.
+ */
+export interface MigrationRecoveryRequest {
+  migrationId: string;
+  expectedDialect: Dialect;
+  expectedStatus: "DIRTY" | "APPLYING";
+  expectedChecksum: string;
+  expectedDirtyReason: string; // Must match stored dirty_reason exactly
+  actor: string; // Operator identity for audit trail
+  reason: string; // Operator's reason for recovery (appended to immutable audit)
+}
+
+/**
  * MigrationService: manages schema versions, compatibility, and DDL execution.
  */
 export interface MigrationService {
@@ -100,23 +117,9 @@ export interface MigrationService {
    * Apply pending migrations atomically within exclusive lease.
    * All validation, DDL, and audit happen in one transaction per dialect.
    * Never auto-run during business operations.
+   * Callback-only; never call acquire/release separately.
    */
   migrate(migrations: readonly { id: string; sql: string }[], timeoutMs?: number): Promise<MigrationRecord[]>;
-
-  /**
-   * Acquire exclusive migration lock. Fails if lock held by another process.
-   * Returns lock token; must be released by caller.
-   *
-   * SQLite: PRAGMA locking_mode = EXCLUSIVE
-   * PostgreSQL: pg_advisory_lock on known ID
-   * MySQL: GET_LOCK with timeout
-   */
-  acquireMigrationLock(timeoutMs?: number): Promise<string>;
-
-  /**
-   * Release exclusive migration lock.
-   */
-  releaseMigrationLock(lockToken: string): Promise<void>;
 
   /**
    * Verify checksum of a migration against what's stored in DB.
@@ -125,14 +128,10 @@ export interface MigrationService {
   verifyChecksum(migrationId: string, expectedChecksum: string): Promise<void>;
 
   /**
-   * Mark migration as dirty on failure; requires manual recovery.
+   * Recover a DIRTY migration with lease held and owner/checksum validation.
+   * Acquires lease internally; validates expected state; appends immutable audit.
    */
-  markDirty(migrationId: string, reason: string): Promise<void>;
-
-  /**
-   * Clear dirty marker (manual recovery completion).
-   */
-  clearDirty(): Promise<void>;
+  recoverDirty(request: MigrationRecoveryRequest, timeoutMs?: number): Promise<void>;
 }
 
 /**

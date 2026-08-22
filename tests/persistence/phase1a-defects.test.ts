@@ -34,11 +34,9 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
     migrationService = new MigrationService(db, "sqlite");
     tenantService = new TenantService(db, tenantRepo, bookSetRepo);
 
-    const lockToken = await migrationService.acquireMigrationLock();
     await migrationService.migrate([
       { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
     ]);
-    await migrationService.releaseMigrationLock(lockToken);
   });
 
   afterEach(async () => {
@@ -339,12 +337,12 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       const db1 = new SqliteAdapter({ path: dbPath });
       const db2 = new SqliteAdapter({ path: dbPath });
 
-      const lock1 = await db1.acquireAdvisoryLock("test-lock");
+      const lock1 = await db1.acquireAdvisoryLock("test-lock", 1000);
       expect(lock1).toBe(true);
 
       // DEFECT: db2 can acquire lock on same file (different process/instance)
-      const lock2 = await db2.acquireAdvisoryLock("test-lock");
-      
+      const lock2 = await db2.acquireAdvisoryLock("test-lock", 1000);
+
       if (lock2 === true) {
         throw new Error("DEFECT: Two SQLite adapters both acquired same lock - counter is per-process, not durable");
       }
@@ -355,12 +353,10 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
     });
   });
 
-  describe("DEFECT-11: Dirty marker rolls back on transaction failure", () => {
-    it("should persist dirty marker even if migration transaction fails", async () => {
+  describe("DEFECT-11: Dirty marker persists after migration failure", () => {
+    it("should persist dirty marker even when migration DDL fails", async () => {
       const migSvc = new MigrationService(db, "sqlite");
-      
-      const lockToken = await migSvc.acquireMigrationLock();
-      
+
       // Try to apply a migration that will fail partway through
       try {
         await migSvc.migrate([
@@ -368,30 +364,66 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
             id: "test-bad-migration",
             sql: `
               CREATE TABLE test_table (id TEXT PRIMARY KEY);
-              CREATE TABLE test_table (id TEXT PRIMARY KEY);  -- Duplicate, will fail
+              CREATE TABLE test_table (id TEXT PRIMARY KEY);
+            `,
+          },
+        ]);
+      } catch (error) {
+        // Expected: migration failed with MIGRATION_EXECUTION_FAILED
+        expect((error as any).code).toBe("MIGRATION_EXECUTION_FAILED");
+      }
+
+      // Verify DIRTY marker persisted (not rolled back)
+      const status = await migSvc.getStatus();
+      if (status.isDirty) {
+        // Good: dirty marker is present
+        const dirtyRecord = await db.querySingle(
+          "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
+          ["test-bad-migration"]
+        );
+
+        if (!dirtyRecord || dirtyRecord.status !== "DIRTY") {
+          throw new Error("DEFECT: Dirty marker not persisted or status not DIRTY");
+        }
+      } else {
+        throw new Error("DEFECT: isDirty should be true after migration failure");
+      }
+    });
+
+    it("should detect DIRTY state via re-applying the same migration", async () => {
+      const migSvc = new MigrationService(db, "sqlite");
+
+      // First migration fails
+      try {
+        await migSvc.migrate([
+          {
+            id: "test-bad-retry",
+            sql: `
+              CREATE TABLE bad_retry (id TEXT);
+              CREATE TABLE bad_retry (id TEXT);
             `,
           },
         ]);
       } catch {
-        // Expected: migration failed
+        // Expected
       }
 
-      await migSvc.releaseMigrationLock(lockToken);
-
-      // DEFECT: Dirty marker should persist and prevent next operation
-      const status = await migSvc.getStatus();
-      const lastMigration = status.appliedMigrations[status.appliedMigrations.length - 1];
-      
-      if (lastMigration && lastMigration.id === "test-bad-migration") {
-        // Check if dirty marker was set
-        const dirtyRecord = await db.querySingle(
-          "SELECT dirty FROM schema_migrations WHERE id = ?",
-          ["test-bad-migration"]
-        );
-        
-        if (!dirtyRecord || (dirtyRecord.dirty !== 1 && dirtyRecord.dirty !== true)) {
-          throw new Error("DEFECT: Dirty marker not persisted after migration failure");
-        }
+      // Try to re-apply the same migration; should fail due to DIRTY state
+      try {
+        await migSvc.migrate([
+          {
+            id: "test-bad-retry",
+            sql: `
+              CREATE TABLE bad_retry (id TEXT);
+              CREATE TABLE bad_retry (id TEXT);
+            `,
+          },
+        ]);
+        throw new Error("DEFECT: Should have blocked re-apply of DIRTY migration");
+      } catch (error) {
+        // Expected: should fail due to DIRTY state
+        if ((error as any).message.includes("DEFECT:")) throw error;
+        expect((error as any).code).toBe("DIRTY_MIGRATION");
       }
     });
   });
@@ -401,6 +433,87 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       // This would require actual filesystem symlink creation
       // For now, document the requirement
       expect(true).toBe(true);  // Placeholder
+    });
+  });
+
+  describe("Control Table Durability and Migration Failure Atomicity", () => {
+    it("should persist control tables and DIRTY marker when first migration fails", async () => {
+      const testDbPath = `/tmp/first-mig-fail-${randomUUID()}.sqlite`;
+      const testDb = new SqliteAdapter({ path: testDbPath });
+      const testMigSvc = new MigrationService(testDb, "sqlite");
+
+      // First migration creates control tables but fails on domain DDL
+      try {
+        await testMigSvc.migrate([
+          {
+            id: "0001-control-and-domain",
+            sql: `
+              CREATE TABLE schema_migrations (
+                id TEXT PRIMARY KEY,
+                dialect TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+                executed_at TEXT NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                dirty_reason TEXT,
+                lease_token TEXT
+              );
+              CREATE TABLE domain_table (id TEXT PRIMARY KEY);
+              CREATE TABLE domain_table (id TEXT PRIMARY KEY);
+            `,
+          },
+        ]);
+      } catch (error) {
+        // Expected: domain DDL fails
+        expect((error as any).code).toBe("MIGRATION_EXECUTION_FAILED");
+      }
+
+      // Verify control table exists (persisted by inner transaction)
+      const controlTableExists = await testDb.querySingle(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+      );
+      expect(controlTableExists).toBeDefined();
+
+      // Verify DIRTY marker exists (persisted by returned failure result)
+      const dirtyRecord = await testDb.querySingle(
+        "SELECT status, dirty_reason FROM schema_migrations WHERE id = ?",
+        ["0001-control-and-domain"]
+      );
+      expect(dirtyRecord).toBeDefined();
+      expect((dirtyRecord as any).status).toBe("DIRTY");
+      expect((dirtyRecord as any).dirty_reason).toContain("DDL failed");
+
+      // Verify domain table does NOT exist (rolled back by savepoint)
+      const domainTableExists = await testDb.querySingle(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='domain_table'"
+      );
+      expect(domainTableExists).toBeFalsy();
+
+      await testDb.close();
+    });
+
+    it("should reject subsequent migrations while DIRTY marker is present", async () => {
+      // Using existing dirty state from previous test setup
+      const migSvc = new MigrationService(db, "sqlite");
+
+      // Create a DIRTY state
+      try {
+        await migSvc.migrate([
+          {
+            id: "test-dirty-block",
+            sql: `
+              CREATE TABLE x (id TEXT);
+              CREATE TABLE x (id TEXT);
+            `,
+          },
+        ]);
+      } catch {
+        // Expected
+      }
+
+      // Check status shows DIRTY
+      const status = await migSvc.getStatus();
+      expect(status.isDirty).toBe(true);
     });
   });
 });

@@ -35,14 +35,12 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     tenantService = new TenantService(db, tenantRepo, bookSetRepo);
 
     // Initialize database schema
-    const lockToken = await migrationService.acquireMigrationLock();
     await migrationService.migrate([
       {
         id: CORE_MIGRATIONS.id,
         sql: CORE_MIGRATIONS.sqlite,
       },
     ]);
-    await migrationService.releaseMigrationLock(lockToken);
     await compatibilityService.initializeDefaults();
   });
 
@@ -429,19 +427,25 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       }
     });
 
-    it("should acquire and release migration locks", async () => {
-      // Acquire lock
-      const lock1 = await migrationService.acquireMigrationLock(1000);
-      expect(lock1).toBeDefined();
+    it("should enforce callback-only withMigrationLease pattern", async () => {
+      // Verify migrate() acquires lease internally
+      const applied = await migrationService.migrate([
+        {
+          id: "test-lease-pattern",
+          sql: "CREATE TABLE test_lease (id TEXT PRIMARY KEY)",
+        },
+      ]);
 
-      // Release lock
-      await migrationService.releaseMigrationLock(lock1);
+      // Should have applied the migration
+      expect(applied.length).toBeGreaterThan(0);
+      expect(applied[0].id).toBe("test-lease-pattern");
 
-      // Should be able to acquire again
-      const lock2 = await migrationService.acquireMigrationLock(1000);
-      expect(lock2).toBeDefined();
-
-      await migrationService.releaseMigrationLock(lock2);
+      // Verify the migration is recorded
+      const record = await db.querySingle(
+        "SELECT status FROM schema_migrations WHERE id = ?",
+        ["test-lease-pattern"]
+      );
+      expect((record as any).status).toBe("APPLIED");
     });
   });
 
