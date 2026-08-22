@@ -1189,6 +1189,15 @@ Domain and application layers import no ORM. Persistence contracts (ports) are d
 
 **Short transactions**: Minimize lock duration; external calls outside transaction.
 
+**SQLite backup slice**: The current implementation supports create-and-verify
+snapshots only for a canonical local SQLite file whose `database_control` row
+is `AVAILABLE` and `READY` and whose accepted schema/history binding is exact.
+It executes a parameter-bound `VACUUM INTO ?` on a separate non-transactional
+connection. The result is a committed-data snapshot: an uncommitted writer row
+may be absent, and this service does not claim to quiesce concurrent writers
+globally. Restore, automatic migration, manifest sidecars, remote dialects,
+and universal backup locking remain out of scope.
+
 ### Three Dialect Migration Histories
 
 Separate, parallel migration paths:

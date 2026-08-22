@@ -243,14 +243,15 @@ export interface BackupResult {
 
 export interface BackupService {
   /**
-   * Create backup with atomic manifest and hash.
-   * For SQLite: ensures WAL-consistent snapshot.
-   * For PostgreSQL/MySQL: may return UNAVAILABLE with remediation.
+   * Create a verified SQLite snapshot at the explicit destination path.
+   * This slice does not provide restore, remote-dialect, or automatic-lock
+   * behavior.
    */
-  createBackup(destinationPath?: string): Promise<BackupResult>;
+  createBackup(destinationPath: string): Promise<BackupResult>;
 
   /**
-   * Verify backup integrity before restore.
+   * Verify SQLite integrity, foreign keys, schema, migration history, and
+   * database-control readiness before a caller decides what to do with it.
    */
   verifyBackup(backupPath: string): Promise<boolean>;
 }

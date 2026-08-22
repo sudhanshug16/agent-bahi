@@ -12,7 +12,7 @@ export { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
  * Explicit status: APPLYING (in-progress), APPLIED (success), DIRTY (failed).
  * lease_token used for ownership validation during recovery.
  */
-const MIGRATION_SCHEMA_SQLITE = `
+export const MIGRATION_SCHEMA_SQLITE = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id TEXT NOT NULL PRIMARY KEY,
   dialect TEXT NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
  * Audit trail for recovery operations (immutable append-only).
  * reason is NOT NULL; triggers prevent UPDATE/DELETE.
  */
-const RECOVERY_AUDIT_SCHEMA_SQLITE = `
+export const RECOVERY_AUDIT_SCHEMA_SQLITE = `
 CREATE TABLE IF NOT EXISTS migration_recovery_audit (
   id TEXT PRIMARY KEY,
   migration_id TEXT NOT NULL,
