@@ -32,7 +32,7 @@ describe("native production adapter boundary", () => {
     const owned = await createOwnedSqliteResource();
     try {
       expect(owned.config.sqlite?.path).not.toBe(externalPath);
-      expect(await cleanupOwnedSqliteResource(owned.resource)).toBeNull();
+      expect(await cleanupOwnedSqliteResource(owned.resource, owned.capability)).toBeNull();
       expect(await Bun.file(externalPath).exists()).toBe(true);
     } finally {
       await Bun.file(externalPath).delete();

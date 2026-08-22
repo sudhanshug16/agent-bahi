@@ -421,28 +421,117 @@ export class MigrationService {
 
       await this.db.executeRaw(createSql);
 
-      // Copy legacy data to new table, setting defaults for missing columns
-      // Assume legacy table has at least: id, version (or similar id column)
-      // Set status=APPLIED for all legacy rows (assume they are applied)
-      const builder = new DialectSqlBuilder(this.dialect);
-      const insertSql = `
-        INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
-        SELECT id, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, 0, NULL, NULL, NULL, NULL, NULL FROM schema_migrations
-      `;
-      const checksum = "legacy-checksum-unknown"; // Placeholder for legacy migrations
-      await this.db.execute(insertSql, [this.dialect, checksum, "APPLIED", timestamp]);
+      // Check if legacy table has dirty column (indicates dirty state in original)
+      let hasLegacyDirtyColumn = false;
+      try {
+        await this.db.querySingle("SELECT dirty FROM schema_migrations LIMIT 1");
+        hasLegacyDirtyColumn = true;
+      } catch {
+        // No dirty column in legacy schema
+      }
 
-      // Drop old table and rename new one
-      if (this.dialect === "sqlite") {
-        await this.db.executeRaw("DROP TABLE schema_migrations");
-        await this.db.executeRaw(`ALTER TABLE ${tempTableName} RENAME TO schema_migrations`);
-      } else if (this.dialect === "postgresql") {
-        await this.db.executeRaw("DROP TABLE schema_migrations");
-        await this.db.executeRaw(`ALTER TABLE ${tempTableName} RENAME TO schema_migrations`);
+      // Copy legacy data to new table, preserving dirty state
+      const builder = new DialectSqlBuilder(this.dialect);
+      let insertSql: string;
+
+      if (hasLegacyDirtyColumn) {
+        // Map legacy dirty flag: dirty=0 -> APPLIED, dirty=1 -> DIRTY
+        insertSql = `
+          INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
+          SELECT id, ${builder.placeholder()}, ${builder.placeholder()},
+                 CASE WHEN dirty = 1 THEN ${builder.placeholder()} ELSE ${builder.placeholder()} END,
+                 ${builder.placeholder()}, 0,
+                 CASE WHEN dirty = 1 THEN ${builder.placeholder()} ELSE NULL END,
+                 NULL, NULL, NULL, NULL
+          FROM schema_migrations
+        `;
+        const checksum = "legacy-checksum-unknown";
+        await this.db.execute(insertSql, [
+          this.dialect,
+          checksum,
+          "DIRTY",
+          "APPLIED",
+          timestamp,
+          "legacy migration imported with dirty flag set",
+        ]);
       } else {
-        // MySQL
-        await this.db.executeRaw("DROP TABLE schema_migrations");
-        await this.db.executeRaw(`RENAME TABLE ${tempTableName} TO schema_migrations`);
+        // No legacy dirty column; set all as APPLIED
+        insertSql = `
+          INSERT INTO ${tempTableName} (id, dialect, checksum, status, executed_at, duration_ms, dirty_reason, lease_token, manifest_version, verification_manifest_hash, manifest_json)
+          SELECT id, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, ${builder.placeholder()}, 0, NULL, NULL, NULL, NULL, NULL FROM schema_migrations
+        `;
+        const checksum = "legacy-checksum-unknown";
+        await this.db.execute(insertSql, [this.dialect, checksum, "APPLIED", timestamp]);
+      }
+
+      // Verify row counts match before swapping
+      const oldCountResult = await this.db.querySingle("SELECT COUNT(*) as count FROM schema_migrations");
+      const oldCount = (oldCountResult as any)?.count ?? 0;
+      const newCountResult = await this.db.querySingle(`SELECT COUNT(*) as count FROM ${tempTableName}`);
+      const newCount = (newCountResult as any)?.count ?? 0;
+
+      if (oldCount !== newCount) {
+        throw new Error(`Row count mismatch: old=${oldCount}, new=${newCount}. Swap aborted to preserve history.`);
+      }
+
+      // Swap tables atomically
+      const backupTableName = "schema_migrations_backup";
+      try {
+        if (this.dialect === "sqlite" || this.dialect === "postgresql") {
+          // Use transaction for atomic swap
+          const tx = await this.db.beginTransaction();
+          try {
+            await tx.executeRaw("DROP TABLE schema_migrations");
+            const renameCmd = this.dialect === "sqlite"
+              ? `ALTER TABLE ${tempTableName} RENAME TO schema_migrations`
+              : `ALTER TABLE ${tempTableName} RENAME TO schema_migrations`;
+            await tx.executeRaw(renameCmd);
+            await tx.commit();
+          } catch (txError) {
+            await tx.rollback();
+            throw txError;
+          }
+        } else {
+          // MySQL: use atomic multi-table RENAME with backup
+          await this.db.executeRaw(`RENAME TABLE schema_migrations TO ${backupTableName}, ${tempTableName} TO schema_migrations`);
+        }
+
+        // Verify canonical schema after swap
+        try {
+          const verifyResult = await this.db.querySingle(
+            "SELECT COUNT(*) as count FROM schema_migrations WHERE dialect IS NOT NULL"
+          );
+          const verifyCount = (verifyResult as any)?.count ?? 0;
+          if (verifyCount === 0) {
+            throw new Error("Upgraded schema_migrations table missing dialect column after swap");
+          }
+        } catch (verifyError) {
+          throw new Error(`Failed to verify schema after swap: ${verifyError instanceof Error ? verifyError.message : String(verifyError)}`);
+        }
+
+        // Success; clean up backup if it exists (MySQL only)
+        if (this.dialect === "mysql") {
+          try {
+            await this.db.executeRaw(`DROP TABLE IF EXISTS ${backupTableName}`);
+          } catch {
+            // Cleanup failure is non-fatal; original history is already safely backed up
+          }
+        }
+      } catch (swapError) {
+        // Swap failed; for MySQL, original table is still in backupTableName
+        if (this.dialect === "mysql") {
+          try {
+            // Restore from backup on failure
+            const restoreCheck = await this.db.querySingle(`SELECT COUNT(*) as count FROM ${backupTableName} LIMIT 1`);
+            if (restoreCheck) {
+              await this.db.executeRaw(`DROP TABLE IF EXISTS ${tempTableName}`);
+              await this.db.executeRaw(`RENAME TABLE ${backupTableName} TO schema_migrations`);
+            }
+          } catch {
+            // Restore attempt failed; original history may be partially lost
+          }
+        }
+        throw swapError;
       }
     } catch (error) {
       throw new DomainError(
