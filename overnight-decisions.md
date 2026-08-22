@@ -63,3 +63,54 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Evidence**: Discovery roadmap and implementation plan defer Zoho import to Phase 9; the architecture contract makes imported data non-authoritative until validated.
 - **Reversibility**: Source artifacts and shadow data remain available; failed reconciliation leaves canonical books unchanged.
 - **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING`.
+
+## OD-007 — PostgreSQL and MySQL dialect migrations with native Bun SQL
+
+- **Date**: 2026-08-22
+- **Decision**: Implement hand-reviewed, separate migrations for PostgreSQL 17.11 and MySQL 8.4 under `spikes/gate0/sql/{postgres,mysql}/` with shared logical IDs and per-dialect SQL syntax. Use Bun native `spawnSync` to execute SQL against containerized databases; do not claim Drizzle PostgreSQL/MySQL support until native adapter proofs pass.
+- **Alternatives**: Single unified DDL with #ifdefs per dialect; Drizzle migrations for all three targets; ORM-generated schemas.
+- **Evidence**: `spikes/gate0/sql/postgres/001-core.sql` (PL/pgSQL triggers) and `spikes/gate0/sql/mysql/001-core.sql` (MySQL SIGNAL-based triggers) implement the same semantic constraints—tenant/BookSet FK, balance validation on posting, append-only guards, posted immutability—using dialect-native facilities. `docker exec ... psql/mysql` reliably applies migrations to local disposable containers without introducing npm dependencies for database clients. Integration test harness in `spikes/gate0/database-integration.ts` uses `spawnSync` with Docker CLI; no pg/mysql2 imports.
+- **Reversibility**: Drop dialect-specific implementations and consolidate to Drizzle if proof coverage expands; or keep native SQL and replace Drizzle entirely. Migration logical IDs remain stable.
+- **Status**: `AGENT-IMPLEMENTED; EXECUTION BLOCKED ON CONTAINER STARTUP`.
+
+### Implementation details
+
+- **Logical ID pattern**: `gate0-001-core-postgres` and `gate0-001-core-mysql` stored in `schema_migrations` table; checksum validated at application layer.
+- **Docker container strategy**: Unique per-run container/network names (`agent-bahi-postgres-{suffix}`, `agent-bahi-mysql-{suffix}`); generated test-only credentials; dynamic localhost ports (5432+random, 3306+random); health checks (pg_isready, mysqladmin ping); trap-based scoped cleanup via `scripts/gate0-db.sh`.
+- **Trigger semantics**: PostgreSQL uses function-based triggers (PL/pgSQL); MySQL uses SIGNAL for error conditions. Both enforce balance validation, append-only guards, and posted immutability before commit.
+- **Test harness**: `tests/gate0/database-integration.test.ts` spins up containers in `beforeAll`, runs proof tests (fresh install, FK, append-only, BigInt), and cleans up in `afterAll`. No containers remain after test completion.
+- **Image pinning**: `spikes/gate0/db-images.json` records version and digest stubs; digests resolved at execution and recorded in evidence.
+
+## OD-008 — Lifecycle script and integration test organization
+
+- **Date**: 2026-08-22
+- **Decision**: Add `scripts/gate0-db.sh` as a scoped lifecycle manager that creates networks and starts containers with health checks, never touching existing localhost services or production data. Separate integration tests into `tests/gate0/database-integration.test.ts` (explicit opt-in) while keeping unit tests (`tests/gate0/gate0.test.ts`) independent of Docker.
+- **Alternatives**: Global Docker daemon setup; start containers via npm pretest hook; omit separate integration test file.
+- **Evidence**: `scripts/gate0-db.sh` creates unique networks, generates test credentials, validates container health, and cleans up on exit. Test names differ between PostgreSQL (PG-*) and MySQL (MY-*) but test semantics are identical (fresh install, FK constraints, append-only guards, BigInt support).
+- **Reversibility**: Containers are local and ephemeral; script can be replaced or removed without affecting production services.
+- **Status**: `AGENT-IMPLEMENTED; READY FOR MANUAL LIFECYCLE VERIFICATION`.
+
+### Package.json updates
+
+- `test:gate0`: runs SQLite proofs only (no containers).
+- `test:gate0:integration`: runs PostgreSQL/MySQL integration tests (requires containers).
+- `test:gate0:all`: runs all Gate0 tests (SQLite + integration).
+
+## OD-009 — PostgreSQL/MySQL proof execution and status tracking
+
+- **Date**: 2026-08-22 (provisional; execution BLOCKED)
+- **Decision**: Do not update STK-002, STK-004, STK-006 evidence until live PostgreSQL/MySQL container tests pass. Mark PostgreSQL/MySQL adapter status as `BLOCKED` until integration tests run successfully; preserve SQLite `PASS` and Drizzle `UNPROVEN` status independently.
+- **Alternatives**: Mark PostgreSQL/MySQL as `PARTIAL` or `PASS` without proof; claim Drizzle multi-database support before proof.
+- **Evidence**: Integration test harness is implemented but blocked on container startup (Docker images not yet pulled, environment may need explicit setup). No evidence will be written until tests fully pass.
+- **Reversibility**: Run integration tests after environment setup; update evidence and status mappings upon success.
+- **Status**: `AGENT-IMPLEMENTED; EXECUTION BLOCKED / EVIDENCE NOT YET RECORDED`.
+
+---
+
+**Blocking conditions for PostgreSQL/MySQL proofs:**
+
+1. Docker daemon running and accessible.
+2. Sufficient disk space for PostgreSQL 17.11 and MySQL 8.4 images.
+3. No existing containers named `agent-bahi-postgres-*` or `agent-bahi-mysql-*` (cleanup on exit enforces this).
+4. Integration tests pass and produce evidence matching the expected proof IDs and semantics.
+5. Container cleanup confirmed (no dangling agent-bahi containers).
