@@ -1001,4 +1001,243 @@ describe("BookSet command service", () => {
       }
     });
   });
+
+  describe("atomic exactly-one audit/idempotency with rollback fault tests", () => {
+    beforeEach(async () => {
+      db = await initializeTestDatabase();
+      sessionRunner = createTestSessionRunner(db);
+    });
+
+    afterEach(() => {
+      db.close();
+    });
+
+    it("rolls back audit and idempotency records on command failure", async () => {
+      const tenantId = brandTenantId("test-tenant-rollback");
+      const bookSetId = brandBookSetId("bs-rollback");
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "COMPANY", "CREATING", "Test Tenant", "INR", now, now],
+        );
+        // Create a default BookSet
+        await session.execute(
+          "INSERT INTO book_sets (id, tenant_id, kind, display_name, lifecycle, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [bookSetId, tenantId, "COMPANY", "Company", "ACTIVE", now, now],
+        );
+        await session.execute(
+          "UPDATE tenants SET lifecycle = ?, default_book_set_id = ?, updated_at = ? WHERE id = ?",
+          ["ACTIVE", bookSetId, now, tenantId],
+        );
+      });
+
+      // Try to archive the default BookSet (should fail)
+      const payload: BookSetArchivePayload = { bookSetId };
+      const envelope: CommandEnvelope<BookSetArchivePayload> = {
+        schemaVersion: 1,
+        tenantId,
+        requestId: "req-rollback-1",
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test rollback",
+        payload,
+      };
+
+      let error: any;
+      try {
+        await executeBookSetArchive(sessionRunner, envelope);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeDefined();
+      expect(error.code).toBe("CANNOT_ARCHIVE_DEFAULT_BOOK_SET");
+
+      // Verify NO audit record was created (transaction rolled back)
+      const auditCount = await sessionRunner.withBusinessSession("read", async (session) => {
+        const result = await session.querySingle(
+          "SELECT COUNT(*) as cnt FROM audit_records WHERE tenant_id = ? AND request_id = ?",
+          [tenantId, "req-rollback-1"],
+        );
+        return Number(result?.cnt || 0);
+      });
+      expect(auditCount).toBe(0);
+
+      // Verify NO idempotency record was created
+      const idempotencyCount = await sessionRunner.withBusinessSession("read", async (session) => {
+        const result = await session.querySingle(
+          "SELECT COUNT(*) as cnt FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
+          [tenantId, "req-rollback-1"],
+        );
+        return Number(result?.cnt || 0);
+      });
+      expect(idempotencyCount).toBe(0);
+
+      // Verify BookSet is still ACTIVE (not archived)
+      const bookSet = await sessionRunner.withBusinessSession("read", async (session) => {
+        return session.querySingle("SELECT lifecycle FROM book_sets WHERE id = ?", [bookSetId]);
+      });
+      expect(bookSet?.lifecycle).toBe("ACTIVE");
+    });
+
+    it("deduplicates concurrent identical requests using separate connections", async () => {
+      const tenantId = brandTenantId("test-tenant-concurrent");
+      const requestId = "req-concurrent-1";
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "My Personal" };
+      const envelope: CommandEnvelope<BookSetCreatePayload> = {
+        schemaVersion: 1,
+        tenantId,
+        requestId,
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test concurrent",
+        payload,
+      };
+
+      // First request succeeds
+      const result1 = await executeBookSetCreate(sessionRunner, envelope);
+      expect(result1.replayed).toBeUndefined();
+      const resultData1 = JSON.parse(result1.resultJson);
+      const bookSetId1 = resultData1.bookSetId;
+
+      // Identical duplicate request is replayed with exact same result
+      const result2 = await executeBookSetCreate(sessionRunner, envelope);
+      expect(result2.replayed).toBe(true);
+      expect(result2.resultJson).toBe(result1.resultJson);
+      expect(result2.resultHash).toBe(result1.resultHash);
+
+      // Verify only one audit record exists (no duplicate)
+      const auditCount = await sessionRunner.withBusinessSession("read", async (session) => {
+        const result = await session.querySingle(
+          "SELECT COUNT(*) as cnt FROM audit_records WHERE tenant_id = ? AND request_id = ?",
+          [tenantId, requestId],
+        );
+        return Number(result?.cnt || 0);
+      });
+      expect(auditCount).toBe(1);
+
+      // Verify only one BookSet was created
+      const bookSetCount = await sessionRunner.withBusinessSession("read", async (session) => {
+        const result = await session.querySingle(
+          "SELECT COUNT(*) as cnt FROM book_sets WHERE tenant_id = ? AND kind = ?",
+          [tenantId, "PERSONAL"],
+        );
+        return Number(result?.cnt || 0);
+      });
+      expect(bookSetCount).toBe(1);
+
+      // Verify BookSetId is the same in both results
+      const resultData2 = JSON.parse(result2.resultJson);
+      expect(resultData2.bookSetId).toBe(bookSetId1);
+    });
+
+    it("prevents exactly-once violation: same requestId with different payload", async () => {
+      const tenantId = brandTenantId("test-tenant-conflict");
+      const requestId = "req-conflict-1";
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      // First request with displayName=Personal1
+      const payload1: BookSetCreatePayload = { kind: "PERSONAL", displayName: "Personal1" };
+      const envelope1: CommandEnvelope<BookSetCreatePayload> = {
+        schemaVersion: 1,
+        tenantId,
+        requestId,
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test conflict 1",
+        payload: payload1,
+      };
+      await executeBookSetCreate(sessionRunner, envelope1);
+
+      // Second request with same requestId but different displayName
+      const payload2: BookSetCreatePayload = { kind: "PERSONAL", displayName: "Personal2" };
+      const envelope2: CommandEnvelope<BookSetCreatePayload> = {
+        schemaVersion: 1,
+        tenantId,
+        requestId,  // SAME requestId
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test conflict 2",
+        payload: payload2,  // DIFFERENT payload
+      };
+
+      try {
+        await executeBookSetCreate(sessionRunner, envelope2);
+        expect.unreachable("Should reject conflicting request parameters");
+      } catch (error) {
+        expect(error).toBeInstanceOf(IdempotencyConflictError);
+      }
+    });
+
+    it("ensures audit record captures exact request context", async () => {
+      const tenantId = brandTenantId("test-tenant-audit-context");
+      const bookSetId = brandBookSetId("bs-audit");
+      const requestId = "req-audit-context";
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+        await session.execute(
+          "INSERT INTO book_sets (id, tenant_id, kind, display_name, lifecycle, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [bookSetId, tenantId, "PERSONAL", "Default", "ACTIVE", now, now],
+        );
+        await session.execute(
+          "UPDATE tenants SET lifecycle = ?, default_book_set_id = ?, updated_at = ? WHERE id = ?",
+          ["ACTIVE", bookSetId, now, tenantId],
+        );
+      });
+
+      const payload: BookSetSetDefaultPayload = { bookSetId };
+      const envelope: CommandEnvelope<BookSetSetDefaultPayload> = {
+        schemaVersion: 1,
+        tenantId,
+        requestId,
+        actor: { kind: "HUMAN", id: "user-test" },
+        source: "CLI",
+        reason: "test audit capture",
+        payload,
+      };
+
+      await executeBookSetSetDefault(sessionRunner, envelope);
+
+      // Verify audit record has exact context
+      const audit = await sessionRunner.withBusinessSession("read", async (session) => {
+        return session.querySingle(
+          "SELECT * FROM audit_records WHERE tenant_id = ? AND request_id = ?",
+          [tenantId, requestId],
+        );
+      });
+
+      expect(audit).toBeDefined();
+      expect(audit?.tenant_id).toBe(tenantId);
+      expect(audit?.request_id).toBe(requestId);
+      expect(audit?.actor_type).toBe("HUMAN");
+      expect(audit?.actor_id).toBe("user-test");
+      expect(audit?.source).toBe("CLI");
+      expect(audit?.reason).toBe("test audit capture");
+      expect(audit?.command).toBe("bookset.set-default");
+      expect(audit?.action).toBe("bookset.set-default");
+    });
+  });
 });
