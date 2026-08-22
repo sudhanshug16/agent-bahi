@@ -2,7 +2,13 @@
 
 **Note**: This document records Sudhanshu's confirmed decisions. For RECOMMENDED architecture choices awaiting review, see [Provisional Architecture Decisions](architecture-decisions.md). RECOMMENDED entries in that docket are working defaults, not yet SETTLED user decisions.
 
-**Tentative Entries**: See [Tentative Decisions and Overnight Protocol](tentative-decisions.md) for planning defaults selected while the owner is unavailable (not owner-approved) and for open research items. Tentative entries include explicit reversal paths and owner-review status. Once owner approves a tentative entry, it becomes a SETTLED_OWNER_DECISION and is documented here.
+**T-001 through T-011**: These entries are owner-approved binding decision
+frameworks and are indexed below. They remain subject to their stated research
+gates, proof-spike validation, architect review, and specific implementation
+authorization. The [Tentative Decisions and Overnight Protocol](tentative-decisions.md)
+also records open research and any separately marked future or unapproved
+entries; those do not become approved merely because T-001 through T-011 are
+approved.
 
 ## Confirmed
 

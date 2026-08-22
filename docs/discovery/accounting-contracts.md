@@ -1570,9 +1570,11 @@ original currency drill-down.
 
 **Scope status.** Asset register, acquisition/capitalization, depreciation,
 disposal, and traceable journals are settled as a product area. Approved
-separate rule-driven book and tax depreciation schedules with no universal
-SLM or WDV default across them. Only applicable statutory method, rate, and
-useful-life content remains **OPEN RESEARCH** and research-gated per
+separate rule-driven book and tax depreciation schedules use configurable SLM
+as the reversible book default; this is not an irreversible mandate. The tax
+schedule has no universal WDV or SLM default and follows the applicable
+effective-dated statutory rule pack. Only applicable statutory method, rate,
+and useful-life content remains **OPEN RESEARCH** and research-gated per
 [T-003](tentative-decisions.md#t-003)
 and [architecture decisions](architecture-decisions.md#open-research--deferred-list).
 Book method and tax method selections are separate, rule-driven, and not hardcoded.

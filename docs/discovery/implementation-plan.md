@@ -144,7 +144,7 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 - Unrealized FX: explicit period-end revaluation, reversal, separate accounts, one-time settlement reclassification.
 - Cash/accrual tests: pro-rata settlement, unapplied-cash carry, refunds/credit notes, tax fail-closed, FX/bank-fee separation, accrual-only depreciation/revaluation.
 - Fixed-asset register: uniqueness exactly on (tenant_id, source_document_id, source_line_id) across capitalization kinds; rejects duplicate attempts; immutable depreciation runs (reversion via new version, never overwrite).
-- Separate book and tax depreciation schedules (T-003 owner-approved): each schedule selects its applicable rule-pack method, rate, useful-life, and residual-value independently. No universal SLM or WDV default. Exact statutory method content remains research-gated and evidence-verified per jurisdiction/year/taxpayer profile.
+- Separate book and tax depreciation schedules (T-003 owner-approved): the book schedule defaults to configurable SLM, but that default is reversible rather than an irreversible mandate; the tax schedule independently selects its effective-dated statutory rule-pack method, rate, useful-life, and residual-value. There is no universal tax WDV or SLM default. Exact statutory method content remains research-gated and evidence-verified per jurisdiction/year/taxpayer profile.
 - Employee-expense workflows (claims, advances, reimbursements, corporate-card matching).
 
 **Tests**: P&L basis parameter honored; BS/TB/aging reject --basis; balance sheet identity (assets=liabilities+equity); P&L net flows to equity; FX separation (realized vs. unrealized); asset uniqueness; depreciation immutability.

@@ -28,10 +28,10 @@ used to convert that document currency to base currency. Reports aggregate in
 base currency, while drill-down exposes the original currency and amounts.
 Changing a later rate cannot rewrite the document or its original posting.
 
-The exact rate source is configurable and remains **T-004 TENTATIVE -
-NOT OWNER-APPROVED / OPEN RESEARCH**. The record must still identify the rate
-used and its relevant timestamp or effective date so that a posting can be
-audited without assuming a particular provider.
+The exact rate source is configurable and remains **T-004 OWNER-APPROVED;
+NOT ARCHITECT-REVIEWED / OPEN RESEARCH**. The record must still identify the
+rate used and its relevant timestamp or effective date so that a posting can
+be audited without assuming a particular provider.
 
 ### Settlements, realized FX, and fees
 
@@ -58,9 +58,11 @@ original transaction and from settlement-time realized FX.
 ### Fixed assets
 
 The asset register, automatic depreciation, and disposal tracking are in scope.
-The exact depreciation methods and book-versus-tax schedules remain **T-003
-TENTATIVE - NOT OWNER-APPROVED**; neither is implied by the Zoho currency or
-locking pages.
+Separate book-versus-tax schedules with configurable SLM as the reversible book
+default are **T-003 OWNER-APPROVED; NOT ARCHITECT-REVIEWED**. The exact
+statutory tax methods and rates remain effective-dated rule-pack research;
+there is no universal tax WDV or SLM default. These product decisions are not
+implied by the Zoho currency or locking pages.
 
 ### Reconciliation boundary
 
