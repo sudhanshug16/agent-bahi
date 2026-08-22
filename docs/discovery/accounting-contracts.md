@@ -1426,7 +1426,7 @@ variance, fees, payment evidence, and provenance by skill/version.
 
 ## 13. FX realization and period-end revaluation
 
-**Scope status.** Immutable document and settlement rate snapshots with purpose-specific book recognition, settlement, GST, and income-tax-TDS snapshots are approved. Same-purpose fallback only; no cross-purpose rate substitution. Missing statutory source blocks only affected statutory lane; unaffected bookkeeping proceeds. The exact FX provider selection and fallback chain order remain **TENTATIVE - NOT OWNER-APPROVED / OPEN RESEARCH** under [T-004](tentative-decisions.md#entry-t-004-exchange-rate-provider-and-fx-workflowtentativeopen-pending-source-audit).
+**Scope status.** Immutable document and settlement rate snapshots with purpose-specific book recognition, settlement, GST, and income-tax-TDS snapshots are approved. Same-purpose fallback only; no cross-purpose rate substitution. Missing statutory source blocks only affected statutory lane; unaffected bookkeeping proceeds. The exact FX provider selection and fallback chain order remain **T-004 OWNER-APPROVED / OPEN RESEARCH** under [T-004](tentative-decisions.md#t-004).
 No provider, statutory rate, or automatic cross-purpose fallback is invented here. Approved original currency and purpose-specific snapshots are immutable records.
 
 **Scope and identifiers.** FX data is tenant-scoped with one base currency.
@@ -1573,7 +1573,7 @@ disposal, and traceable journals are settled as a product area. Approved
 separate rule-driven book and tax depreciation schedules with no universal
 SLM or WDV default across them. Only applicable statutory method, rate, and
 useful-life content remains **OPEN RESEARCH** and research-gated per
-[T-003](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default)
+[T-003](tentative-decisions.md#t-003)
 and [architecture decisions](architecture-decisions.md#open-research--deferred-list).
 Book method and tax method selections are separate, rule-driven, and not hardcoded.
 

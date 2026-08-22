@@ -30,7 +30,7 @@ This packet synthesizes existing canonical discovery documents and identifies th
 1. **Personal-Tax Contract CLEAN Review**: [personal-tax-physical-schema.md](personal-tax-physical-schema.md) records dialect-neutral relational contract (tenants, book_sets, accounts, journal_entries, postings, bookset_transfers, income_periods, rule_snapshots, official_artifacts) with ownership rules, transaction gates, and Gate0 proof obligations. **Status: NOT ARCHITECT-REVIEWED**. Architect must verify the contract satisfies tenant isolation, BookSet-level authorization/mutation scope (exact PT-014 fail-closed gates), personal BookSet uniqueness enforcement (full-history guard; no partial/active-only rules), GSTIN/BookSet mapping invariants, atomic inter-BookSet transfer mechanics (PT-003), and TaxCase composition without ledger merging. Silent failure consequence: BookSet leak, personal data visible cross-tenant or cross-BookSet, duplicate personal tenants, ambiguous transfer legs, omitted proprietorship in TaxCase.
 
 2. **Architect Review—Tenant/PAN/BookSet Model**: Architect must settle exact questions and approve the recommended three-option review candidate:
-   - **Recommended candidate (A)**: One individual/PAN tenant contains exactly one personal BookSet (lifetime) + multiple sole-proprietorship BookSets; companies remain separate tenants. Preserves no-cross-tenant product-query/write rule. Personal/business settlement atomic. TaxCase enumerates all BookSets; marks itself STALE when membership changes; blocks omissions. [Apprentice debate record](personal-tax-scope.md#apprentice-debate-record): A vs. B (privileged cross-tenant PAN aggregation) vs. C (non-posting personal workspace). Outcome: **A**. Mandatory safeguards before implementation: BookSet-level actor/resource authorization from day one (CA granted one business BookSet cannot read personal by default); every BookSet-owned row carries `tenant_id` + `book_set_id` (each independently balances); BookSet-scoped mutations fail with `AMBIGUOUS_BOOKSET` when not explicit; TaxCase source/BookSet catalog not empty/`UNKNOWN` (exactly one personal BookSet across tenant lifetime, including archived state; replacement preserves identity); Gate0 scenarios prove personal-paid business expense, drawing/loan transfer, new BookSet mid-year staleness, business-only CA access cannot read personal.
+   - **Recommended candidate (A)**: One individual/PAN tenant contains exactly one personal BookSet (lifetime) + multiple sole-proprietorship BookSets; companies remain separate tenants. Preserves no-cross-tenant product-query/write rule. Personal/business settlement atomic. TaxCase enumerates all BookSets; marks itself STALE when membership changes; blocks omissions. [Apprentice debate record](personal-tax-scope.md#apprentice-debate-record): A vs. B (privileged cross-tenant PAN aggregation) vs. C (non-posting personal workspace). Outcome: **A**. Mandatory safeguards before implementation: BookSet-level actor/resource authorization from the outset (CA granted one business BookSet cannot read personal by default); every BookSet-owned row carries `tenant_id` + `book_set_id` (each independently balances); BookSet-scoped mutations fail with `AMBIGUOUS_BOOKSET` when not explicit; TaxCase source/BookSet catalog not empty/`UNKNOWN` (exactly one personal BookSet across tenant lifetime, including archived state; replacement preserves identity); Gate0 scenarios prove personal-paid business expense, drawing/loan transfer, new BookSet mid-year staleness, business-only CA access cannot read personal.
    - **Alternative (B)**: Separate personal and business BookSets in separate tenants aggregated by privileged PAN registry (read-only snapshot authority). Requires privileged cross-tenant exception; harder authorization boundary; separate tenants simplify single-book mutations but require two independent successful postings for same-tenant settlement.
    - **Rejected for PT-001**: Non-posting personal evidence workspace (C). Either creates second accounting engine or collapses into A/B. Personal banks, investments, property, loans require canonical balances and reconciliation.
    - **Exact architect decision questions**: Does the recommended A model, with explicit BookSet authorization threading and fail-closed mutation scope, satisfy the audit/isolation guarantees? Can the personal BookSet identity uniqueness guard be enforced full-history (including archived) at the database relationship level? If Gate0 cannot prove fail-closed BookSet authorization/isolation, or migration would require weakening canonical ledger invariants, does the architect recommend reverting to B with explicit PAN registry?
@@ -84,7 +84,7 @@ Each phase depends on the prior phase's exit gate **and** its applicable owner-a
 | Phase 7 | Phase 1–6 complete | GSTR-1/3B/2B; TDS/TCS; annual income-tax; corrections lineage | T-001 (filing fallback), T-007/T-009/T-010 (income-tax), PT-005..PT-016 (personal-tax compliance including PT-011 GST routing) |
 | Phase 8A | Phase 7 complete | PostgreSQL/MySQL proven; schema migrations/upgrades on all dialects; release executables | SQLite default; multi-dialect proof; no Node/Bun subprocess |
 | Phase 8B | Phase 8A complete | Bounded skills runtime; skill versioning; deprecation gates | Skills invoke CLI only via registry; no direct domain/persistence import |
-| Phase 9 | Phase 8 complete; architect sign-off | Zoho import feature complete; imported books reconciled with live books; migration proof | T-002 (Frappe reference only); no import-driven model changes |
+| Phase 9 | Through Phase 8B complete; architect sign-off | Zoho import feature complete; imported books reconciled with live books; migration proof | T-002 (Frappe reference only); no import-driven model changes |
 
 ### Witness Dependencies (Not Blocking)
 
@@ -113,7 +113,7 @@ These arc across multiple phases but do not block phase start:
 - Future RBAC at BookSet resource: Authorization threads BookSet context (tenant + book_set_id) from CLI through application services. CA granted `read:personal_bookset` cannot see proprietorship or other BookSets without explicit per-BookSet grant. RBAC implementation deferred but schema boundaries and authorization hooks must support this.
 
 **Mandatory Pre-Implementation Safeguards** ([personal-tax-scope.md § Apprentice debate record](personal-tax-scope.md#apprentice-debate-record)):
-1. BookSet-level actor/resource authorization from day one; CA granted one business BookSet cannot read personal by default.
+1. BookSet-level actor/resource authorization from the outset; CA granted one business BookSet cannot read personal by default.
 2. Every BookSet-owned row carries explicit `tenant_id` + `book_set_id`; each BookSet independently balances.
 3. BookSet-scoped mutations fail with `AMBIGUOUS_BOOKSET` when not explicit; tenant-wide status/TaxCase aggregation is read-only and separately authorized.
 4. TaxCase source/BookSet catalog cannot be empty/UNKNOWN; exactly one personal BookSet across tenant lifetime (including archived); replacement/migration preserves identity.
@@ -251,7 +251,7 @@ After Phase 9 import completes, imported books are placed in shadow mode (separa
 **Current Books**: Live books remain authoritative and continue posting during shadow period. Imported books are placed in shadow/test mode (separate database or read-only access) until final cutover decision.
 
 **Shadow Period Conditions** (Phase 9 cutover planning):
-- **Duration**: TBD by owner at Phase 9.
+- **Coverage and duration**: Explicit owner decision at Phase 9; no fixed coverage window or duration is prescribed here. Acceptance requires the measurable reconciliation criteria below, zero unexplained variance, and independent Finance Owner/CA sign-off.
 - **Tolerance**: Zero variance allowed; any mismatch fails closed.
 - **Reconciliation gates**: Opening balances, trial balance, AR/AP aging, bank control totals, GST, TDS/TCS, payroll, personal tax all must reconcile exactly.
 
@@ -267,8 +267,8 @@ After Phase 9 import completes, imported books are placed in shadow mode (separa
 
 ### Post-Cutover Monitoring
 
-1. **Automated gates**: Daily trial-balance check; AR/AP reconciliation; bank control totals; GST liability/ITC reconciliation (if applicable).
-2. **Human/CA confirmations**: Finance Owner weekly review (bank, payroll, deposits); CA weekly compliance review (TDS/TCS accrual, payroll, filing deadlines); monthly financial review.
+1. **Automated gates**: Trial-balance check; AR/AP reconciliation; bank control totals; GST liability/ITC reconciliation (if applicable).
+2. **Human/CA confirmations**: Finance Owner recurring review (bank, payroll, deposits); CA recurring compliance review (TDS/TCS accrual, payroll, filing deadlines); periodic financial review.
 3. **Stop conditions**: Trial balance variance > 0; unmatched bank control; unexplained ITC rejection from GST portal; missing rule snapshot at tax computation; audit trail gap.
 
 ---
@@ -317,8 +317,8 @@ After Phase 9 import completes, imported books are placed in shadow mode (separa
    - Personal-tax extension: one PAN individual may contain one personal + multiple proprietorship BookSets (option A). If architect recommends option B, Sudhanshu chooses B or defers personal-tax.
    - Future multi-entity consolidation (e.g., holding-company tenants with consolidated reporting): separate owner decision; not in scope for Phase 1.
 
-5. **Shadow Duration and Cutover Authority** (Phase 9 planning; not now)
-   - Sudhanshu, Finance Owner, and CA jointly plan acceptable shadow period duration and cutover date.
+5. **Shadow Coverage/Duration and Cutover Authority** (Phase 9 planning; not now)
+   - Sudhanshu, Finance Owner, and CA jointly decide the acceptable shadow coverage, duration, and cutover date; no numeric duration is prescribed in this packet.
    - Finance Owner retains cutover/rollback operational authority and decides go/no-go based on reconciliation completeness.
    - CA independently verifies accounting/tax correctness and signs statutory review artifacts.
    - Sudhanshu reserves right to halt cutover if shadow reconciliation shows unexplained variance or either Finance Owner or CA identifies risk.

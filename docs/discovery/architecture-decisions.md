@@ -45,7 +45,7 @@ These are confirmed by Sudhanshu or existing discovery docs and form the foundat
 
 - **Zoho import final** ([decisions.md § Confirmed](decisions.md#confirmed)): Zoho Books is the validated migration source but remains the final phase and must not drive the canonical model.
 
-- **RBAC deferred** ([decisions.md § Working defaults](decisions.md#working-defaults)): RBAC remains unimplemented in v1, but every mutation accepts actor and source context; application services contain authorization hooks for future implementation.
+- **RBAC deferred** ([decisions.md § Current implementation context](decisions.md#current-implementation-context)): RBAC remains unimplemented in v1, but every mutation accepts actor and source context; application services contain authorization hooks for future implementation.
 
 ## RECOMMENDED Decisions
 
@@ -356,7 +356,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
   1. E-invoice applicability (B2B thresholds, exports, stock transfers, state-specific exemptions) is verified from official GST Portal/GSTN sources.
   2. IRP credential provisioning, submission transport, and error-handling are researched and documented.
   3. Sudhanshu explicitly approves this adapter after research closure.
-- **Until research completion**: Agent-bahi will not invoke e-invoice adapters. GSTR-1 B2B invoices are prepared and validated normally; users must handle e-invoice submission separately outside agent-bahi or wait for research completion and owner approval. See [T-005](tentative-decisions.md#entry-t-005-v1-scope-focus%E2%80%94regular-small-business-gst-accounting-profiles) for V1 scope and [architecture-decisions.md § Open Research](architecture-decisions.md#open-research--deferred-list) for pending e-invoice research.
+- **Until research completion**: Agent-bahi will not invoke e-invoice adapters. GSTR-1 B2B invoices are prepared and validated normally; users must handle e-invoice submission separately outside agent-bahi or wait for research completion and owner approval. See [T-005](tentative-decisions.md#t-005) for V1 scope and [architecture-decisions.md § Open Research](architecture-decisions.md#open-research--deferred-list) for pending e-invoice research.
 - **Alternative**: Manual e-invoice generation and upload outside agent-bahi; or no e-invoice support until researched.
 - **Rationale**: Direct IRP submission is automated if available after research confirms applicability; fallback is manual. Recorded evidence (IRN, QR) is the canonical proof. Idempotent retries prevent duplicates. Research closure and explicit owner approval are prerequisites; no tentative assumptions about IRP credentials or applicability may enter V1.
 - **Silent failure prevented**: Invoice issued with unauthorized e-invoice when not applicable, duplicate IRN on retry, credentials exposed, or unapproved adapter invoked despite research gaps.
@@ -373,7 +373,7 @@ Each RECOMMENDED entry includes an ID, recommendation, strongest viable alternat
   2. State-specific rules and carrier/mode applicability are documented per origin state, destination state, and movement type.
   3. E-way-bill API credentials, submission transport, and error-handling are researched.
   4. Sudhanshu explicitly approves this adapter after research closure.
-- **Until research completion**: Agent-bahi will not invoke e-way-bill adapters. Movements and dispatch are prepared normally; users must handle e-way-bill generation and submission separately outside agent-bahi or wait for research completion and owner approval. See [T-005](tentative-decisions.md#entry-t-005-v1-scope-focus%E2%80%94regular-small-business-gst-accounting-profiles) for V1 scope and [architecture-decisions.md § Open Research](architecture-decisions.md#open-research--deferred-list) for pending e-way-bill research.
+- **Until research completion**: Agent-bahi will not invoke e-way-bill adapters. Movements and dispatch are prepared normally; users must handle e-way-bill generation and submission separately outside agent-bahi or wait for research completion and owner approval. See [T-005](tentative-decisions.md#t-005) for V1 scope and [architecture-decisions.md § Open Research](architecture-decisions.md#open-research--deferred-list) for pending e-way-bill research.
 - **Alternative**: No e-way bill support in V1; manual e-way-bill generation outside agent-bahi until researched.
 - **Rationale**: API is the preferred path if implemented after research confirms applicability per state and movement type. Applicability, thresholds, exemptions, and state-specific rules are determined by effective-dated compliance rules and remain unresolved; research is required per state and applicability scenario. Research closure and explicit owner approval are prerequisites; no tentative assumptions about state rules or API credentials may enter V1.
 - **Silent failure prevented**: Movement/dispatch blocked forever because state rule is unknown, EWB issued for exempt movement, or unapproved adapter invoked despite research gaps.

@@ -26,10 +26,11 @@ exception rather than silently guessing.
   application rates, realized exchange gain/loss, bank-fee separation, and
   auditable period-end revaluation adjustments.
 - Own the asset register, automatic depreciation postings, disposal tracking,
-  and the policy/configuration boundary for **T-003 TENTATIVE - NOT
-  OWNER-APPROVED** depreciation methods and separate book-versus-tax schedules.
-  This choice is reversible and must not be treated as implementation
-  authorization.
+  and the policy/configuration boundary for the **T-003 OWNER-APPROVED**
+  separate book-versus-tax depreciation schedules. The schedule split is
+  settled; exact effective-dated statutory rates and method inputs remain
+  research-gated. This owner-approved boundary is not architect review or
+  implementation authorization.
 - Enforce permissions, safety gates, document state rules, and ledger
   invariants, including inclusive global or module-specific period locks.
 - Expose authoritative validation results and durable audit metadata.

@@ -63,7 +63,7 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 
 **The authoritative implementation sequence is defined in [Implementation Plan](implementation-plan.md)**. This roadmap aligns with that sequence and preserves discovery milestones and research gates. Phases are numbered Gate0, P1–P9 in the implementation plan for clarity.
 
-**Tentative decisions (T-001 through T-011) are provisional and await owner review.** They do not authorize implementation; later-phase tentative IDs gate only their affected phase/action. See [Owner Review Docket](owner-review-docket.md) for the compact index.
+**T-001 through T-011 are OWNER-APPROVED binding decision frameworks.** They do not authorize implementation; research gates, proof evidence, architect review, and explicit phase/action authorization remain applicable. See [Owner Review Docket](owner-review-docket.md) for the compact index.
 
 ---
 
@@ -71,9 +71,9 @@ Explicit follow-ups before statutory-compliance implementation decisions:
 
 The current state is documentation-only and does not authorize Gate0. After reviewing the [Owner Review Docket](owner-review-docket.md), Sudhanshu must explicitly direct/authorize these reversible proof spikes. That direction is not approval of TypeScript + Bun. See [Implementation Plan: Gate0](implementation-plan.md#gate0-proof-spikes-hard-blocker-before-phase-1).
 
-**Six proof spikes** (STK-001 through STK-006): Bun runtime, ORM cross-dialect, SQLite configuration, migrations/upgrades, schema generation/CLI parsing, build/distribution. Technology choice (T-011) is contingent on spike results.
+**Six proof spikes** (STK-001 through STK-006): Bun runtime, ORM cross-dialect, SQLite configuration, migrations/upgrades, schema generation/CLI parsing, build/distribution. They validate the owner-approved T-011 runtime boundary and record the remaining version, dependency, platform, and dialect evidence gates.
 
-**Gate criterion**: All spikes pass and produce evidence evaluating T-011. After the evidence, Sudhanshu approves, changes, or rejects T-011 before Phase 1. Phase 1 also requires a reviewed physical-schema RFC and approval of applicable Phase 1 decisions; later-phase tentative IDs do not block all of Phase 1.
+**Gate criterion**: All spikes pass and produce the required evidence for the owner-approved T-011 runtime boundary. A blocker requires a new owner decision or stack override; T-011 is not pending a further approval. Phase 1 also requires a reviewed physical-schema RFC, approval of applicable Phase 1 decisions, and explicit implementation authorization; later-phase decisions do not block all of Phase 1.
 
 ## Phase 1: Foundation, Tenant Model, and Migrations
 
@@ -81,7 +81,7 @@ The current state is documentation-only and does not authorize Gate0. After revi
 
 **Key contract**: Tenant and GSTIN context (auto-select, explicit fail on ambiguity); ledger invariants (debit=credit after rounding); idempotency semantics; migration infrastructure.
 
-**Exit conditions**: Tenant/GSTIN isolation enforced; command registry stable; migration strategy proven in proof spikes; T-011 decided after Gate0 evidence; physical-schema RFC reviewed; and applicable Phase 1 decisions approved. Physical schema documentation does not imply approval.
+**Exit conditions**: Tenant/GSTIN isolation enforced; command registry stable; migration strategy proven in proof spikes; T-011 runtime evidence recorded; physical-schema RFC reviewed; applicable Phase 1 decisions approved; and explicit Phase 1 authorization received. Physical schema documentation does not imply approval.
 
 ## Phase 2: Skill Contracts and Catalog (Declarations Only)
 
@@ -109,7 +109,7 @@ The current state is documentation-only and does not authorize Gate0. After revi
 
 **Goal**: P&L/BS/aging reports, realized AND unrealized FX, fixed-asset register, employee-expense workflows. See [Implementation Plan: Phase 5](implementation-plan.md#phase-5-reporting-fx-assets-employee-expenses).
 
-**Key contract**: `--basis` parameter only for P&L. BS, TB, AR/AP aging reject `--basis` (ledger/as-of). FX: realized at settlement; unrealized period-end revaluation. Asset uniqueness exactly on (tenant_id, source_document_id, source_line_id). SLM parameterized; method changes blocked until T-003 approval.
+**Key contract**: `--basis` parameter only for P&L. BS, TB, AR/AP aging reject `--basis` (ledger/as-of). FX: realized at settlement; unrealized period-end revaluation. Asset uniqueness exactly on (tenant_id, source_document_id, source_line_id). Separate book/tax schedules follow T-003; exact effective-dated method/rate inputs remain research-gated.
 
 **Exit conditions**: Reporting complete; FX separation verified; assets tracked; basis parameter enforcement correct.
 

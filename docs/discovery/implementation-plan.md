@@ -8,7 +8,7 @@
 
 ## Owner-Approved and Owner-Selected Decisions (Phase-Scoped Gates)
 
-See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-010 records. Those entries are owner-approved and binding. TypeScript + Bun is owner-selected. These decisions do not authorize implementation; only the decision applicable to a phase or action gates that work.
+See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-011 records. Those entries are owner-approved and binding. TypeScript + Bun is owner-selected. These decisions do not authorize implementation; only the decision applicable to a phase or action gates that work.
 
 - **T-001**: External filing boundary (prepare/validate/export + manual portal for filings without specific-approved transport boundary). See [Tentative Decisions](tentative-decisions.md#t-001).
 - **T-002**: Agent-bahi MIT license and Frappe Books AGPL-3.0 licensing boundary (study/reference-only for behavior and concepts; no copying or adapting source, schema, prose, or assets). See [Tentative Decisions](tentative-decisions.md#t-002).
@@ -20,6 +20,7 @@ See [Tentative Decisions](tentative-decisions.md) for the full T-001 through T-0
 - **T-008**: Controlled user corrections and deletions (allow even after FY/report/audit/filing via explicit unlock preview/reason/confirmation; reversal/replacement lineage; every affected report, filing case, and audit pack marked STALE/DRIFTED with deliberate regeneration/review/re-close required; prior exported/submitted artifacts stay immutable).
 - **T-009**: Form 140/141 statutory export (fail-closed pending official current format/utility/schema/portal verification; internal neutral data allowed; no statutory export adapter without verified schema).
 - **T-010**: Post-filing return case/evidence/correction (preserve ARN/status/rejection/notices/correction lineage; no unverified automatic revised/amended/defective-return submission).
+- **T-011**: Initial language and runtime (TypeScript + Bun selected; Bun-native APIs first; no separate Node/Bun runtime, subprocess, or lifecycle hook in the release; exact versions, checksums, and lockfile remain Gate0 evidence requirements; no implementation authorization).
 ---
 
 ## Gate0: Proof Spikes (Hard Blocker Before Phase 1)

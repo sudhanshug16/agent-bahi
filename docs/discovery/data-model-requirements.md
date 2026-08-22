@@ -103,7 +103,7 @@ Period-end revaluation of open foreign-currency items is represented by an
 auditable adjustment linked to the affected open items, rate, date, actor, and
 reason. It must not mutate the original document amounts or its immutable rate
 snapshot. The exact external rate source is configurable but remains **T-004
-TENTATIVE - NOT OWNER-APPROVED / OPEN RESEARCH**.
+OWNER-APPROVED / OPEN RESEARCH**.
 
 ## Fixed Assets
 
@@ -113,7 +113,7 @@ disposal tracking. Depreciation runs and disposals must be traceable to the
 asset and the resulting ledger postings.
 
 The separate book/tax schedule model is **T-003 OWNER-APPROVED**
-([tentative decision](tentative-decisions.md#entry-t-003-fixed-asset-depreciation-schedulesbook-vs-tax-with-tentative-slm-default)).
+([tentative decision](tentative-decisions.md#t-003)).
 The separate book/tax schedule model is settled; exact statutory tax methods and rates remain research-gated.
 The relationship and exact methods remain configuration/policy boundaries, and
 the owner may adjust specific rate/method choices through future rule-pack updates without changing the asset-register
