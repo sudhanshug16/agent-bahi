@@ -767,4 +767,238 @@ describe("BookSet command service", () => {
       expect(hash1).not.toBe(hash2);
     });
   });
+
+  describe("strict runtime envelope and payload validation", () => {
+    beforeEach(async () => {
+      db = await initializeTestDatabase();
+      sessionRunner = createTestSessionRunner(db);
+    });
+
+    afterEach(() => {
+      db.close();
+    });
+
+    it("rejects invalid schemaVersion", async () => {
+      const tenantId = brandTenantId("test-tenant-invalid-schema");
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "My Personal" };
+      const envelope: any = {
+        schemaVersion: 2,  // Invalid: must be 1
+        tenantId,
+        requestId: "req-1",
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test",
+        payload,
+      };
+
+      try {
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject invalid schemaVersion");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_SCHEMA_VERSION");
+      }
+    });
+
+    it("rejects blank or oversized tenantId", async () => {
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "My Personal" };
+
+      // Blank tenantId
+      try {
+        const envelope: any = {
+          schemaVersion: 1,
+          tenantId: "",
+          requestId: "req-1",
+          actor: { kind: "HUMAN", id: "user-1" },
+          source: "CLI",
+          reason: "test",
+          payload,
+        };
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject blank tenantId");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_TENANT_ID");
+      }
+
+      // Oversized tenantId
+      try {
+        const envelope: any = {
+          schemaVersion: 1,
+          tenantId: "x".repeat(200),
+          requestId: "req-1",
+          actor: { kind: "HUMAN", id: "user-1" },
+          source: "CLI",
+          reason: "test",
+          payload,
+        };
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject oversized tenantId");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_TENANT_ID");
+      }
+    });
+
+    it("rejects invalid actor kind", async () => {
+      const tenantId = brandTenantId("test-tenant-invalid-actor");
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "My Personal" };
+      const envelope: any = {
+        schemaVersion: 1,
+        tenantId,
+        requestId: "req-1",
+        actor: { kind: "INVALID", id: "user-1" },
+        source: "CLI",
+        reason: "test",
+        payload,
+      };
+
+      try {
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject invalid actor kind");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_ACTOR_KIND");
+      }
+    });
+
+    it("rejects invalid command source", async () => {
+      const tenantId = brandTenantId("test-tenant-invalid-source");
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "My Personal" };
+      const envelope: any = {
+        schemaVersion: 1,
+        tenantId,
+        requestId: "req-1",
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "INVALID_SOURCE",
+        reason: "test",
+        payload,
+      };
+
+      try {
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject invalid source");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_SOURCE");
+      }
+    });
+
+    it("rejects blank displayName and trims whitespace", async () => {
+      const tenantId = brandTenantId("test-tenant-displayname");
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      // Blank displayName
+      try {
+        const payload: any = { kind: "PERSONAL", displayName: "" };
+        const envelope: CommandEnvelope<BookSetCreatePayload> = {
+          schemaVersion: 1,
+          tenantId,
+          requestId: "req-1",
+          actor: { kind: "HUMAN", id: "user-1" },
+          source: "CLI",
+          reason: "test",
+          payload,
+        };
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject blank displayName");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_DISPLAY_NAME");
+      }
+
+      // Whitespace-only displayName
+      try {
+        const payload: any = { kind: "PERSONAL", displayName: "   " };
+        const envelope: CommandEnvelope<BookSetCreatePayload> = {
+          schemaVersion: 1,
+          tenantId,
+          requestId: "req-2",
+          actor: { kind: "HUMAN", id: "user-1" },
+          source: "CLI",
+          reason: "test",
+          payload,
+        };
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject whitespace-only displayName");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_DISPLAY_NAME");
+      }
+
+      // Valid displayName with leading/trailing whitespace gets trimmed
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "  Trimmed Name  " };
+      const envelope: CommandEnvelope<BookSetCreatePayload> = {
+        schemaVersion: 1,
+        tenantId,
+        requestId: "req-3",
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test",
+        payload,
+      };
+
+      const result = await executeBookSetCreate(sessionRunner, envelope);
+      const resultData = JSON.parse(result.resultJson);
+      expect(resultData.displayName).toBe("Trimmed Name");  // Trimmed
+    });
+
+    it("rejects invalid ISO requestedAt format", async () => {
+      const tenantId = brandTenantId("test-tenant-requestedat");
+
+      await sessionRunner.withBusinessSession("write", async (session) => {
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "INDIVIDUAL", "CREATING", "Test Tenant", "INR", now, now],
+        );
+      });
+
+      const payload: BookSetCreatePayload = { kind: "PERSONAL", displayName: "My Personal" };
+      const envelope: any = {
+        schemaVersion: 1,
+        tenantId,
+        requestId: "req-1",
+        actor: { kind: "HUMAN", id: "user-1" },
+        source: "CLI",
+        reason: "test",
+        requestedAt: "not-an-iso-date",
+        payload,
+      };
+
+      try {
+        await executeBookSetCreate(sessionRunner, envelope);
+        expect.unreachable("Should reject invalid requestedAt");
+      } catch (error) {
+        expect((error as any).code).toBe("INVALID_REQUESTED_AT");
+      }
+    });
+  });
 });
