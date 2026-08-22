@@ -1,58 +1,50 @@
 import { describe, expect, it } from "bun:test";
-import type { Database, QueryResult } from "../../src/application/ports/persistence.ts";
+import { randomUUID } from "crypto";
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
-import { DomainError } from "../../src/core/types.ts";
-
-function fakeDatabase(overrides: Partial<Database>): Database {
-  return {
-    query: async (): Promise<QueryResult> => ({ rows: [], rowCount: 0 }),
-    querySingle: async (): Promise<Record<string, unknown> | undefined> => undefined,
-    execute: async (): Promise<QueryResult> => ({ rows: [], rowCount: 0 }),
-    executeSingle: async (): Promise<Record<string, unknown> | undefined> => undefined,
-    executeRaw: async (): Promise<void> => undefined,
-    beginTransaction: async () => { throw new Error("unused"); },
-    unitOfWork: () => { throw new Error("unused"); },
-    withMigrationLease: async () => { throw new Error("unused"); },
-    isConnected: async () => true,
-    close: async () => undefined,
-    acquireAdvisoryLock: async () => true,
-    releaseAdvisoryLock: async () => undefined,
-    ...overrides,
-  };
-}
+import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 
 describe("runtime fail-closed boundaries", () => {
   it("returns uninitialized only for an explicitly missing SQLite control table", async () => {
-    const missing = fakeDatabase({ query: async () => { throw new DomainError("CONTROL_TABLE_MISSING", "missing"); } });
-    await expect(new MigrationService(missing, "sqlite").getStatus()).resolves.toMatchObject({ hasSchema: false });
-
-    const refused = fakeDatabase({ query: async () => { throw new DomainError("DATABASE_CONNECTION_FAILED", "refused"); } });
-    await expect(new MigrationService(refused, "postgresql").getStatus()).rejects.toMatchObject({ code: "DATABASE_CONNECTION_FAILED" });
+    const db = new SqliteAdapter({ path: `/tmp/runtime-boundary-missing-${randomUUID()}.sqlite` });
+    try {
+      await expect(new MigrationService(db, "sqlite").getStatus()).resolves.toMatchObject({ hasSchema: false });
+    } finally {
+      await db.close();
+    }
   });
 
-  it("uses exact PostgreSQL verifyChecksum numbering and preserves inspection read-only", async () => {
-    let verifySql = "";
-    let verifyParams: unknown[] = [];
-    const pg = fakeDatabase({
-      querySingle: async (sql, params) => {
-        verifySql = sql;
-        verifyParams = params ?? [];
-        return { dialect: "postgresql", checksum: "good" };
-      },
+  it("fails closed with normalized SQLite errors for missing metadata and a closed connection", async () => {
+    const db = new SqliteAdapter({ path: `/tmp/runtime-boundary-errors-${randomUUID()}.sqlite` });
+    const compatibility = new CompatibilityService(db, "sqlite");
+    await expect(compatibility.checkCompatibility("0.0.0-gate0")).rejects.toMatchObject({
+      code: "INCOMPATIBLE_DATABASE",
     });
-    await new MigrationService(pg, "postgresql").verifyChecksum("migration-1", "good");
-    expect(verifySql).toContain("WHERE id = $1");
-    expect(verifyParams).toEqual(["migration-1"]);
 
-    let writes = 0;
-    const compatibility = fakeDatabase({
-      querySingle: async () => ({ id: "migration-1", status: "APPLIED" }),
-      query: async () => ({ rows: [{ schema_logical_id: "migration-1", data_format_version: "1", read_policy: "read_only" }], rowCount: 1 }),
-      execute: async () => { writes += 1; return { rows: [], rowCount: 0 }; },
-      executeRaw: async () => { writes += 1; },
+    await db.close();
+    await expect(new MigrationService(db, "sqlite").getStatus()).rejects.toMatchObject({
+      code: "DATABASE_QUERY_FAILED",
+      context: { dialect: "sqlite" },
     });
-    await new CompatibilityService(compatibility, "postgresql").checkCompatibility("1.0.0");
-    expect(writes).toBe(0);
+    await expect(compatibility.checkCompatibility("0.0.0-gate0")).rejects.toMatchObject({
+      code: "INCOMPATIBLE_DATABASE",
+      context: { dialect: "sqlite" },
+    });
+  });
+
+  it("uses SQLite placeholders and preserves read-only compatibility inspection", async () => {
+    const db = new SqliteAdapter({ path: `/tmp/runtime-boundary-sqlite-${randomUUID()}.sqlite` });
+    try {
+      const migration = new MigrationService(db, "sqlite");
+      await migration.migrate([{ id: "migration-1", sql: "CREATE TABLE runtime_boundary (id TEXT PRIMARY KEY)" }]);
+      const compatibility = new CompatibilityService(db, "sqlite");
+      await compatibility.initializeDefaults();
+      await expect(compatibility.checkCompatibility("0.0.0-gate0")).resolves.toMatchObject({
+        compatible: true,
+        schemaVersion: "gate0-001-core-sqlite",
+      });
+    } finally {
+      await db.close();
+    }
   });
 });

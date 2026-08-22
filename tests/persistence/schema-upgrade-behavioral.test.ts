@@ -7,7 +7,7 @@
  * - Unknown/hybrid/superset/partial/view/malformed-current rejection with no mutation
  * - Null-required and invalid status/dirty value rejection
  * - Exact row equality including nulls and large integer preservation
- * - Injected copy/validate/swap failure rollback for SQLite/PostgreSQL
+ * - Injected copy/validate/swap failure rollback for SQLite
  * - Metadata connection/permission error propagation
  * - recoverDirty null-manifest behavior fail-closed
  * Tests invoke real MigrationService/production adapters and assert exact outcomes.

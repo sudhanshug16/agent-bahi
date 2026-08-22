@@ -1,7 +1,6 @@
 /**
  * Advanced Migration Defect Tests
- * Covers: MySQL lock release, PG advisory bounds, SQLite/PG DIRTY persistence,
- * dialect placeholders, recovery with NULL dirty_reason
+ * Covers: SQLite DIRTY persistence, dialect placeholders, and recovery state validation.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
@@ -65,9 +64,7 @@ describe("Advanced Migration Defects", () => {
 
       await migrationService.migrate(migrations);
 
-      // Create a migration service for a different dialect
-      // (can't actually test with PG/MySQL without containers, but we test the logic)
-      // For SQLite, we can at least verify that the dialect is checked
+      // The SQLite row still carries its persisted dialect and is checked.
       const checksum = migrationService["computeChecksum"](sql);
       await migrationService.verifyChecksum("dialect-check", checksum);
     });
@@ -178,7 +175,7 @@ describe("Advanced Migration Defects", () => {
       expect(status.appliedMigrations[0]?.dialect).toBe("sqlite");
     });
 
-    it("should fail on dialect mismatch in recovery", async () => {
+    it("should fail on a persisted non-sqlite dialect in recovery", async () => {
       // Create a DIRTY state
       try {
         await migrationService.migrate([
@@ -188,11 +185,16 @@ describe("Advanced Migration Defects", () => {
         // Expected
       }
 
-      // Try to recover with wrong dialect
+      await db.execute(
+        "UPDATE schema_migrations SET dialect = ? WHERE id = ?",
+        ["postgresql", "wrong-dialect"],
+      );
+
+      // Try to recover a row whose persisted dialect is not SQLite.
       try {
         await migrationService.recoverDirty({
           migrationId: "wrong-dialect",
-          expectedDialect: "postgresql", // Wrong!
+          expectedDialect: "sqlite",
           expectedStatus: "DIRTY",
           expectedChecksum: "checksum",
           expectedDirtyReason: "reason",

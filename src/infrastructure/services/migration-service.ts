@@ -8,7 +8,7 @@ import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 export { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 
 /**
- * Migration schema for all dialects.
+ * Migration schema for SQLite.
  * Explicit status: APPLYING (in-progress), APPLIED (success), DIRTY (failed).
  * lease_token used for ownership validation during recovery.
  */
@@ -24,38 +24,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   lease_token TEXT,
   manifest_version INTEGER,
   verification_manifest_hash TEXT,
-  manifest_json TEXT
-);
-`;
-
-const MIGRATION_SCHEMA_POSTGRES = `
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  id TEXT NOT NULL PRIMARY KEY,
-  dialect TEXT NOT NULL,
-  checksum TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-  executed_at TEXT NOT NULL,
-  duration_ms INTEGER NOT NULL,
-  dirty_reason TEXT,
-  lease_token TEXT,
-  manifest_version INTEGER,
-  verification_manifest_hash TEXT,
-  manifest_json TEXT
-);
-`;
-
-const MIGRATION_SCHEMA_MYSQL = `
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  id VARCHAR(255) NOT NULL PRIMARY KEY,
-  dialect VARCHAR(50) NOT NULL,
-  checksum VARCHAR(64) NOT NULL,
-  status VARCHAR(20) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-  executed_at VARCHAR(50) NOT NULL,
-  duration_ms INT NOT NULL,
-  dirty_reason TEXT,
-  lease_token VARCHAR(255),
-  manifest_version INT,
-  verification_manifest_hash VARCHAR(64),
   manifest_json TEXT
 );
 `;
@@ -97,87 +65,6 @@ CREATE TRIGGER IF NOT EXISTS migration_recovery_audit_no_delete BEFORE DELETE ON
 BEGIN
   SELECT RAISE(ABORT, 'migration_recovery_audit is append-only');
 END;
-`;
-
-const RECOVERY_AUDIT_SCHEMA_POSTGRES = `
-CREATE TABLE IF NOT EXISTS migration_recovery_audit (
-  id TEXT PRIMARY KEY,
-  migration_id TEXT NOT NULL,
-  recovery_at TEXT NOT NULL,
-  lease_token TEXT NOT NULL,
-  actor TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  expected_status TEXT NOT NULL,
-  expected_checksum TEXT NOT NULL,
-  expected_dirty_reason_state TEXT NOT NULL CHECK (expected_dirty_reason_state IN ('NONE', 'PRESENT')),
-  expected_dirty_reason TEXT,
-  actual_status TEXT NOT NULL,
-  actual_checksum TEXT NOT NULL,
-  actual_dirty_reason_state TEXT NOT NULL CHECK (actual_dirty_reason_state IN ('NONE', 'PRESENT')),
-  actual_dirty_reason TEXT,
-  verification_manifest_hash TEXT,
-  manifest_version INTEGER,
-  probe_results_json TEXT NOT NULL,
-  verification_status TEXT NOT NULL CHECK (verification_status IN ('PASS', 'FAIL')),
-  success BOOLEAN NOT NULL,
-  FOREIGN KEY (migration_id) REFERENCES schema_migrations(id)
-);
-
-CREATE OR REPLACE FUNCTION migration_recovery_audit_no_mutate() RETURNS TRIGGER AS $$
-BEGIN
-  RAISE EXCEPTION 'migration_recovery_audit is append-only';
-END;
-$$ LANGUAGE plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgname = 'migration_recovery_audit_no_update'
-  ) THEN
-    CREATE TRIGGER migration_recovery_audit_no_update BEFORE UPDATE ON migration_recovery_audit
-      FOR EACH ROW EXECUTE FUNCTION migration_recovery_audit_no_mutate();
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgname = 'migration_recovery_audit_no_delete'
-  ) THEN
-    CREATE TRIGGER migration_recovery_audit_no_delete BEFORE DELETE ON migration_recovery_audit
-      FOR EACH ROW EXECUTE FUNCTION migration_recovery_audit_no_mutate();
-  END IF;
-END $$;
-`;
-
-const RECOVERY_AUDIT_SCHEMA_MYSQL = `
-CREATE TABLE IF NOT EXISTS migration_recovery_audit (
-  id VARCHAR(255) PRIMARY KEY,
-  migration_id VARCHAR(255) NOT NULL,
-  recovery_at VARCHAR(50) NOT NULL,
-  lease_token VARCHAR(255) NOT NULL,
-  actor VARCHAR(255) NOT NULL,
-  reason TEXT NOT NULL,
-  expected_status VARCHAR(20) NOT NULL,
-  expected_checksum VARCHAR(64) NOT NULL,
-  expected_dirty_reason_state VARCHAR(10) NOT NULL,
-  expected_dirty_reason TEXT,
-  actual_status VARCHAR(20) NOT NULL,
-  actual_checksum VARCHAR(64) NOT NULL,
-  actual_dirty_reason_state VARCHAR(10) NOT NULL,
-  actual_dirty_reason TEXT,
-  verification_manifest_hash VARCHAR(64),
-  manifest_version INT,
-  probe_results_json TEXT NOT NULL,
-  verification_status VARCHAR(10) NOT NULL,
-  success TINYINT(1) NOT NULL,
-  FOREIGN KEY (migration_id) REFERENCES schema_migrations(id)
-);
-
-CREATE TRIGGER IF NOT EXISTS migration_recovery_audit_no_update BEFORE UPDATE ON migration_recovery_audit
-FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'migration_recovery_audit is append-only';
-
-CREATE TRIGGER IF NOT EXISTS migration_recovery_audit_no_delete BEFORE DELETE ON migration_recovery_audit
-FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'migration_recovery_audit is append-only';
 `;
 
 /**
@@ -230,7 +117,7 @@ const CURRENT_COLUMN_NAMES = [
   "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json",
 ] as const;
 
-const INTERNAL_CONTROL_IDENTIFIERS = /^(?:schema_migrations|schema_migrations_stage_v1|schema_migrations_backup_v1|schema_migrations_stage_[a-f0-9_]+)$/;
+const INTERNAL_CONTROL_IDENTIFIERS = /^(?:schema_migrations|schema_migrations_stage_[a-f0-9_]+)$/;
 
 function dirtyReasonState(value: string | null): DirtyReasonState {
   return value === null ? "NONE" : "PRESENT";
@@ -297,7 +184,7 @@ function parseManifest(value: unknown): MigrationVerificationManifest | null {
     const parsed: unknown = JSON.parse(value);
     if (parsed === null || typeof parsed !== "object") return null;
     const candidate = parsed as { version?: unknown; dialect?: unknown; probes?: unknown; retrySafe?: unknown };
-    if (candidate.version !== 1 || (candidate.dialect !== "sqlite" && candidate.dialect !== "postgresql" && candidate.dialect !== "mysql") || !Array.isArray(candidate.probes) || typeof candidate.retrySafe !== "boolean") return null;
+    if (candidate.version !== 1 || candidate.dialect !== "sqlite" || !Array.isArray(candidate.probes) || typeof candidate.retrySafe !== "boolean") return null;
     const probes: MigrationVerificationProbe[] = [];
     const ids = new Set<string>();
     for (const probe of candidate.probes) {
@@ -308,7 +195,7 @@ function parseManifest(value: unknown): MigrationVerificationManifest | null {
       ids.add(item.id);
       probes.push({ id: item.id, sql: item.sql, expectedRows: item.expectedRows as Record<string, unknown>[] });
     }
-    return { version: 1, dialect: candidate.dialect, probes, retrySafe: candidate.retrySafe };
+    return { version: 1, dialect: "sqlite", probes, retrySafe: candidate.retrySafe };
   } catch {
     return null;
   }
@@ -361,10 +248,6 @@ export class MigrationService {
    */
   private async upgradeControlSchemaOnSession(session: MigrationSession): Promise<void> {
     try {
-      if (this.dialect === "mysql") {
-        await this.upgradeMysqlControlSchemaOnSession(session);
-        return;
-      }
       const metadata = await session.getTableMetadata("schema_migrations");
 
       // Table doesn't exist yet; will be created on first migrate()
@@ -397,12 +280,8 @@ export class MigrationService {
       await this.validateRowCount(session, stagingTable, canonicalRows.length);
       await this.validateExactRows(session, stagingTable, canonicalRows);
 
-      // For SQLite/PostgreSQL: drop original and rename staging within lease transaction
-      // For MySQL: atomic rename with backup, pinned GET_LOCK already held by session
-      if (this.dialect === "sqlite" || this.dialect === "postgresql") {
-        await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations")}`);
-        await session.executeRaw(`ALTER TABLE ${this.quoteIdentifier(stagingTable)} RENAME TO ${this.quoteIdentifier("schema_migrations")}`);
-      }
+      await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations")}`);
+      await session.executeRaw(`ALTER TABLE ${this.quoteIdentifier(stagingTable)} RENAME TO ${this.quoteIdentifier("schema_migrations")}`);
 
       // Validate schema and rows after swap
       const finalMetadata = await session.getTableMetadata("schema_migrations");
@@ -432,124 +311,10 @@ export class MigrationService {
     }
   }
 
-  private async upgradeMysqlControlSchemaOnSession(session: MigrationSession): Promise<void> {
-    const live = await session.getTableMetadata("schema_migrations");
-    const stage = await session.getTableMetadata("schema_migrations_stage_v1");
-    const backup = await session.getTableMetadata("schema_migrations_backup_v1");
-
-    if (live === null) {
-      if (stage !== null) {
-        this.validateCurrentSchema(stage);
-        if (backup === null) {
-          throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "MySQL upgrade has a stage without its preserved backup; refusing recovery");
-        }
-        const backupType = this.detectLegacySchemaType(backup);
-        if (backupType) {
-          const expected = await this.extractCanonicalRows(session, "schema_migrations_backup_v1", backupType);
-          try {
-            await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
-          } catch (error) {
-            if (!this.isRecoverableStageMismatch(error)) throw error;
-            await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")}`);
-            await this.createStagingTable(session, "schema_migrations_stage_v1");
-            await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
-            await this.validateRowCount(session, "schema_migrations_stage_v1", expected.length);
-            await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
-          }
-        } else if (!this.isCurrentSchema(backup)) {
-          this.throwUnknownSchema();
-        } else {
-          // A current stage beside a current backup is a recoverable interrupted
-          // swap only when both tables contain the same exact rows.  Do this
-          // before RENAME: the backup is the only remaining history when the
-          // live table is absent, so silently preferring stage would lose it.
-          await this.validateExactRawRows(
-            session,
-            "schema_migrations_stage_v1",
-            "schema_migrations_backup_v1",
-          );
-        }
-        await session.executeRaw(`RENAME TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`);
-        return;
-      }
-      if (backup === null) return;
-      const backupType = this.detectLegacySchemaType(backup);
-      if (!backupType) this.throwUnknownSchema();
-      const expected = await this.extractCanonicalRows(session, "schema_migrations_backup_v1", backupType);
-      await this.createStagingTable(session, "schema_migrations_stage_v1");
-      await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
-      await this.validateRowCount(session, "schema_migrations_stage_v1", expected.length);
-      await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
-      await session.executeRaw(`RENAME TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`);
-      return;
-    }
-
-    this.rejectNonTable(live);
-    if (this.isCurrentSchema(live)) {
-      this.validateCurrentSchema(live);
-      const liveRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier("schema_migrations")}`)).rows;
-      if (stage !== null) {
-        this.validateCurrentSchema(stage);
-        try {
-          await this.validateExactRows(session, "schema_migrations_stage_v1", liveRows);
-        } catch (error) {
-          if (!this.isRecoverableStageMismatch(error)) throw error;
-        }
-        await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")}`);
-      }
-      if (backup !== null) {
-        const backupType = this.detectLegacySchemaType(backup);
-        if (backupType) {
-          const expected = await this.extractCanonicalRows(session, "schema_migrations_backup_v1", backupType);
-          await this.validateExactRows(session, "schema_migrations", expected);
-        } else if (this.isCurrentSchema(backup)) {
-          await this.validateExactRows(session, "schema_migrations_backup_v1", liveRows);
-        } else {
-          this.throwUnknownSchema();
-        }
-      }
-      return;
-    }
-
-    const schemaType = this.detectLegacySchemaType(live);
-    if (!schemaType) this.throwUnknownSchema();
-    if (backup !== null) {
-      throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "MySQL upgrade has a preserved backup beside a legacy live table; refusing to overwrite history");
-    }
-    const expected = await this.extractCanonicalRows(session, "schema_migrations", schemaType);
-    if (stage === null) {
-      await this.createStagingTable(session, "schema_migrations_stage_v1");
-      await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
-    } else {
-      this.validateCurrentSchema(stage);
-      try {
-        await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
-      } catch (error) {
-        if (!this.isRecoverableStageMismatch(error)) throw error;
-        await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")}`);
-        await this.createStagingTable(session, "schema_migrations_stage_v1");
-        await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
-      }
-    }
-    await this.validateRowCount(session, "schema_migrations_stage_v1", expected.length);
-    await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
-    await session.executeRaw(
-      `RENAME TABLE ${this.quoteIdentifier("schema_migrations")} TO ${this.quoteIdentifier("schema_migrations_backup_v1")}, ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`,
-    );
-    const finalMetadata = await session.getTableMetadata("schema_migrations");
-    if (finalMetadata === null) throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "schema_migrations table missing after MySQL atomic swap");
-    this.validateCurrentSchema(finalMetadata);
-    await this.validateExactRows(session, "schema_migrations", expected);
-  }
-
   private rejectNonTable(metadata: TableMetadata): void {
     if (metadata.kind !== "TABLE") {
       throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", `schema_migrations must be a BASE TABLE, not ${metadata.kind}`);
     }
-  }
-
-  private isRecoverableStageMismatch(error: unknown): boolean {
-    return error instanceof DomainError && error.code === "CONTROL_SCHEMA_UPGRADE_FAILED";
   }
 
   private throwUnknownSchema(): never {
@@ -560,33 +325,29 @@ export class MigrationService {
     if (!INTERNAL_CONTROL_IDENTIFIERS.test(identifier)) {
       throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "Internal schema-upgrade identifier is not allowlisted");
     }
-    return this.dialect === "mysql" ? `\`${identifier}\`` : `"${identifier}"`;
+    return `"${identifier}"`;
   }
 
   private normalizeColumnType(rawType: string): string {
     const type = rawType.trim().toLowerCase().replace(/\s+/g, " ");
-    if (this.dialect === "sqlite") return type;
-    if (this.dialect === "postgresql") return type === "int4" ? "integer" : type;
-    if (type === "int" || type === "integer" || type === "int(11)") return "int";
-    const varchar = type.match(/^varchar\s*\(\s*(\d+)\s*\)$/);
-    return varchar ? `varchar(${varchar[1]})` : type;
+    return type;
   }
 
   private columnSpecs(kind: "current" | LegacySchemaType): SchemaColumnSpec[] {
-    const text = this.dialect === "mysql" ? "varchar(255)" : "text";
-    const checksum = this.dialect === "mysql" ? "varchar(64)" : "text";
-    const executedAt = this.dialect === "mysql" ? "varchar(50)" : "text";
-    const lease = this.dialect === "mysql" ? "varchar(255)" : "text";
-    const manifestHash = this.dialect === "mysql" ? "varchar(64)" : "text";
-    const integer = this.dialect === "mysql" ? "int" : "integer";
+    const text = "text";
+    const checksum = "text";
+    const executedAt = "text";
+    const lease = "text";
+    const manifestHash = "text";
+    const integer = "integer";
     const common: SchemaColumnSpec[] = [
       { name: "id", type: text, nullable: false, primaryKey: true },
-      { name: "dialect", type: this.dialect === "mysql" ? "varchar(50)" : text, nullable: false, primaryKey: false },
+      { name: "dialect", type: text, nullable: false, primaryKey: false },
       { name: "checksum", type: checksum, nullable: false, primaryKey: false },
     ];
     if (kind === "current") return [
       ...common,
-      { name: "status", type: this.dialect === "mysql" ? "varchar(20)" : text, nullable: false, primaryKey: false },
+      { name: "status", type: text, nullable: false, primaryKey: false },
       { name: "executed_at", type: executedAt, nullable: false, primaryKey: false },
       { name: "duration_ms", type: integer, nullable: false, primaryKey: false },
       { name: "dirty_reason", type: "text", nullable: true, primaryKey: false },
@@ -600,7 +361,7 @@ export class MigrationService {
       { name: "checksum", type: checksum, nullable: false, primaryKey: false },
       { name: "applied_at", type: executedAt, nullable: false, primaryKey: false },
     ];
-    const status = this.dialect === "mysql" ? "varchar(20)" : text;
+    const status = text;
     const duration = { name: "duration_ms", type: integer, nullable: false, primaryKey: false };
     if (kind === "dirty_flag") return [...common,
       { name: "executed_at", type: executedAt, nullable: false, primaryKey: false }, duration,
@@ -833,59 +594,21 @@ export class MigrationService {
 
   private async createStagingTable(session: MigrationSession, stagingTable: string): Promise<void> {
     const quotedStagingTable = this.quoteIdentifier(stagingTable);
-    let createSql: string;
-
-    if (this.dialect === "sqlite") {
-      createSql = `
-        CREATE TABLE ${quotedStagingTable} (
-          id TEXT NOT NULL PRIMARY KEY,
-          dialect TEXT NOT NULL,
-          checksum TEXT NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-          executed_at TEXT NOT NULL,
-          duration_ms INTEGER NOT NULL,
-          dirty_reason TEXT,
-          lease_token TEXT,
-          manifest_version INTEGER,
-          verification_manifest_hash TEXT,
-          manifest_json TEXT
-        )
-      `;
-    } else if (this.dialect === "postgresql") {
-      createSql = `
-        CREATE TABLE ${quotedStagingTable} (
-          id TEXT NOT NULL PRIMARY KEY,
-          dialect TEXT NOT NULL,
-          checksum TEXT NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-          executed_at TEXT NOT NULL,
-          duration_ms INTEGER NOT NULL,
-          dirty_reason TEXT,
-          lease_token TEXT,
-          manifest_version INTEGER,
-          verification_manifest_hash TEXT,
-          manifest_json TEXT
-        )
-      `;
-    } else {
-      createSql = `
-        CREATE TABLE ${quotedStagingTable} (
-          id VARCHAR(255) NOT NULL PRIMARY KEY,
-          dialect VARCHAR(50) NOT NULL,
-          checksum VARCHAR(64) NOT NULL,
-          status VARCHAR(20) NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
-          executed_at VARCHAR(50) NOT NULL,
-          duration_ms INT NOT NULL,
-          dirty_reason TEXT,
-          lease_token VARCHAR(255),
-          manifest_version INT,
-          verification_manifest_hash VARCHAR(64),
-          manifest_json TEXT
-        )
-      `;
-    }
-
-    await session.executeRaw(createSql);
+    await session.executeRaw(`
+      CREATE TABLE ${quotedStagingTable} (
+        id TEXT NOT NULL PRIMARY KEY,
+        dialect TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+        executed_at TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        dirty_reason TEXT,
+        lease_token TEXT,
+        manifest_version INTEGER,
+        verification_manifest_hash TEXT,
+        manifest_json TEXT
+      )
+    `);
   }
 
   private async copyCanonicalRows(
@@ -895,12 +618,11 @@ export class MigrationService {
   ): Promise<void> {
     if (rows.length === 0) return;
 
-    const builder = new DialectSqlBuilder(this.dialect);
+    const builder = new DialectSqlBuilder();
     const colNames = ["id", "dialect", "checksum", "status", "executed_at", "duration_ms",
                       "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json"];
 
     for (const row of rows) {
-      builder.reset();
       const placeholders = colNames.map(() => builder.placeholder()).join(", ");
       const sql = `INSERT INTO ${this.quoteIdentifier(stagingTable)} (${colNames.join(", ")}) VALUES (${placeholders})`;
       const values = colNames.map(col => row[col]);
@@ -958,26 +680,6 @@ export class MigrationService {
     }
   }
 
-  private async validateExactRawRows(
-    session: MigrationSession,
-    actualTableName: string,
-    expectedTableName: string,
-  ): Promise<void> {
-    const actualRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier(actualTableName)}`)).rows;
-    const expectedRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier(expectedTableName)}`)).rows;
-    const actualJson = canonicalRows(actualRows);
-    const expectedJson = canonicalRows(expectedRows);
-
-    // canonicalJson only makes object key order and row order deterministic;
-    // it deliberately does not coerce values (including integer/string or
-    // number/BigInt representations) before comparing the two raw result sets.
-    if (actualJson.length !== expectedJson.length || actualJson.some((row, index) => row !== expectedJson[index])) {
-      throw new DomainError(
-        "CONTROL_SCHEMA_UPGRADE_FAILED",
-        `MySQL stage and backup rows differ; refusing recovery before rename`,
-      );
-    }
-  }
 
   private exactInteger(value: unknown, label: string): bigint {
     if (typeof value === "bigint") return value;
@@ -1007,35 +709,14 @@ export class MigrationService {
    */
   private async ensureMigrationTableOnSession(session: MigrationSession): Promise<void> {
     try {
-      const schema =
-        this.dialect === "sqlite"
-          ? MIGRATION_SCHEMA_SQLITE
-          : this.dialect === "postgresql"
-            ? MIGRATION_SCHEMA_POSTGRES
-            : MIGRATION_SCHEMA_MYSQL;
-
-      await session.executeRaw(schema);
+      await session.executeRaw(MIGRATION_SCHEMA_SQLITE);
 
       // Also ensure immutable audit table
-      const auditSchema =
-        this.dialect === "sqlite"
-          ? RECOVERY_AUDIT_SCHEMA_SQLITE
-          : this.dialect === "postgresql"
-            ? RECOVERY_AUDIT_SCHEMA_POSTGRES
-            : RECOVERY_AUDIT_SCHEMA_MYSQL;
-
-      // For SQLite, triggers are part of the schema string (with IF NOT EXISTS)
-      // For PostgreSQL, DO block handles IF NOT EXISTS check
-      // For MySQL, table creation is idempotent
-      await session.executeRaw(auditSchema);
+      await session.executeRaw(RECOVERY_AUDIT_SCHEMA_SQLITE);
     } catch (error) {
       // Ignore "already exists" errors as tables may have been created by prior run
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (
-        !errorMsg.includes("already exists") &&
-        !errorMsg.includes("duplicate") &&
-        !errorMsg.includes("Duplicate entry")
-      ) {
+      if (!errorMsg.includes("already exists")) {
         throw new DomainError(
           "MIGRATION_TABLE_SETUP_FAILED",
           `Failed to set up migration tracking table: ${errorMsg}`,
@@ -1059,7 +740,6 @@ export class MigrationService {
     blockingRows?: Array<{ id: string; status: string; dialect: string }>;
   }> {
     try {
-      const builder = new DialectSqlBuilder(this.dialect);
       const migrations = await this.db.query(
         "SELECT id, dialect, checksum, status, executed_at, duration_ms FROM schema_migrations ORDER BY executed_at ASC",
         [],
@@ -1131,9 +811,7 @@ export class MigrationService {
    * Returns applied migrations; throws on checksum mismatch, dirty state, or DDL failure.
    *
    * Key semantic: DDL failure persists DIRTY marker and throws after lease commits.
-   * SQLite/PG: SAVEPOINT around DDL only; APPLYING inserted before savepoint.
-   * MySQL: no savepoint (implicit DDL commit); persist APPLYING before DDL,
-   *        execute DDL on reserved session, then APPLIED/DIRTY.
+   * SQLite: SAVEPOINT around DDL only; APPLYING inserted before savepoint.
    */
   async migrate(
     migrations: readonly MigrationDefinition[],
@@ -1158,10 +836,9 @@ export class MigrationService {
         }
 
         for (const migration of migrations) {
-          const builder = new DialectSqlBuilder(this.dialect);
+          const builder = new DialectSqlBuilder();
 
           // Check if already applied
-          builder.reset();
           const existingSql = `SELECT id, checksum, status FROM schema_migrations WHERE id = ${builder.placeholder()}`;
           const existing = await session.executeSingle(existingSql, [migration.id]);
 
@@ -1188,7 +865,7 @@ export class MigrationService {
             continue;
           }
 
-          // New migration: mark APPLYING before DDL (in case DDL auto-commits like MySQL)
+          // New migration: mark APPLYING before DDL.
           const timestamp = new Date().toISOString();
           const checksum = this.computeChecksum(migration.sql);
           const leaseToken = session.leaseToken();
@@ -1197,7 +874,6 @@ export class MigrationService {
           const manifestVersion = migration.manifest?.version ?? null;
           const verificationManifestHash = migration.manifest ? manifestHash(migration.manifest) : null;
 
-          builder.reset();
           const insertSql = `INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms, lease_token, manifest_version, verification_manifest_hash, manifest_json) VALUES (${Array.from({ length: 10 }, () => builder.placeholder()).join(", ")})`;
           await session.execute(insertSql, [
             migration.id,
@@ -1212,34 +888,26 @@ export class MigrationService {
             manifestJson,
           ]);
 
-          // Dialect-specific DDL execution
           const startTime = Date.now();
           try {
-            if (this.dialect === "mysql") {
-              // MySQL: DDL auto-commits, no savepoint. Execute on reserved session directly.
-              await session.executeRaw(migration.sql);
-            } else {
-              // SQLite/PostgreSQL: use savepoint for DDL rollback on failure
-              const savepointName = `sp_${migration.id.replace(/[^a-z0-9_]/gi, "_")}`;
-              await session.executeRaw(`SAVEPOINT ${savepointName}`);
+            const savepointName = `sp_${migration.id.replace(/[^a-z0-9_]/gi, "_")}`;
+            await session.executeRaw(`SAVEPOINT ${savepointName}`);
 
+            try {
+              await session.executeRaw(migration.sql);
+              await session.executeRaw(`RELEASE SAVEPOINT ${savepointName}`);
+            } catch (ddlError) {
+              // Rollback savepoint; APPLYING row persists outside savepoint
               try {
-                await session.executeRaw(migration.sql);
-                await session.executeRaw(`RELEASE SAVEPOINT ${savepointName}`);
-              } catch (ddlError) {
-                // Rollback savepoint; APPLYING row persists outside savepoint
-                try {
-                  await session.executeRaw(`ROLLBACK TO SAVEPOINT ${savepointName}`);
-                } catch {
-                  // Savepoint already released
-                }
-                throw ddlError;
+                await session.executeRaw(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+              } catch {
+                // Savepoint already released
               }
+              throw ddlError;
             }
 
             // Mark APPLIED (atomic with transaction commit)
             const durationMs = Date.now() - startTime;
-            builder.reset();
             const updateSql = `UPDATE schema_migrations SET status = ${builder.placeholder()}, duration_ms = ${builder.placeholder()} WHERE id = ${builder.placeholder()}`;
             await session.execute(updateSql, ["APPLIED", durationMs, migration.id]);
 
@@ -1253,7 +921,6 @@ export class MigrationService {
           } catch (error) {
             // Mark DIRTY for manual recovery (persists via return instead of throw)
             const errorMsg = error instanceof Error ? error.message : String(error);
-            builder.reset();
             const dirtySql = `UPDATE schema_migrations SET status = ${builder.placeholder()}, dirty_reason = ${builder.placeholder()} WHERE id = ${builder.placeholder()}`;
             await session.execute(dirtySql, ["DIRTY", `DDL failed: ${errorMsg}`, migration.id]);
 
@@ -1297,8 +964,7 @@ export class MigrationService {
 
         const leaseToken = session.leaseToken();
         const auditId = randomUUID();
-        const builder = new DialectSqlBuilder(this.dialect);
-        builder.reset();
+        const builder = new DialectSqlBuilder();
         const fetchSql = `SELECT id, dialect, checksum, status, dirty_reason, manifest_version, verification_manifest_hash, manifest_json FROM schema_migrations WHERE id = ${builder.placeholder()}`;
         const record = await session.executeSingle(fetchSql, [request.migrationId]);
         if (!record) throw new DomainError("RECOVERY_RECORD_NOT_FOUND", `Migration ${request.migrationId} not found`);
@@ -1314,7 +980,7 @@ export class MigrationService {
         const probeResults: Array<Record<string, unknown>> = [];
 
         const appendAudit = async (success: boolean, verificationStatus: "PASS" | "FAIL"): Promise<void> => {
-          const auditBuilder = new DialectSqlBuilder(this.dialect);
+          const auditBuilder = new DialectSqlBuilder();
           const auditSql = `INSERT INTO migration_recovery_audit (id, migration_id, recovery_at, lease_token, actor, reason, expected_status, expected_checksum, expected_dirty_reason_state, expected_dirty_reason, actual_status, actual_checksum, actual_dirty_reason_state, actual_dirty_reason, verification_manifest_hash, manifest_version, probe_results_json, verification_status, success)
              VALUES (${Array.from({ length: 19 }, () => auditBuilder.placeholder()).join(", ")})`;
           await session.execute(auditSql, [
@@ -1405,13 +1071,12 @@ export class MigrationService {
           }
         }
 
-        builder.reset();
         const updateSql = `UPDATE schema_migrations SET status = ${builder.placeholder()}, dirty_reason = NULL, lease_token = ${builder.placeholder()} WHERE id = ${builder.placeholder()} AND dialect = ${builder.placeholder()} AND status = ${builder.placeholder()} AND checksum = ${builder.placeholder()} AND dirty_reason ${request.expectedDirtyReason === null ? "IS NULL" : `= ${builder.placeholder()}`}`;
         const updateParams: unknown[] = ["APPLIED", leaseToken, request.migrationId, request.expectedDialect, request.expectedStatus, request.expectedChecksum];
         if (request.expectedDirtyReason !== null) updateParams.push(request.expectedDirtyReason);
         const updateResult = await session.execute(updateSql, updateParams);
         let updatedRows = updateResult.rowCount;
-        if (this.dialect === "sqlite" && updatedRows === 0) {
+        if (updatedRows === 0) {
           const changeRow = await session.executeSingle("SELECT changes() AS row_count");
           updatedRows = Number(changeRow?.row_count ?? 0);
         }
@@ -1431,7 +1096,7 @@ export class MigrationService {
    * Fails if migration not found, dialect mismatch, or checksum mismatch.
    */
   async verifyChecksum(migrationId: string, expectedChecksum: string): Promise<void> {
-    const builder = new DialectSqlBuilder(this.dialect);
+    const builder = new DialectSqlBuilder();
     const record = await this.db.querySingle(
       `SELECT dialect, checksum FROM schema_migrations WHERE id = ${builder.placeholder()}`,
       [migrationId],

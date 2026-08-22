@@ -1,7 +1,6 @@
 import type { Database } from "../../application/ports/persistence.ts";
 import type { Dialect } from "../../core/types.ts";
 import { IncompatibleDatabaseError } from "../../core/types.ts";
-import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 
 interface CompatibilityEntry {
   cliVersionMin: string;
@@ -33,30 +32,6 @@ CREATE TABLE IF NOT EXISTS compatibility_matrix (
   UNIQUE(cli_version_min, cli_version_max, schema_logical_id)
 );`;
 
-const COMPATIBILITY_SCHEMA_POSTGRES = `
-CREATE TABLE IF NOT EXISTS compatibility_matrix (
-  id SERIAL PRIMARY KEY,
-  cli_version_min TEXT NOT NULL,
-  cli_version_max TEXT NOT NULL,
-  schema_logical_id TEXT NOT NULL,
-  data_format_version TEXT NOT NULL,
-  read_policy TEXT NOT NULL,
-  recorded_at TEXT NOT NULL,
-  UNIQUE(cli_version_min, cli_version_max, schema_logical_id)
-);`;
-
-const COMPATIBILITY_SCHEMA_MYSQL = `
-CREATE TABLE IF NOT EXISTS compatibility_matrix (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  cli_version_min VARCHAR(50) NOT NULL,
-  cli_version_max VARCHAR(50) NOT NULL,
-  schema_logical_id VARCHAR(100) NOT NULL,
-  data_format_version VARCHAR(50) NOT NULL,
-  read_policy VARCHAR(20) NOT NULL,
-  recorded_at VARCHAR(50) NOT NULL,
-  UNIQUE KEY uk_compat (cli_version_min, cli_version_max, schema_logical_id)
-);`;
-
 export class CompatibilityService {
   constructor(
     private readonly db: Database,
@@ -65,11 +40,8 @@ export class CompatibilityService {
 
   /** Explicit admin operation: create the metadata table. Inspection never calls this. */
   async ensureCompatibilityTable(): Promise<void> {
-    const schema = this.dialect === "sqlite"
-      ? COMPATIBILITY_SCHEMA_SQLITE
-      : this.dialect === "postgresql" ? COMPATIBILITY_SCHEMA_POSTGRES : COMPATIBILITY_SCHEMA_MYSQL;
     try {
-      await this.db.executeRaw(schema);
+      await this.db.executeRaw(COMPATIBILITY_SCHEMA_SQLITE);
     } catch (error) {
       throw new IncompatibleDatabaseError("Failed to initialize compatibility metadata", {
         dialect: this.dialect,
@@ -99,13 +71,10 @@ export class CompatibilityService {
         throw new IncompatibleDatabaseError("Database schema metadata is missing or not fully applied");
       }
 
-      const builder = new DialectSqlBuilder(this.dialect);
-      const first = builder.placeholder();
-      const second = builder.placeholder();
       const matches = await this.db.query(
         `SELECT schema_logical_id, data_format_version, read_policy
          FROM compatibility_matrix
-         WHERE cli_version_min <= ${first} AND cli_version_max >= ${second}`,
+         WHERE cli_version_min <= ? AND cli_version_max >= ?`,
         [cliVersion, cliVersion],
       );
       const entry = matches.rows[0];
@@ -148,8 +117,6 @@ export class CompatibilityService {
   }
 
   private async upsertEntry(entry: CompatibilityEntry): Promise<void> {
-    const builder = new DialectSqlBuilder(this.dialect);
-    const placeholders = Array.from({ length: 6 }, () => builder.placeholder());
     const values = [
       entry.cliVersionMin,
       entry.cliVersionMax,
@@ -159,13 +126,11 @@ export class CompatibilityService {
       new Date().toISOString(),
     ];
     const columns = "(cli_version_min, cli_version_max, schema_logical_id, data_format_version, read_policy, recorded_at)";
-    const sql = this.dialect === "sqlite"
-      ? `INSERT OR IGNORE INTO compatibility_matrix ${columns} VALUES (${placeholders.join(", ")})`
-      : this.dialect === "postgresql"
-        ? `INSERT INTO compatibility_matrix ${columns} VALUES (${placeholders.join(", ")}) ON CONFLICT (cli_version_min, cli_version_max, schema_logical_id) DO NOTHING`
-        : `INSERT INTO compatibility_matrix ${columns} VALUES (${placeholders.join(", ")}) ON DUPLICATE KEY UPDATE schema_logical_id = VALUES(schema_logical_id)`;
     try {
-      await this.db.execute(sql, values);
+      await this.db.execute(
+        `INSERT OR IGNORE INTO compatibility_matrix ${columns} VALUES (?, ?, ?, ?, ?, ?)`,
+        values,
+      );
     } catch (error) {
       throw new IncompatibleDatabaseError("Failed to write compatibility metadata", {
         dialect: this.dialect,

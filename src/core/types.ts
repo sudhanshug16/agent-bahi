@@ -20,7 +20,7 @@ export function brandUserId(id: string): UserId {
   return id as UserId;
 }
 
-export type Dialect = "sqlite" | "postgresql" | "mysql";
+export type Dialect = "sqlite";
 
 export type TenantKind = "COMPANY" | "INDIVIDUAL";
 export type TenantLifecycle = "CREATING" | "ACTIVE" | "ARCHIVED";
