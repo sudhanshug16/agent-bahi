@@ -361,3 +361,74 @@ imply that Agent-Bahi is production-ready. The broader accounting, tax,
 payroll, reporting, CLI/MCP, authorization, operational restore, and release
 evidence remain required before a production claim. Any earlier wording that
 could be read as production-ready for this foundation is retracted.
+
+## OD-n96 — BookSet v4 Command Boundary Implementation (2026-08-23)
+
+- **Date**: 2026-08-23
+- **Decision**: Implement audited/idempotent BookSet mutation commands with v4 schema migration.
+- **Status**: `COMPLETED / OWNER REVIEW PENDING`.
+
+### Implementation
+
+Commit 839982d implements the BookSet command boundary from specification n127:
+
+#### Schema migration 0004 (bookset-v4-migration.ts)
+- Creates new audit_records table with structured command fields: command, source, reason, request, nullable book_set_id, actor (HUMAN|AGENT|SYSTEM), actor_id
+- Adds canonical_before_hash, canonical_after_hash, change_summary fields for audit trail
+- Preserves all existing audit/idempotency data with deterministic legacy backfill (defaults: INTERNAL source, 'legacy backfill' reason, SYSTEM actor, command=action)
+- Enforces idempotency_records and audit_records immutability via SQLite triggers (prevent UPDATE/DELETE)
+- Indexes: tenant_id, request_id, book_set_id for audit records
+- Manifest validates: command CHECK constraint, source CHECK constraint, actor_type CHECK constraint, FK to tenants, nullable FK to book_sets, trigger presence, foreign key integrity
+
+#### Command API (commands.ts)
+- CommandEnvelope<T>: schemaVersion=1, tenantId, globally tenant-unique requestId, actor (kind HUMAN|AGENT|SYSTEM, id nonblank), source CLI|MPC|INTERNAL|IMPORT, reason (required nonblank), optional requestedAt
+- Deterministic canonical JSON serializer: sorted keys, no whitespace, consistent type representation for hashing
+- computeCommandHash(command, envelope, payload): SHA-256 over schemaVersion+command+tenantId+requestId+actor+source+reason+requestedAt+payload
+- commandResult: resultJson (persisted bytes), resultHash (SHA-256), optional replayed flag
+
+#### BookSet command service (bookset-command-service.ts)
+- executeBookSetCommand<P, R>: Single BEGIN IMMEDIATE BusinessSession, serialized write execution
+- Idempotency lookup: SELECT request_hash, result_json, result_hash WHERE (tenantId, requestId)
+- On replay: Validate request_hash exact match, verify result_hash matches stored result_json, return exact stored bytes (never recompute)
+- On first execution:
+  1. Validate domain preconditions (tenant exists, BookSet lifecycle, ownership)
+  2. Execute mutation within session-bound repository (bookset.create, bookset.set-default, bookset.archive, tenant.activate)
+  3. Canonicalize result to JSON, compute resultHash
+  4. INSERT exactly one audit_records row: id, tenant_id, book_set_id (nullable), command, action, actor_type, actor_id, source, reason, request_id, canonical_before_hash, canonical_after_hash, change_summary, committed_at (service Clock), created_at
+  5. INSERT exactly one idempotency_records row: id, tenant_id, request_id, request_hash, result_json, result_hash, created_at
+  6. COMMIT atomically (all-or-nothing)
+- Errors: Stable typed DomainError, no raw SQL strings (tenant not found, BookSet not found, cross-tenant violation, invalid lifecycle, mismatched default BookSet, etc.)
+- Command implementations:
+  - bookset.create: validates tenant/kind cardinality, creates ACTIVE BookSet with opaque ID, returns BookSetCreateResult (bookSetId, kind, displayName, lifecycle, createdAt)
+  - bookset.set-default: requires ACTIVE same-tenant BookSet, updates tenant.default_book_set_id
+  - bookset.archive: requires ownership, prevents archival of current default BookSet
+  - tenant.activate: requires CREATING state, asserts exact default_book_set_id match, transitions to ACTIVE
+
+#### Test suite (bookset-command.test.ts, 18 tests)
+- Success: all four commands execute, record one audit + one idempotency record
+- Replay: identical request returns replayed=true, exact byte-equal resultJson, same audit count (1)
+- Idempotency conflict: same request_id with different request hash → IdempotencyConflictError
+- Canonical serialization: key order normalization produces same hash, metadata differences detected
+- Immutability: trigger prevents UPDATE/DELETE on finalized idempotency_records and audit_records
+- Cross-tenant isolation: archive attempt on BookSet from different tenant → DomainError
+- Domain validation: invalid tenure kind/lifecycle, archived default, wrong assertion, non-CREATING activation all fail with DomainError
+
+#### Database fixture (database-fixture.ts)
+- Initializes SQLite with all four migrations (core, database-control, v3, v4)
+- Provides BusinessSessionRunner for test callbacks
+- Implements BusinessSession with read/write mode enforcement, parameter binding, transactional semantics (BEGIN IMMEDIATE / COMMIT / ROLLBACK)
+
+### Reversibility
+- Migration 0004 is additive (new audit structure, new triggers). Rollback removes v4, retaining v3 audit_records.
+- Command service can be replaced without changing application ports. Repository implementations unchanged.
+- Test suite is independent; removal does not affect production code.
+
+### Known limitations
+- BookSet binding in audit_records is nullable, populated only for archive/archive commands (not set-default/activate). Refinement deferred.
+- No cross-command cascade (e.g., creating BookSet and setting as default in one request). Each command is independent.
+- Recovery from idempotency_records corruption (hash mismatch, malformed JSON) requires manual intervention; application fails closed.
+
+### Test Results
+- 18 tests passing (100%)
+- TypeScript typecheck clean
+- All migrations preserved byte-identical (0001-0003)
