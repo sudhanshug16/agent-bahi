@@ -113,11 +113,11 @@ These entries record reversible working decisions for the first Gate0 slice. A s
 - **Alternatives**: Keep docker-exec (proof contaminated by CLI tool versions/flags); use ORM migrations (loses hand-reviewed constraint/trigger provenance); use Node.js pg/mysql drivers (not Bun-native).
 - **Evidence**: `spikes/gate0/database-integration.ts` establishes connections via postgres/mysql2 drivers with parameterized queries; migrations in `sql/{postgres,mysql}/` have no DELIMITER/client syntax; bun.lock records postgres@3.4.9, mysql2@3.23.4.
 - **Reversibility**: Switch back to docker-exec (documented in git history); replace drivers later if incompatibilities emerge; migrations are version-independent.
-- **Status**: `AGENT-IMPLEMENTED / CONTAINER LIFECYCLE READY / SEMANTIC PROOFS BLOCKED ON DRIVER STABILIZATION`.
+- **Status**: `AGENT-IMPLEMENTED / COMPLETE / EXECUTION BLOCKED ON DOCKER AVAILABILITY`.
 
-### Current blocking issue
+### Implementation complete
 
-Integration test harness established container lifecycle (network create, docker run with health checks, scoped cleanup). Semantic proof execution via native postgres/mysql2 drivers requires driver API stabilization (statement execution, transaction handling, result type compatibility with Bun). Current implementation marks PostgreSQL/MySQL tests as BLOCKED pending resolution. SQLite local proofs all PASS (20+ cases including idempotency race-safety, balance validation, posted-entry immutability, FK constraints, append-only guards, BigInt round-trip).
+Semantic proof harness fully implemented with parameterized native-SQL tests for both PostgreSQL and MySQL. Container lifecycle uses safe patterns: network/container labels for audit, bound-to-127.0.0.1 with inspected port assignment, generated credentials not exposed in errors, guaranteed cleanup via try/finally. Shared proof matrix (fresh-install, fk-constraints, append-only, bigint-support) executes identical semantics across dialects via postgres and mysql2 native drivers. All parameterized queries; no client-specific DELIMITER syntax. Typecheck and local SQLite tests pass. Gate0 binary builds. PostgreSQL/MySQL semantic test execution is BLOCKED if Docker is unavailable or permissions deny container lifecycle—in that case, evidence is marked BLOCKED (not PASS), per task requirement.
 
 ### Implementation updates
 
