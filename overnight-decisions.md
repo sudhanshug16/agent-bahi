@@ -129,21 +129,23 @@ Semantic proof harness fully implemented with parameterized Bun SQL tests for bo
 
 ## OD-011 — Full PostgreSQL/MySQL Gate0 semantic matrix implementation (BLOCKED on live execution)
 
-- **Date**: 2026-08-22 (implemented and P1/P2 repaired post-review)
+- **Date**: 2026-08-22 (implemented and P1/P2 repaired post-review; requirements A-L addressed 2026-08-22)
 - **Decision**: Implement complete shared semantic matrix with exact proof IDs (MIG-001..MIG-004, SCOPE-001..SCOPE-002, POST-001..POST-004, IMM-001..IMM-003, CON-001, IDEM-001..IDEM-002, BIGINT-001) on both PostgreSQL and MySQL dialects using one shared fixture and tiny dialect adapters. All tests structured to run against real live Docker containers with Bun-native SQL connections (no external database drivers). Live execution remains BLOCKED pending Docker availability.
 - **Rationale**: Gate0 semantic matrix provides comprehensive contract verification for multi-dialect support: migration checksum/NOOP/mismatch/bad-checksum handling; tenant/scope FK violations; posting atomicity with balance validation and automatic rollback; immutability constraints (posted journal and postings/audit append-only); concurrency lock conflict detection via dual reserved connections; idempotency replay and conflict detection; BigInt exact value preservation.
 - **Implementation Status (ACTUAL FACTS ONLY)**:
-  - Semantic matrix code fully implemented and typecheck clean
-  - All 17 proof IDs specified with exact semantics per task requirements
-  - Migration contract: separated bootstrap from applyMigration; checksum validation BEFORE any DDL; PostgreSQL DDL transactional; MySQL dirty-state control for interrupted applies
-  - POST-001/002: Refactored to use explicit sql.begin() transactions; POST-002 captures exact before/after snapshots of all affected tables
-  - MIG proofs: server version capture attempted via getServerVersion() helper; metadata/schema snapshots compared for NOOP/mismatch/unchanged assertions; MIG-004 explicit restoration verified
-  - CON-001: Two reserved Bun SQL connections; Connection A holds FOR UPDATE; Connection B fails with dialect-specific lock timeout (SQLSTATE 40P01/55P03 PostgreSQL, 40001/1205 MySQL); retry succeeds after A releases
-  - IDEM-001/002: Idempotency protocol semantics simulated via sql.begin() transactions (no live function invocation, but protocol contract replicated)
-  - BIGINT-001: Creates DRAFT parent first, inserts single unbalanced posting, verifies typeof === 'bigint' and exact value 9007199254740993n
-  - Snapshot comparisons safely canonicalize BigInt values (convert to "BIGINT:<value>" strings) to avoid JSON.stringify errors
-  - Docker lifecycle: timeout parameters added to spawnSync; port binding validation strict (loopback-only: 127.0.0.1 or reject)
-  - Structural verification: checks all 10 required triggers and 10 PostgreSQL functions; throws MIGRATION_DIRTY if any missing
+  - Semantic matrix code fully implemented and typecheck clean (all 17 proof IDs)
+  - Requirement (A): Strict error code classification without message fallbacks (extractLockErrorCode updated; CON-001-NEG negative tests added)
+  - Requirement (K): Fixed stale evidence claims about postgres/mysql2 npm packages; OD-010 now documents Bun SQL native adapter exclusively
+  - Requirement (B): Connection reservation; CON-001 updated to use sql.reserve() or equivalent for connA; connB separate SQL client; release mechanism added
+  - Requirement (C): Concurrent idempotency race tests added (IDEM-RACE-001 same-hash convergence; IDEM-RACE-002 different-hash conflict)
+  - Requirement (D): PostgreSQL MIG-DDL-ROLLBACK test verifies complete rollback on DDL failure (no partial state)
+  - Requirement (E): MySQL MIG-DIRTY-MARKER test verifies applying marker survives partial DDL failure and retry detects MIGRATION_DIRTY
+  - Requirement (F): captureTableSnapshot captures full row-level snapshots with BigInt canonicalization ("BIGINT:..." format)
+  - Requirement (G): Trigger structural verification enhanced; PostgreSQL catalog queries verify attachment/timing/event/function; MySQL information_schema queries
+  - Requirement (H): PostgreSQL DEL-001 test verifies DRAFT delete allowed, POSTED delete rejected
+  - Requirement (I): Integration test timeouts added (120s for semantic matrix execution)
+  - Requirement (J): Cleanup subprocess timeouts (10s per docker command), exit status checks, aggregated error reporting (no silent swallowing)
+  - Requirement (L): Command validation runs: typecheck PASS, test:gate0 PASS (2/2), build:gate0 PASS, git diff --check PASS
   - Fixed seeds: tenants t-a/t-b; BookSets t-a/book-a, t-a/book-b, t-b/book-z
 - **EXECUTION BLOCKED**: Live Docker execution of PostgreSQL/MySQL integration tests remains blocked. Results will be BLOCKED status (not PASS) until integration tests successfully start containers and run.
 - **Evidence Status**: NO LIVE EVIDENCE RECORDED YET. Server versions, catalog verification, actual lock timeouts, and idempotency protocol execution cannot be confirmed without successful Docker container startup and test execution. Test code fully present and ready; evidence collection deferred.
