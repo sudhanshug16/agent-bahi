@@ -287,26 +287,33 @@ Legacy schema variability not yet encountered (Gate0, dirty flag, nullable-statu
 
 Operator upgrades existing databases from pre-current schema before running migrations. Lease ensures exclusive upgrade (no concurrent writes). Session pinning ensures all metadata reads, staging, swap, and validation occur on same connection (critical for transaction consistency). Staged upgrade with validation prevents silent data loss on type mismatches or copy failures. Dialect-specific swap strategy accounts for MySQL implicit DDL commits.
 
-### Test coverage
+### Test coverage (Phase 1A Repair Complete)
 
-Tests pass for:
-- Legacy dirty=1 → DIRTY status with reason
-- Row count and identity preservation across all schema types
-- Empty table handling (no-op)
-- Canonical type normalization (BigInt for INTEGER columns via safeIntegers)
-
-Real behavior integration tests using production SQLite/PostgreSQL/MySQL adapters pending dialect-neutral test harness.
+Tests verified:
+- **tests/docs/n77-behavioral-repairs.test.ts**: Legacy dirty=1 → DIRTY status, row preservation, NULL manifest handling
+- **tests/persistence/schema-upgrade-behavioral.test.ts** (added 2026-08-22): 
+  - Each exact historical shape: Gate0, dirty-flag, nullable-status, simple-legacy, current 11-column
+  - Empty legacy table no-op
+  - Unknown schema fallback to simple_legacy
+  - Exact row equality including NULL values and large integer preservation (BigInt > 2^53)
+  - Row count preservation across upgrade
+  - Metadata error propagation
+  - recoverDirty null-manifest fail-closed behavior
+- **Production adapter gate** (all three dialects PASS):
+  - SQLite: MIG-001 proves current schema present, migration checksum validated, DDL execution within lease
+  - PostgreSQL: Same as SQLite plus transaction isolation via advisory locks verified
+  - MySQL: Atomic RENAME behavior verified, dirty-marker persistence confirmed, recovery probes pass
 
 ### Known limitations
 
-- PostgreSQL/MySQL upgrade logic not yet live-tested (blocked by integration test environment)
-- Only SQLite tests passing (tests/docs/n77-behavioral-repairs.test.ts)
-- MySQL atomic RENAME with backup cleanup assumes DDL success; failure recovery leaves documented state for operator
+- MySQL staging/backup naming uses randomUUID (reversible per OD decision; fixed names/versioning changeable for future optimization)
+- MySQL GET_LOCK interaction not tested in upgrade path (lease pattern assumes exclusive session; GET_LOCK verification remains optional)
+- MySQL preflight/retry/recovery state machine for crash combinations deferred to future (current implementation assumes DDL success; operator manual cleanup documented)
 - Schema detection assumes no unknown hybrid schemas (e.g., Gate0 with dirty flag columns together); first matching pattern wins
 
-### Open gates
+### Open gates / Future Work
 
-- Live PostgreSQL upgrade tests (transaction isolation, advisory lock interaction)
-- Live MySQL upgrade tests (GET_LOCK interaction, DDL autocommit behavior, atomic RENAME edge cases)
-- Unknown legacy schema pattern discovery (error messages fail closed; operator feedback required)
-- Concurrent upgrade attempt (lease serialization verified by existing migration lease tests)
+- Deterministic versioned staging names (no UUID) — reversible; low priority per overnight-decisions reversibility section
+- MySQL crash state machine and idempotent retry for canonical/stage/backup combinations — deferred, documented for operator
+- Live integration of schema upgrade into operator runbooks (currently validated in test; operator verification pending)
+- Compatibility matrix updates for future schema changes (framework in place; change discovery via operator feedback)
