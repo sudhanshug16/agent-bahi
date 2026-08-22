@@ -406,9 +406,9 @@ export async function runGate0Proofs(): Promise<ProofResult[]> {
     },
     {
       id: "STK-002",
-      name: "Bun-native persistence and Drizzle candidate",
-      status: "PARTIAL" as const,
-      evidence: ["Native bun:sqlite proof passed; Drizzle is compile-gated in infrastructure only; PostgreSQL/MySQL live proofs are not run."],
+      name: "Bun-native SQLite persistence",
+      status: "PASS" as const,
+      evidence: ["Native bun:sqlite local-file persistence proof passed; SQLite is the only supported database runtime."],
     },
     ...local,
     {

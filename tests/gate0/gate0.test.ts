@@ -24,14 +24,14 @@ describe("domain-owned CLI registry smoke", () => {
     expect(await runCli(["--version"])).toEqual({ output: "0.0.0-gate0", error: "", exitCode: EXIT_CODES.ok });
     const proofResult = await runCli(["--json", "gate0.proof"]);
     expect(proofResult.error).toBe("");
-    expect(proofResult.exitCode).toBe(EXIT_CODES.domain);
+    expect(proofResult.exitCode).toBe(EXIT_CODES.ok);
     const parsed = JSON.parse(proofResult.output);
     expect(parsed.ok).toBe(true);
     expect(parsed.command).toBe("gate0.proof");
     expect(parsed.version).toBe("0.0.0-gate0");
     expect(parsed.results).toBeDefined();
     expect(Array.isArray(parsed.results)).toBe(true);
-    expect(parsed.results.some((r: any) => r.status === "PARTIAL")).toBe(true);
+    expect(parsed.results.every((r: any) => r.status === "PASS")).toBe(true);
     expect(await runCli(["--json", "no.such.command"])).toEqual({
       output: JSON.stringify({ ok: false, error: { code: "UNKNOWN_COMMAND", message: "unknown command", exit_code: EXIT_CODES.usage } }),
       error: "",

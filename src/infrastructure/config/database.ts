@@ -1,41 +1,17 @@
-import type { Dialect } from "../../core/types.ts";
 import { DomainError } from "../../core/types.ts";
 
 export interface DatabaseConfig {
-  dialect: Dialect;
-  sqlite?: SqliteConfig;
-  postgresql?: PostgresConfig;
-  mysql?: MysqlConfig;
+  dialect: "sqlite";
+  sqlite: SqliteConfig;
 }
 
 export interface SqliteConfig {
   path: string;
 }
 
-export interface PostgresConfig {
-  host: string;
-  port: number;
-  database: string;
-  username?: string;
-  password?: string;
-  sslMode?: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full";
-}
-
-export interface MysqlConfig {
-  host: string;
-  port: number;
-  database: string;
-  username?: string;
-  password?: string;
-  ssl?: boolean;
-}
-
 /**
  * Parse database URL into typed configuration.
- * Supports:
- * - sqlite:///path/to/db.sqlite (file path, must be absolute)
- * - postgresql://user:pass@host:5432/dbname
- * - mysql://user:pass@host:3306/dbname
+ * Supports only sqlite:///path/to/db.sqlite (file path, must be absolute).
  */
 export function parseDatabaseUrl(url: string): DatabaseConfig {
   if (!url) {
@@ -50,6 +26,13 @@ export function parseDatabaseUrl(url: string): DatabaseConfig {
 
     switch (parsed.protocol.toLowerCase().replace(":", "")) {
       case "sqlite": {
+        if (parsed.hostname && parsed.hostname !== "localhost") {
+          throw new Error(`SQLite URL host ${parsed.hostname} is rejected; only local files are supported`);
+        }
+        if (parsed.username || parsed.password || parsed.port) {
+          throw new Error("SQLite URL credentials and ports are rejected; only local files are supported");
+        }
+
         // sqlite:///path/to/db.sqlite → pathname is /path/to/db.sqlite
         let path = parsed.pathname;
         if (!path.startsWith("/")) {
@@ -67,58 +50,14 @@ export function parseDatabaseUrl(url: string): DatabaseConfig {
       }
 
       case "postgresql":
-      case "postgres": {
-        const host = parsed.hostname || "localhost";
-        const port = parsed.port ? parseInt(parsed.port, 10) : 5432;
-        const database = parsed.pathname.slice(1);
-        const username = parsed.username;
-        const password = decodeURIComponent(parsed.password || "");
-        const sslMode = (parsed.searchParams.get("sslmode") as PostgresConfig["sslMode"]) || undefined;
-
-        if (!database) {
-          throw new Error("PostgreSQL database name is required");
-        }
-
-        return {
-          dialect: "postgresql",
-          postgresql: {
-            host,
-            port,
-            database,
-            username,
-            password: password || undefined,
-            sslMode,
-          },
-        };
-      }
-
-      case "mysql": {
-        const host = parsed.hostname || "localhost";
-        const port = parsed.port ? parseInt(parsed.port, 10) : 3306;
-        const database = parsed.pathname.slice(1);
-        const username = parsed.username;
-        const password = decodeURIComponent(parsed.password || "");
-        const ssl = parsed.searchParams.get("ssl") === "true";
-
-        if (!database) {
-          throw new Error("MySQL database name is required");
-        }
-
-        return {
-          dialect: "mysql",
-          mysql: {
-            host,
-            port,
-            database,
-            username,
-            password: password || undefined,
-            ssl: ssl || undefined,
-          },
-        };
-      }
+      case "postgres":
+      case "mysql":
+      case "http":
+      case "https":
+        throw new Error(`Database scheme ${parsed.protocol} is explicitly rejected; only local SQLite file URLs are supported`);
 
       default:
-        throw new Error(`Unsupported database dialect: ${parsed.protocol}`);
+        throw new Error(`Database scheme ${parsed.protocol} is unsupported; only local SQLite file URLs are supported`);
     }
   } catch (error) {
     if (error instanceof DomainError) {
@@ -145,13 +84,10 @@ export function getDefaultSqlitePath(): string {
  * Validate database config has required fields.
  */
 export function validateDatabaseConfig(config: DatabaseConfig): void {
-  if (config.dialect === "sqlite" && !config.sqlite) {
+  if (config.dialect !== "sqlite") {
+    throw new DomainError("UNSUPPORTED_DATABASE_DIALECT", `Database dialect ${String(config.dialect)} is rejected; only sqlite is supported`);
+  }
+  if (!config.sqlite) {
     throw new DomainError("INVALID_DATABASE_CONFIG", "SQLite config required for sqlite dialect");
-  }
-  if (config.dialect === "postgresql" && !config.postgresql) {
-    throw new DomainError("INVALID_DATABASE_CONFIG", "PostgreSQL config required for postgresql dialect");
-  }
-  if (config.dialect === "mysql" && !config.mysql) {
-    throw new DomainError("INVALID_DATABASE_CONFIG", "MySQL config required for mysql dialect");
   }
 }

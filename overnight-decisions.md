@@ -339,3 +339,17 @@ conformance spike may evaluate it only after multi-instance same-directory
 safety, upgrade dump/restore behavior, Bun single-binary asset packaging, and
 the unresolved MySQL branch are proven. This entry does not rely on or cite
 PGlite GitHub issue #704 as an advisory-lock bug; that claim is not established.
+
+## OD-n94 — SQLite-only shared application core
+
+- **Date**: 2026-08-22
+- **Decision**: Agent-Bahi uses SQLite local files as its only database runtime. The CLI and MCP surfaces share one domain/application core. Raw SQL is not a product surface; persistence remains behind the application ports.
+- **Status**: `OWNER-APPROVED`.
+- **Supersedes**: The prior PostgreSQL, MySQL, and PGlite plans are `SUPERSEDED` and must not be treated as active implementation direction.
+
+## OD-n95 — Local stdio and hosted Streamable HTTP boundary
+
+- **Date**: 2026-08-22
+- **Decision**: Local deployments use stdio. Hosted deployments use Streamable HTTP; both HTTP and HTTPS are allowed. The default bind address is loopback. Each deployment has exactly one owner.
+- **Status**: `OWNER-APPROVED`.
+- **Supersedes**: Any earlier remote-database or multi-owner deployment assumptions are `SUPERSEDED` by this boundary.

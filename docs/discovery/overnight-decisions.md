@@ -32,3 +32,11 @@ V1 default remains SQLite. PGlite is only a future opt-in conformance spike;
 multi-instance same-directory safety, upgrade dump/restore, Bun single-binary
 assets, and the MySQL branch remain unresolved. This decision does not cite
 PGlite GitHub issue #704 as an advisory-lock bug; that claim is not established.
+
+## Superseded by OWNER-APPROVED n94/n95
+
+The active boundary is SQLite local-file only with one CLI+MCP shared core:
+local deployments use stdio, hosted deployments use Streamable HTTP, HTTP and
+HTTPS are both allowed, the default bind is loopback, raw SQL is not exposed,
+and each deployment has one owner. Earlier PostgreSQL, MySQL, and PGlite plans
+are `SUPERSEDED`.
