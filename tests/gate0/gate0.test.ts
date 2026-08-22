@@ -5,13 +5,14 @@ import { runLocalSqliteProof } from "../../spikes/gate0/proof.ts";
 describe("Gate0 local SQLite proofs", () => {
   test("all required local SQLite failure and success cases pass", async () => {
     const results = await runLocalSqliteProof();
-    expect(results.length).toBeGreaterThanOrEqual(17);
+    expect(results.length).toBeGreaterThanOrEqual(20);
     expect(results.every((result) => result.status === "PASS")).toBe(true);
     expect(results.map((result) => result.name)).toContain("rollback on imbalance");
     expect(results.map((result) => result.name)).toContain("migration mismatch refusal");
     expect(results.map((result) => result.name)).toContain("cross-BookSet posting rejection");
     expect(results.map((result) => result.name)).toContain("same-BookSet balanced posting success");
     expect(results.map((result) => result.name)).toContain("audit_log tenant FK rejection");
+    expect(results.map((result) => result.name)).toContain("posted journal creation guard");
     expect(results.map((result) => result.name)).toContain("idempotency replay");
     expect(results.map((result) => result.name)).toContain("idempotency conflict detection");
   });

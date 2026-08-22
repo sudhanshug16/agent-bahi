@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { isBalanced, type PostingAmount } from "../../src/domain/ledger/balance.ts";
+import { getOrCreateIdempotencyRecord, IdempotencyConflictError } from "../../src/application/idempotency.ts";
 
 export type ProofStatus = "PASS" | "PARTIAL" | "BLOCKED";
 
@@ -27,6 +28,7 @@ export const REQUIRED_PROOFS = [
   "cross-BookSet posting rejection",
   "same-BookSet balanced posting success",
   "audit_log tenant FK rejection",
+  "posted journal creation guard",
   "idempotency replay",
   "idempotency conflict detection",
   "scoped postings queries per tenant/BookSet/journal",
@@ -54,7 +56,21 @@ function assertLocalFilesystemPath(path: string, allowedRoot: string): void {
 }
 
 async function loadMigrationSql(): Promise<string> {
-  return Bun.file(`${import.meta.dir}/schema.sql`).text();
+  const candidates = [
+    `${import.meta.dir}/schema.sql`,
+    `${process.cwd()}/spikes/gate0/schema.sql`,
+    "./spikes/gate0/schema.sql",
+  ];
+
+  for (const path of candidates) {
+    try {
+      return await Bun.file(path).text();
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  throw new Error(`Could not find schema.sql in any of: ${candidates.join(", ")}`);
 }
 
 function beginImmediate(db: Database): void {
@@ -263,6 +279,13 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     expectThrow(() => db.query("INSERT INTO audit_log (tenant_id, event_id, entity_type, entity_id, action, payload) VALUES (?, ?, ?, ?, ?, ?)").run("tenant-b", "audit-orphan", "journal_entry", "entry", "post", "{}"), "FOREIGN KEY");
     pass("STK-003n", "audit_log tenant FK rejection", "audit insert with non-existent tenant rejected");
 
+    // Test BEFORE INSERT guard: cannot create entry with status != DRAFT
+    expectThrow(
+      () => db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key, status) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "bypass-posted", "key-bypass", "POSTED"),
+      "must start with status=DRAFT"
+    );
+    pass("STK-003p", "posted journal creation guard", "BEFORE INSERT trigger requires status=DRAFT on creation; direct POSTED creation rejected");
+
     // Test posted journal entry immutability: create entry, post it, verify immutability
     db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", "key-posted");
     db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "posted-entry", 1, 100n);
@@ -295,34 +318,42 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     );
     pass("STK-003r", "posted journal entry immutability", "posted journal entry cannot revert to draft, change identity/status, be deleted, or have postings added");
 
-    // Test idempotency: same request_id + same hash returns original result
+    // Test idempotency helper: same request_id + same hash returns original result
     const request1 = JSON.stringify({ action: "create_entry", amount: 100 });
     const requestHash1 = sha256(request1);
     const result1 = JSON.stringify({ entry_id: "idempotent-entry-1", created: true });
     const resultHash1 = sha256(result1);
 
-    db.query(
-      "INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash) VALUES (?, ?, ?, ?, ?)"
-    ).run("tenant-a", "req-1", requestHash1, result1, resultHash1);
+    const record1 = getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash1, result1, resultHash1);
+    if (record1.result_json !== result1 || record1.result_hash !== resultHash1) {
+      throw new Error("idempotency first create returned wrong result");
+    }
 
-    const stored = db.query<{ result_json: string }, [string, string]>(
-      "SELECT result_json FROM idempotency_records WHERE tenant_id = ? AND request_id = ?"
-    ).get("tenant-a", "req-1");
-    if (stored?.result_json !== result1) throw new Error("idempotency replay returned different result");
-    pass("STK-003s", "idempotency replay", "same request_id + same hash returns original result");
+    const replayRecord = getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash1, result1, resultHash1);
+    if (replayRecord.result_json !== result1 || replayRecord.result_hash !== resultHash1) {
+      throw new Error("idempotency replay returned different result");
+    }
+    pass("STK-003s", "idempotency replay", "same request_id + same hash returns exact stored result_json and result_hash");
 
-    // Test idempotency conflict: same request_id + different hash should fail
+    // Test idempotency conflict: same request_id + different hash should throw typed error, create no record
     const request2 = JSON.stringify({ action: "create_entry", amount: 200 });
     const requestHash2 = sha256(request2);
-    expectThrow(
-      () => {
-        db.query(
-          "INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash) VALUES (?, ?, ?, ?, ?)"
-        ).run("tenant-a", "req-1", requestHash2, JSON.stringify({ entry_id: "different", created: false }), sha256("{}"));
-      },
-      "UNIQUE"
-    );
-    pass("STK-003t", "idempotency conflict detection", "same request_id + different hash rejected with conflict");
+    const countBefore = count(db, "idempotency_records");
+
+    let conflictThrown = false;
+    let isTypedConflict = false;
+    try {
+      getOrCreateIdempotencyRecord(db, "tenant-a", "req-1", requestHash2, JSON.stringify({ entry_id: "different" }), sha256("{}"));
+    } catch (error) {
+      conflictThrown = true;
+      isTypedConflict = error instanceof IdempotencyConflictError;
+      if (!isTypedConflict) throw new Error(`expected IdempotencyConflictError, got ${error?.constructor.name}`);
+    }
+
+    if (!conflictThrown) throw new Error("expected IDEMPOTENCY_CONFLICT error");
+    const countAfter = count(db, "idempotency_records");
+    if (countAfter !== countBefore) throw new Error("idempotency conflict created a side effect (new record)");
+    pass("STK-003t", "idempotency conflict detection", "same request_id + different hash throws typed IDEMPOTENCY_CONFLICT; no side effects or prior result exposed");
 
     if (pragmas.length === 0) throw new Error("pragma query unexpectedly empty");
     return results;

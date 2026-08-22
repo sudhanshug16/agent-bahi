@@ -128,6 +128,14 @@ BEGIN
   SELECT RAISE(ABORT, 'audit log is append-only');
 END;
 
+CREATE TRIGGER IF NOT EXISTS journal_entries_must_start_as_draft
+BEFORE INSERT ON journal_entries
+BEGIN
+  SELECT CASE
+    WHEN NEW.status != 'DRAFT' THEN RAISE(ABORT, 'new journal entry must start with status=DRAFT')
+  END;
+END;
+
 CREATE TRIGGER IF NOT EXISTS journal_entries_no_revert_from_posted
 BEFORE UPDATE ON journal_entries
 WHEN NEW.status = 'DRAFT' AND OLD.status = 'POSTED'
