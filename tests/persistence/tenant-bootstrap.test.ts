@@ -361,8 +361,9 @@ describe("tenant.create bootstrap command", () => {
       const fulfilled = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<any>[];
       const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
 
-      // Valid scenarios: both fulfilled with exact match, OR one fulfilled + one BUSINESS_SESSION_BUSY
-      expect(fulfilled.length + rejected.length).toBe(2);
+      // Require at least one fulfillment; reject both-rejected and any non-BUSY rejection
+      expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+      expect(rejected.length).toBeLessThanOrEqual(1);
 
       if (fulfilled.length === 2) {
         // Both succeeded - verify exact match
@@ -371,58 +372,79 @@ describe("tenant.create bootstrap command", () => {
         expect(result1.resultJson).toBe(result2.resultJson);
         expect(result1.resultHash).toBe(result2.resultHash);
       } else if (fulfilled.length === 1 && rejected.length === 1) {
-        // One BUSY error expected
+        // One BUSY error expected - require actual BusinessSessionBusyError with stable code
         const busyError = rejected[0].reason;
+        expect(busyError).toBeInstanceOf(BusinessSessionBusyError);
         expect(busyError.code).toBe("BUSINESS_SESSION_BUSY");
 
-        // Retry through the losing facade after winner completes
+        // Determine which facade lost based on rejection index
+        const losingAppIndex = results.findIndex((r) => r.status === "rejected");
+        const losingApp = losingAppIndex === 0 ? app1 : app2;
         const result1 = fulfilled[0].value;
-        const retryResult = await app2.tenant.create(envelope);
 
-        // Verify exact match with original
+        // Retry through the losing facade after winner completes
+        const retryResult = await losingApp.tenant.create(envelope);
+
+        // Verify complete stored response bytes/hash match
         expect(retryResult.resultJson).toBe(result1.resultJson);
         expect(retryResult.resultHash).toBe(result1.resultHash);
         expect(retryResult.replayed).toBe(true);
-      } else {
-        throw new Error(`Invalid result: expected 2 fulfilled OR 1 fulfilled + 1 rejected, got ${fulfilled.length} fulfilled, ${rejected.length} rejected`);
       }
 
-      // Query DB and verify exact state
+      // Query DB and verify GLOBAL cardinalities and row identity
       const native = new BunDatabase(dbPath, { readonly: true });
 
       // Get the tenant ID from first fulfilled result
       const result1Data = JSON.parse(fulfilled[0].value.resultJson);
-      const tenantId = result1Data.tenantId;
-      const bookSetId = result1Data.defaultBookSetId;
+      const returnedTenantId = result1Data.tenantId;
+      const returnedBookSetId = result1Data.defaultBookSetId;
 
-      // Verify exactly one tenant
-      const tenantCount = (native.query("SELECT COUNT(*) as count FROM tenants WHERE id = ?").get(tenantId) as any).count;
-      expect(tenantCount).toBe(1);
+      // Assert GLOBAL cardinalities (not derived through request)
+      const globalTenantCount = (native.query("SELECT COUNT(*) as count FROM tenants").get() as any).count;
+      expect(globalTenantCount).toBe(1);
 
-      // Verify one ACTIVE default BookSet
-      const bookSetRow = native.query("SELECT lifecycle FROM book_sets WHERE id = ? AND tenant_id = ?").get(bookSetId, tenantId) as any;
-      expect(bookSetRow).toBeDefined();
-      expect(bookSetRow.lifecycle).toBe("ACTIVE");
+      const globalBookSetCount = (native.query("SELECT COUNT(*) as count FROM book_sets").get() as any).count;
+      expect(globalBookSetCount).toBe(1);
 
-      // Verify five correctly scoped seed accounts
-      const accountCount = (native.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id = ? AND book_set_id = ?").get(tenantId, bookSetId) as any).count;
-      expect(accountCount).toBe(5);
+      const globalAccountCount = (native.query("SELECT COUNT(*) as count FROM accounts").get() as any).count;
+      expect(globalAccountCount).toBe(5);
 
-      // Verify one tenant.create audit record
+      // Verify only one tenant.create audit record for this request
       const auditRecords = native.query(
-        "SELECT command FROM audit_records WHERE tenant_id = ? AND request_id = ?",
-      ).all(tenantId, requestId) as any[];
+        "SELECT command, tenant_id FROM audit_records WHERE request_id = ?",
+      ).all(requestId) as any[];
       expect(auditRecords).toHaveLength(1);
       expect(auditRecords[0].command).toBe("tenant.create");
+      expect(auditRecords[0].tenant_id).toBe(returnedTenantId);
 
       // Verify one finalized tenant_creation_requests row
+      const globalTcrCount = (native.query("SELECT COUNT(*) as count FROM tenant_creation_requests").get() as any).count;
+      expect(globalTcrCount).toBe(1);
+
       const tcrRow = native.query(
         "SELECT id, request_id, request_hash, tenant_id, result_json, result_hash FROM tenant_creation_requests WHERE request_id = ?",
       ).get(requestId) as any;
       expect(tcrRow).toBeDefined();
-      expect(tcrRow.tenant_id).toBe(tenantId);
+      expect(tcrRow.tenant_id).toBe(returnedTenantId);
       expect(tcrRow.result_json).toBe(fulfilled[0].value.resultJson);
       expect(tcrRow.result_hash).toBe(fulfilled[0].value.resultHash);
+
+      // Verify every row's tenant/book_set IDs match returned IDs
+      const tenantRow = native.query("SELECT id, kind FROM tenants WHERE id = ?").get(returnedTenantId) as any;
+      expect(tenantRow).toBeDefined();
+      expect(tenantRow.kind).toBe("COMPANY");
+
+      const bookSetRow = native.query("SELECT id, lifecycle, tenant_id FROM book_sets WHERE id = ?").get(returnedBookSetId) as any;
+      expect(bookSetRow).toBeDefined();
+      expect(bookSetRow.lifecycle).toBe("ACTIVE");
+      expect(bookSetRow.tenant_id).toBe(returnedTenantId);
+
+      const accountRows = native.query("SELECT tenant_id, book_set_id FROM accounts WHERE tenant_id = ? AND book_set_id = ?").all(returnedTenantId, returnedBookSetId) as any[];
+      expect(accountRows).toHaveLength(5);
+      accountRows.forEach((row) => {
+        expect(row.tenant_id).toBe(returnedTenantId);
+        expect(row.book_set_id).toBe(returnedBookSetId);
+      });
 
       native.close();
     } finally {
@@ -442,6 +464,7 @@ describe("tenant.create bootstrap command", () => {
       const app = createSqliteApplication(dbPath);
 
       const requestId = randomUUID();
+      const triggerName = "tenant_creation_requests_abort_for_test";
       const envelope: CommandEnvelope<TenantCreatePayload> = {
         schemaVersion: 1 as const,
         tenantId: "temp" as any,
@@ -452,18 +475,25 @@ describe("tenant.create bootstrap command", () => {
         payload: { kind: "INDIVIDUAL" as const, name: "Trigger Test Person", baseCurrency: "USD" },
       };
 
-      // Install trigger that aborts tenant_creation_requests finalization
+      // Install trigger that aborts tenant_creation_requests finalization with valid input
       const setupDb = new BunDatabase(dbPath);
       setupDb.exec(`
-        CREATE TRIGGER tenant_creation_requests_abort_for_test BEFORE UPDATE ON tenant_creation_requests
+        CREATE TRIGGER ${triggerName} BEFORE UPDATE ON tenant_creation_requests
         WHEN NEW.result_json IS NOT NULL
         BEGIN
           SELECT RAISE(ABORT, 'test: abort finalization');
         END;
       `);
+
+      // Verify trigger is installed in sqlite_master
+      const triggerCheck = setupDb.query(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+      ).get(triggerName) as any;
+      expect(triggerCheck).toBeDefined();
+      expect(triggerCheck.name).toBe(triggerName);
       setupDb.close();
 
-      // Attempt tenant.create - should fail due to trigger abort
+      // Attempt tenant.create with valid input - should fail due to trigger
       let error: Error | null = null;
       try {
         await app.tenant.create(envelope);
@@ -473,32 +503,37 @@ describe("tenant.create bootstrap command", () => {
       expect(error).toBeDefined();
       expect(error!.message).toContain("trigger constraint violation");
 
-      // Query DB: verify zero tenant/BookSet/account/audit/request rows for this attempt
-      const queryDb = new BunDatabase(dbPath, { readonly: true });
+      // Verify failure is for persistence/trigger path: if error has cause chain, check marker
+      if ((error as any).cause) {
+        expect((error as any).cause.message).toContain("abort finalization");
+      }
 
-      const tenantCount = (queryDb.query("SELECT COUNT(*) as count FROM tenants WHERE id = (SELECT DISTINCT tenant_id FROM tenant_creation_requests WHERE request_id = ?)").get(requestId) as any).count;
+      // Query DB: assert GLOBAL counts all zero (never derive through rolled-back request)
+      const failureDb = new BunDatabase(dbPath, { readonly: true });
+
+      const tenantCount = (failureDb.query("SELECT COUNT(*) as count FROM tenants").get() as any).count;
       expect(tenantCount).toBe(0);
 
-      const bookSetCount = (queryDb.query("SELECT COUNT(*) as count FROM book_sets WHERE tenant_id IN (SELECT DISTINCT tenant_id FROM tenant_creation_requests WHERE request_id = ?)").get(requestId) as any).count;
+      const bookSetCount = (failureDb.query("SELECT COUNT(*) as count FROM book_sets").get() as any).count;
       expect(bookSetCount).toBe(0);
 
-      const accountCount = (queryDb.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id IN (SELECT DISTINCT tenant_id FROM tenant_creation_requests WHERE request_id = ?)").get(requestId) as any).count;
+      const accountCount = (failureDb.query("SELECT COUNT(*) as count FROM accounts").get() as any).count;
       expect(accountCount).toBe(0);
 
-      const auditCount = (queryDb.query("SELECT COUNT(*) as count FROM audit_records WHERE request_id = ?").get(requestId) as any).count;
+      const auditCount = (failureDb.query("SELECT COUNT(*) as count FROM audit_records").get() as any).count;
       expect(auditCount).toBe(0);
 
-      const tcrCount = (queryDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any).count;
+      const tcrCount = (failureDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests").get() as any).count;
       expect(tcrCount).toBe(0);
 
-      queryDb.close();
+      failureDb.close();
 
       // Drop the abort trigger
       const dropDb = new BunDatabase(dbPath);
-      dropDb.exec("DROP TRIGGER tenant_creation_requests_abort_for_test;");
+      dropDb.exec(`DROP TRIGGER ${triggerName};`);
       dropDb.close();
 
-      // Retry with SAME requestId/payload - should succeed
+      // Retry with SAME requestId/payload - must succeed
       const retryResult = await app.tenant.create(envelope);
       expect(retryResult).toBeDefined();
 
@@ -507,30 +542,51 @@ describe("tenant.create bootstrap command", () => {
       expect(retryData.defaultBookSetId).toBeDefined();
       expect(retryData.seedAccountIds).toBeDefined();
 
-      // Verify state is clean and matches first successful attempt
+      // Verify GLOBAL state after successful retry: 1 tenant, 1 BookSet, 5 accounts, 1 audit, 1 completed request
       const finalDb = new BunDatabase(dbPath, { readonly: true });
 
-      // Verify exactly one tenant
-      const finalTenantCount = (finalDb.query("SELECT COUNT(*) as count FROM tenants WHERE id = ?").get(retryData.tenantId) as any).count;
+      const finalTenantCount = (finalDb.query("SELECT COUNT(*) as count FROM tenants").get() as any).count;
       expect(finalTenantCount).toBe(1);
 
-      // Verify one ACTIVE BookSet
-      const bookSetRow = finalDb.query("SELECT lifecycle FROM book_sets WHERE id = ? AND tenant_id = ?").get(retryData.defaultBookSetId, retryData.tenantId) as any;
-      expect(bookSetRow.lifecycle).toBe("ACTIVE");
+      const finalBookSetCount = (finalDb.query("SELECT COUNT(*) as count FROM book_sets").get() as any).count;
+      expect(finalBookSetCount).toBe(1);
 
-      // Verify five seed accounts
-      const finalAccountCount = (finalDb.query("SELECT COUNT(*) as count FROM accounts WHERE tenant_id = ? AND book_set_id = ?").get(retryData.tenantId, retryData.defaultBookSetId) as any).count;
+      const finalAccountCount = (finalDb.query("SELECT COUNT(*) as count FROM accounts").get() as any).count;
       expect(finalAccountCount).toBe(5);
 
-      // Verify one tenant_creation_requests row (not two)
-      const finalTcrCount = (finalDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any).count;
+      const finalAuditCount = (finalDb.query("SELECT COUNT(*) as count FROM audit_records WHERE command = ?").get("tenant.create") as any).count;
+      expect(finalAuditCount).toBe(1);
+
+      const finalTcrCount = (finalDb.query("SELECT COUNT(*) as count FROM tenant_creation_requests").get() as any).count;
       expect(finalTcrCount).toBe(1);
 
-      // Verify the finalized row
-      const finalTcrRow = finalDb.query("SELECT tenant_id, result_json, result_hash FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any;
-      expect(finalTcrRow.tenant_id).toBe(retryData.tenantId);
-      expect(finalTcrRow.result_json).toBeDefined();
-      expect(finalTcrRow.result_hash).toBeDefined();
+      // Verify row identity: each row's tenant/book_set IDs match returned IDs
+      const tenantRow = finalDb.query("SELECT id FROM tenants WHERE id = ?").get(retryData.tenantId) as any;
+      expect(tenantRow).toBeDefined();
+      expect(tenantRow.id).toBe(retryData.tenantId);
+
+      const bookSetRow = finalDb.query("SELECT id, tenant_id FROM book_sets WHERE id = ?").get(retryData.defaultBookSetId) as any;
+      expect(bookSetRow).toBeDefined();
+      expect(bookSetRow.id).toBe(retryData.defaultBookSetId);
+      expect(bookSetRow.tenant_id).toBe(retryData.tenantId);
+
+      const accountRows = finalDb.query("SELECT tenant_id, book_set_id FROM accounts WHERE tenant_id = ? AND book_set_id = ?").all(retryData.tenantId, retryData.defaultBookSetId) as any[];
+      expect(accountRows).toHaveLength(5);
+      accountRows.forEach((row) => {
+        expect(row.tenant_id).toBe(retryData.tenantId);
+        expect(row.book_set_id).toBe(retryData.defaultBookSetId);
+      });
+
+      const auditRow = finalDb.query("SELECT tenant_id, request_id, command FROM audit_records WHERE request_id = ?").get(requestId) as any;
+      expect(auditRow).toBeDefined();
+      expect(auditRow.tenant_id).toBe(retryData.tenantId);
+      expect(auditRow.command).toBe("tenant.create");
+
+      const tcrRow = finalDb.query("SELECT tenant_id, result_json, result_hash FROM tenant_creation_requests WHERE request_id = ?").get(requestId) as any;
+      expect(tcrRow).toBeDefined();
+      expect(tcrRow.tenant_id).toBe(retryData.tenantId);
+      expect(tcrRow.result_json).toBeDefined();
+      expect(tcrRow.result_hash).toBeDefined();
 
       finalDb.close();
     } finally {
