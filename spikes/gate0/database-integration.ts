@@ -39,6 +39,8 @@ export const REQUIRED_SEMANTIC_PROOF_IDS = [
   "MIG-DIRTY-RECOVERY",
   "SCOPE-001",
   "SCOPE-002",
+  "SCOPE-ISOLATION-001",
+  "SCOPE-ISOLATION-002",
   "POST-001",
   "POST-002",
   "POST-003",
@@ -983,9 +985,23 @@ async function captureMultipleSnapshots(sql: SQL, tables: string[], dialect: Dat
   return snapshots;
 }
 
-async function captureCatalogSnapshot(sql: SQL, dialect: DatabaseType): Promise<string> {
-  const rows = dialect === "postgres"
-    ? await sql.unsafe<Record<string, unknown>[]>(`
+async function captureCatalogSnapshot(sql: SQL, dialect: DatabaseType, explicitSchema?: string): Promise<string> {
+  if (dialect === "postgres") {
+    if (explicitSchema) {
+      assertSafeIdentifier(explicitSchema, "explicit schema");
+      const rows = await sql.unsafe<Record<string, unknown>[]>(`
+        SELECT 'table' AS object_kind, table_name AS object_name, '' AS object_definition
+        FROM information_schema.tables WHERE table_schema = '${explicitSchema}'
+        UNION ALL
+        SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
+        FROM information_schema.triggers WHERE trigger_schema = '${explicitSchema}'
+        UNION ALL
+        SELECT 'routine', routine_name, CONCAT(data_type, '|', routine_definition)
+        FROM information_schema.routines WHERE routine_schema = '${explicitSchema}'
+      `);
+      return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    } else {
+      const rows = await sql.unsafe<Record<string, unknown>[]>(`
         SELECT 'table' AS object_kind, table_name AS object_name, '' AS object_definition
         FROM information_schema.tables WHERE table_schema = current_schema()
         UNION ALL
@@ -994,15 +1010,19 @@ async function captureCatalogSnapshot(sql: SQL, dialect: DatabaseType): Promise<
         UNION ALL
         SELECT 'routine', routine_name, CONCAT(data_type, '|', routine_definition)
         FROM information_schema.routines WHERE routine_schema = current_schema()
-      `)
-    : await sql.unsafe<Record<string, unknown>[]>(`
-        SELECT 'table' AS object_kind, table_name AS object_name, engine AS object_definition
-        FROM information_schema.tables WHERE table_schema = DATABASE()
-        UNION ALL
-        SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
-        FROM information_schema.triggers WHERE trigger_schema = DATABASE()
       `);
-  return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+      return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    }
+  } else {
+    const rows = await sql.unsafe<Record<string, unknown>[]>(`
+      SELECT 'table' AS object_kind, table_name AS object_name, engine AS object_definition
+      FROM information_schema.tables WHERE table_schema = DATABASE()
+      UNION ALL
+      SELECT 'trigger', trigger_name, CONCAT(event_manipulation, '|', action_timing, '|', event_object_table, '|', action_statement)
+      FROM information_schema.triggers WHERE trigger_schema = DATABASE()
+    `);
+    return JSON.stringify(rows.map(canonicalizeRow).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+  }
 }
 
 export class IdempotencyConflictError extends Error {
@@ -1335,13 +1355,13 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
 -- statement-breakpoint`,
         };
         let failure: unknown = null;
-        const catalogBeforeRollback = await captureCatalogSnapshot(rollbackSql, "postgres");
+        const catalogBeforeRollback = await captureCatalogSnapshot(rollbackSql, "postgres", rollbackSchema);
         try {
           await applyMigration(rollbackSql, failingMigration);
         } catch (error) {
           failure = error;
         }
-        const catalogAfterRollback = await captureCatalogSnapshot(rollbackSql, "postgres");
+        const catalogAfterRollback = await captureCatalogSnapshot(rollbackSql, "postgres", rollbackSchema);
         const leftovers = await rollbackSql.unsafe<{ table_count: bigint | number; trigger_count: bigint | number; function_count: bigint | number }[]>(`
           SELECT
             (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${rollbackSchema}') AS table_count,
@@ -1371,6 +1391,122 @@ CREATE TABLE test_rollback (id TEXT PRIMARY KEY);
             recordProofFail(results, "CLEANUP-001", "PG", `rollback namespace cleanup failed: ${sanitizeError(error)}`);
           }
           try { await rollbackSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `rollback client cleanup failed: ${sanitizeError(error)}`); }
+        }
+      }
+    }
+
+    // SCOPE-ISOLATION-001: PostgreSQL explicit schema parameter prevents search_path redirection
+    if (ctx.dbConfig.type === "postgres") {
+      let testSql: SQL | null = null;
+      let testSchema1 = "";
+      let testSchema2 = "";
+      try {
+        testSchema1 = `gate0_scope1_${crypto.randomUUID().replaceAll("-", "")}`;
+        testSchema2 = `gate0_scope2_${crypto.randomUUID().replaceAll("-", "")}`;
+        assertSafeIdentifier(testSchema1, "test schema 1");
+        assertSafeIdentifier(testSchema2, "test schema 2");
+        testSql = createBunSqlClient(ctx.dbConfig);
+        await testSql.connect();
+        await testSql.unsafe(`CREATE SCHEMA "${testSchema1}"`);
+        await testSql.unsafe(`CREATE SCHEMA "${testSchema2}"`);
+
+        // Create a table in schema2 to ensure it doesn't leak into schema1's snapshot
+        await testSql.unsafe(`CREATE TABLE "${testSchema2}".pollution_table (id TEXT PRIMARY KEY)`);
+
+        // Take snapshot of empty schema1 with explicit parameter
+        const emptySnapshot = await captureCatalogSnapshot(testSql, "postgres", testSchema1);
+
+        // Change search_path to schema2 (which has a table)
+        await testSql.unsafe(`SET search_path TO "${testSchema2}"`);
+
+        // Take snapshot of schema1 again - should still be empty even though search_path points to schema2
+        const isolatedSnapshot = await captureCatalogSnapshot(testSql, "postgres", testSchema1);
+
+        // Verify the snapshots are identical and empty
+        const snapshotsMatch = emptySnapshot === isolatedSnapshot && emptySnapshot === "[]";
+
+        // Verify schema2's snapshot contains the pollution_table
+        const schema2Snapshot = await captureCatalogSnapshot(testSql, "postgres", testSchema2);
+        const schema2HasPollution = schema2Snapshot.includes("pollution_table");
+
+        if (!snapshotsMatch) {
+          recordProofFail(results, "SCOPE-ISOLATION-001", "PG", `Schema1 snapshots differ or not empty: empty=${emptySnapshot}, isolated=${isolatedSnapshot}`);
+        } else if (!schema2HasPollution) {
+          recordProofFail(results, "SCOPE-ISOLATION-001", "PG", "Schema2 snapshot should contain pollution_table");
+        } else {
+          recordProofPass(results, "SCOPE-ISOLATION-001", "PG", [
+            "explicit schema parameter overrides current_schema()",
+            "ambient search_path changes do not redirect snapshot",
+            "wrong-schema objects do not contaminate proof",
+          ]);
+        }
+      } catch (error) {
+        recordProofFail(results, "SCOPE-ISOLATION-001", "PG", sanitizeError(error));
+      } finally {
+        if (testSql) {
+          try {
+            await testSql.unsafe("SET search_path TO public");
+            if (testSchema1) await testSql.unsafe(`DROP SCHEMA IF EXISTS "${testSchema1}" CASCADE`);
+            if (testSchema2) await testSql.unsafe(`DROP SCHEMA IF EXISTS "${testSchema2}" CASCADE`);
+          } catch (error) {
+            recordProofFail(results, "CLEANUP-001", "PG", `schema scope test cleanup failed: ${sanitizeError(error)}`);
+          }
+          try { await testSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `scope test client cleanup failed: ${sanitizeError(error)}`); }
+        }
+      }
+    }
+
+    // SCOPE-ISOLATION-002: PostgreSQL catalog snapshot includes tables, triggers, and functions correctly
+    if (ctx.dbConfig.type === "postgres") {
+      let testSql: SQL | null = null;
+      let testSchema = "";
+      try {
+        testSchema = `gate0_scope2_${crypto.randomUUID().replaceAll("-", "")}`;
+        assertSafeIdentifier(testSchema, "test schema");
+        testSql = createBunSqlClient(ctx.dbConfig);
+        await testSql.connect();
+        await testSql.unsafe(`CREATE SCHEMA "${testSchema}"`);
+
+        // Create diverse catalog objects in the test schema
+        await testSql.unsafe(`
+          SET search_path TO "${testSchema}";
+          CREATE TABLE test_table1 (id TEXT PRIMARY KEY);
+          CREATE TABLE test_table2 (name TEXT);
+          CREATE FUNCTION test_func1() RETURNS TRIGGER AS $$BEGIN RETURN NULL; END;$$ LANGUAGE plpgsql;
+          CREATE TRIGGER test_trigger1 BEFORE INSERT ON test_table1 FOR EACH ROW EXECUTE FUNCTION test_func1();
+        `);
+
+        // Capture snapshot with explicit schema
+        const snapshot = await captureCatalogSnapshot(testSql, "postgres", testSchema);
+        const snapshotObj = JSON.parse(snapshot);
+
+        // Verify all objects are captured
+        const hasTable1 = snapshotObj.some((obj: any) => obj.object_kind === "table" && obj.object_name === "test_table1");
+        const hasTable2 = snapshotObj.some((obj: any) => obj.object_kind === "table" && obj.object_name === "test_table2");
+        const hasFunc = snapshotObj.some((obj: any) => obj.object_kind === "routine" && obj.object_name === "test_func1");
+        const hasTrigger = snapshotObj.some((obj: any) => obj.object_kind === "trigger" && obj.object_name === "test_trigger1");
+
+        if (!hasTable1 || !hasTable2 || !hasFunc || !hasTrigger) {
+          recordProofFail(results, "SCOPE-ISOLATION-002", "PG", `Missing catalog objects: table1=${hasTable1}, table2=${hasTable2}, func=${hasFunc}, trigger=${hasTrigger}`);
+        } else {
+          recordProofPass(results, "SCOPE-ISOLATION-002", "PG", [
+            "catalog snapshot captures tables correctly",
+            "catalog snapshot captures functions correctly",
+            "catalog snapshot captures triggers correctly",
+            "all object types sorted deterministically",
+          ]);
+        }
+      } catch (error) {
+        recordProofFail(results, "SCOPE-ISOLATION-002", "PG", sanitizeError(error));
+      } finally {
+        if (testSql) {
+          try {
+            await testSql.unsafe("SET search_path TO public");
+            if (testSchema) await testSql.unsafe(`DROP SCHEMA IF EXISTS "${testSchema}" CASCADE`);
+          } catch (error) {
+            recordProofFail(results, "CLEANUP-001", "PG", `scope2 test cleanup failed: ${sanitizeError(error)}`);
+          }
+          try { await testSql.end({ timeout: 1000 }); } catch (error) { recordProofFail(results, "CLEANUP-001", "PG", `scope2 test client cleanup failed: ${sanitizeError(error)}`); }
         }
       }
     }
