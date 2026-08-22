@@ -102,9 +102,21 @@ class PostgresMigrationSession implements MigrationSession {
        FROM pg_index i
        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
        JOIN pg_class t ON t.oid = i.indrelid
-       WHERE t.relname = $1 AND i.indisprimary`,
+      WHERE t.relname = $1 AND i.indisprimary`,
       [tableName]
     )).rows.map(row => (row.attname as string).toLowerCase());
+
+    const checks = (await this.execute(
+      `SELECT pg_get_constraintdef(c.oid) AS definition
+       FROM pg_constraint c
+       JOIN pg_class t ON t.oid = c.conrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE t.relname = $1 AND n.nspname = 'public' AND c.contype = 'c'
+       ORDER BY c.oid`,
+      [tableName]
+    )).rows
+      .map((row) => row.definition)
+      .filter((definition): definition is string => typeof definition === "string");
 
     const columnMetadata: ColumnMetadata[] = columns.map(col => ({
       name: col.column_name,
@@ -118,6 +130,7 @@ class PostgresMigrationSession implements MigrationSession {
       name: tableName,
       kind,
       columns: columnMetadata,
+      checks,
     };
   }
 

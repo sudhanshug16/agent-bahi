@@ -106,10 +106,21 @@ class MysqlMigrationSession implements MigrationSession {
       primaryKey: col.COLUMN_KEY === "PRI",
     }));
 
+    const checks = (await this.execute(
+      `SELECT CHECK_CLAUSE
+       FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS
+       WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ?
+       ORDER BY CONSTRAINT_NAME`,
+      [tableName]
+    )).rows
+      .map((row) => row.CHECK_CLAUSE)
+      .filter((definition): definition is string => typeof definition === "string");
+
     return {
       name: tableName,
       kind,
       columns: columnMetadata,
+      checks,
     };
   }
 

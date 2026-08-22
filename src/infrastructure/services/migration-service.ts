@@ -216,6 +216,21 @@ export interface MigrationRecoveryRequest {
 }
 
 type DirtyReasonState = "NONE" | "PRESENT";
+type LegacySchemaType = "gate0" | "dirty_flag" | "strict_status_lease" | "nullable_status";
+
+interface SchemaColumnSpec {
+  name: string;
+  type: string;
+  nullable: boolean;
+  primaryKey: boolean;
+}
+
+const CURRENT_COLUMN_NAMES = [
+  "id", "dialect", "checksum", "status", "executed_at", "duration_ms",
+  "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json",
+] as const;
+
+const INTERNAL_CONTROL_IDENTIFIERS = /^(?:schema_migrations|schema_migrations_stage_v1|schema_migrations_backup_v1|schema_migrations_stage_[a-f0-9_]+)$/;
 
 function dirtyReasonState(value: string | null): DirtyReasonState {
   return value === null ? "NONE" : "PRESENT";
@@ -346,22 +361,20 @@ export class MigrationService {
    */
   private async upgradeControlSchemaOnSession(session: MigrationSession): Promise<void> {
     try {
+      if (this.dialect === "mysql") {
+        await this.upgradeMysqlControlSchemaOnSession(session);
+        return;
+      }
       const metadata = await session.getTableMetadata("schema_migrations");
 
       // Table doesn't exist yet; will be created on first migrate()
       if (metadata === null) return;
 
-      // Reject VIEWs: cannot upgrade views, only base tables
-      if (metadata.kind === "VIEW") {
-        throw new DomainError(
-          "CONTROL_SCHEMA_UPGRADE_FAILED",
-          "schema_migrations is a VIEW, not a BASE TABLE; cannot upgrade"
-        );
-      }
+      this.rejectNonTable(metadata);
 
       // If already in current format (has 11 required columns), validate and no-op
       if (this.isCurrentSchema(metadata)) {
-        await this.validateCurrentSchema(session, metadata);
+        this.validateCurrentSchema(metadata);
         return;
       }
 
@@ -369,19 +382,12 @@ export class MigrationService {
       const schemaType = this.detectLegacySchemaType(metadata);
 
       // Unknown/hybrid/malformed schemas fail closed, leave table unchanged
-      if (!schemaType) {
-        throw new DomainError(
-          "CONTROL_SCHEMA_UPGRADE_FAILED",
-          `schema_migrations table has unknown/hybrid/partial schema that cannot be safely upgraded; no mutation performed`
-        );
-      }
+      if (!schemaType) this.throwUnknownSchema();
 
-      const canonicalRows = await this.extractCanonicalRows(session, metadata, schemaType);
+      const canonicalRows = await this.extractCanonicalRows(session, "schema_migrations", schemaType);
 
       // Create staging table with current schema
-      const stagingTable = this.dialect === "mysql"
-        ? `schema_migrations_stage_v1`
-        : `schema_migrations_stage_${randomUUID().replace(/-/g, "_")}`;
+      const stagingTable = `schema_migrations_stage_${randomUUID().replace(/-/g, "_")}`;
       await this.createStagingTable(session, stagingTable);
 
       // Copy canonical rows to staging
@@ -394,19 +400,8 @@ export class MigrationService {
       // For SQLite/PostgreSQL: drop original and rename staging within lease transaction
       // For MySQL: atomic rename with backup, pinned GET_LOCK already held by session
       if (this.dialect === "sqlite" || this.dialect === "postgresql") {
-        await session.executeRaw("DROP TABLE schema_migrations");
-        const renameCmd = this.dialect === "sqlite"
-          ? `ALTER TABLE ${stagingTable} RENAME TO schema_migrations`
-          : `ALTER TABLE ${stagingTable} RENAME TO schema_migrations`;
-        await session.executeRaw(renameCmd);
-      } else if (this.dialect === "mysql") {
-        // MySQL atomic rename with fixed versioned names
-        const backupTable = `schema_migrations_backup_v1`;
-        await session.executeRaw(
-          `RENAME TABLE schema_migrations TO ${backupTable}, ${stagingTable} TO schema_migrations`
-        );
-        // Cleanup is atomic within lease; failure aborts entire upgrade transaction
-        await session.executeRaw(`DROP TABLE ${backupTable}`);
+        await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations")}`);
+        await session.executeRaw(`ALTER TABLE ${this.quoteIdentifier(stagingTable)} RENAME TO ${this.quoteIdentifier("schema_migrations")}`);
       }
 
       // Validate schema and rows after swap
@@ -425,6 +420,7 @@ export class MigrationService {
         );
       }
 
+      this.validateCurrentSchema(finalMetadata);
       await this.validateExactRows(session, "schema_migrations", canonicalRows);
     } catch (error) {
       if (error instanceof DomainError) throw error;
@@ -436,156 +432,223 @@ export class MigrationService {
     }
   }
 
-  private isCurrentSchema(metadata: TableMetadata): boolean {
-    // Must be a BASE TABLE, not a VIEW or other kind
-    if (metadata.kind !== "TABLE") return false;
+  private async upgradeMysqlControlSchemaOnSession(session: MigrationSession): Promise<void> {
+    const live = await session.getTableMetadata("schema_migrations");
+    const stage = await session.getTableMetadata("schema_migrations_stage_v1");
+    const backup = await session.getTableMetadata("schema_migrations_backup_v1");
 
-    // Verify exactly 11 columns in current schema
-    if (metadata.columns.length !== 11) return false;
-
-    // Expected column names and nullability
-    const expectedColumns: Array<{ name: string; nullable: boolean }> = [
-      { name: "id", nullable: false },
-      { name: "dialect", nullable: false },
-      { name: "checksum", nullable: false },
-      { name: "status", nullable: false },
-      { name: "executed_at", nullable: false },
-      { name: "duration_ms", nullable: false },
-      { name: "dirty_reason", nullable: true },
-      { name: "lease_token", nullable: true },
-      { name: "manifest_version", nullable: true },
-      { name: "verification_manifest_hash", nullable: true },
-      { name: "manifest_json", nullable: true },
-    ];
-
-    // Verify exact order, names, and nullability
-    for (let i = 0; i < expectedColumns.length; i++) {
-      const expected = expectedColumns[i];
-      const actual = metadata.columns[i];
-
-      if (actual.name !== expected.name) return false;
-
-      // For nullable check: if column is PRIMARY KEY (col 0), SQLite might not mark it as NOT NULL
-      // in PRAGMA even though PRIMARY KEY implies NOT NULL. Accept either case for id.
-      if (i === 0 && actual.name === "id") {
-        // id can be reported as nullable or not-nullable (PRIMARY KEY is implicit NOT NULL)
-        // Accept either; both are valid current schema definitions
-      } else if (actual.nullable !== expected.nullable) {
-        return false;
+    if (live === null) {
+      if (stage !== null) {
+        this.validateCurrentSchema(stage);
+        if (backup === null) {
+          throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "MySQL upgrade has a stage without its preserved backup; refusing recovery");
+        }
+        const backupType = this.detectLegacySchemaType(backup);
+        if (backupType) {
+          const expected = await this.extractCanonicalRows(session, "schema_migrations_backup_v1", backupType);
+          try {
+            await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
+          } catch (error) {
+            if (!this.isRecoverableStageMismatch(error)) throw error;
+            await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")}`);
+            await this.createStagingTable(session, "schema_migrations_stage_v1");
+            await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
+            await this.validateRowCount(session, "schema_migrations_stage_v1", expected.length);
+            await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
+          }
+        } else if (!this.isCurrentSchema(backup)) {
+          this.throwUnknownSchema();
+        }
+        await session.executeRaw(`RENAME TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`);
+        return;
       }
+      if (backup === null) return;
+      const backupType = this.detectLegacySchemaType(backup);
+      if (!backupType) this.throwUnknownSchema();
+      const expected = await this.extractCanonicalRows(session, "schema_migrations_backup_v1", backupType);
+      await this.createStagingTable(session, "schema_migrations_stage_v1");
+      await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
+      await this.validateRowCount(session, "schema_migrations_stage_v1", expected.length);
+      await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
+      await session.executeRaw(`RENAME TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`);
+      return;
     }
 
-    return true;
+    this.rejectNonTable(live);
+    if (this.isCurrentSchema(live)) {
+      this.validateCurrentSchema(live);
+      const liveRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier("schema_migrations")}`)).rows;
+      if (stage !== null) {
+        this.validateCurrentSchema(stage);
+        try {
+          await this.validateExactRows(session, "schema_migrations_stage_v1", liveRows);
+        } catch (error) {
+          if (!this.isRecoverableStageMismatch(error)) throw error;
+        }
+        await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")}`);
+      }
+      if (backup !== null) {
+        const backupType = this.detectLegacySchemaType(backup);
+        if (backupType) {
+          const expected = await this.extractCanonicalRows(session, "schema_migrations_backup_v1", backupType);
+          await this.validateExactRows(session, "schema_migrations", expected);
+        } else if (this.isCurrentSchema(backup)) {
+          await this.validateExactRows(session, "schema_migrations_backup_v1", liveRows);
+        } else {
+          this.throwUnknownSchema();
+        }
+      }
+      return;
+    }
+
+    const schemaType = this.detectLegacySchemaType(live);
+    if (!schemaType) this.throwUnknownSchema();
+    if (backup !== null) {
+      throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "MySQL upgrade has a preserved backup beside a legacy live table; refusing to overwrite history");
+    }
+    const expected = await this.extractCanonicalRows(session, "schema_migrations", schemaType);
+    if (stage === null) {
+      await this.createStagingTable(session, "schema_migrations_stage_v1");
+      await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
+    } else {
+      this.validateCurrentSchema(stage);
+      try {
+        await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
+      } catch (error) {
+        if (!this.isRecoverableStageMismatch(error)) throw error;
+        await session.executeRaw(`DROP TABLE ${this.quoteIdentifier("schema_migrations_stage_v1")}`);
+        await this.createStagingTable(session, "schema_migrations_stage_v1");
+        await this.copyCanonicalRows(session, "schema_migrations_stage_v1", expected);
+      }
+    }
+    await this.validateRowCount(session, "schema_migrations_stage_v1", expected.length);
+    await this.validateExactRows(session, "schema_migrations_stage_v1", expected);
+    await session.executeRaw(
+      `RENAME TABLE ${this.quoteIdentifier("schema_migrations")} TO ${this.quoteIdentifier("schema_migrations_backup_v1")}, ${this.quoteIdentifier("schema_migrations_stage_v1")} TO ${this.quoteIdentifier("schema_migrations")}`,
+    );
+    const finalMetadata = await session.getTableMetadata("schema_migrations");
+    if (finalMetadata === null) throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "schema_migrations table missing after MySQL atomic swap");
+    this.validateCurrentSchema(finalMetadata);
+    await this.validateExactRows(session, "schema_migrations", expected);
   }
 
-  private validateCurrentSchema(session: MigrationSession, metadata: TableMetadata): void {
-    // Validate it is a BASE TABLE (not VIEW)
+  private rejectNonTable(metadata: TableMetadata): void {
     if (metadata.kind !== "TABLE") {
-      throw new DomainError(
-        "CONTROL_SCHEMA_UPGRADE_FAILED",
-        `schema_migrations must be a BASE TABLE, not ${metadata.kind}`
-      );
-    }
-
-    // Validate exactly 11 columns in exact order
-    const expectedOrder = [
-      "id", "dialect", "checksum", "status", "executed_at", "duration_ms",
-      "dirty_reason", "lease_token", "manifest_version", "verification_manifest_hash", "manifest_json"
-    ];
-
-    if (metadata.columns.length !== expectedOrder.length) {
-      throw new DomainError(
-        "CONTROL_SCHEMA_UPGRADE_FAILED",
-        `schema_migrations has ${metadata.columns.length} columns, expected ${expectedOrder.length}`
-      );
-    }
-
-    for (let i = 0; i < expectedOrder.length; i++) {
-      if (metadata.columns[i].name !== expectedOrder[i]) {
-        throw new DomainError(
-          "CONTROL_SCHEMA_UPGRADE_FAILED",
-          `Column ${i} is named ${metadata.columns[i].name}, expected ${expectedOrder[i]}`
-        );
-      }
-    }
-
-    // Validate required columns have correct nullability
-    const nullabilitySpec: Record<string, boolean> = {
-      id: false,
-      dialect: false,
-      checksum: false,
-      status: false,
-      executed_at: false,
-      duration_ms: false,
-      dirty_reason: true,
-      lease_token: true,
-      manifest_version: true,
-      verification_manifest_hash: true,
-      manifest_json: true,
-    };
-
-    for (const col of metadata.columns) {
-      const expectedNullable = nullabilitySpec[col.name];
-
-      // Special case: if this is the PRIMARY KEY column (id), SQLite may or may not report it as NOT NULL
-      // in PRAGMA even though PRIMARY KEY implies NOT NULL. Accept either nullable or not-nullable for id.
-      if (col.name === "id" && col.primaryKey) {
-        // Accept either nullable=false (explicit NOT NULL) or nullable=true (implicit from PRIMARY KEY)
-        continue;
-      }
-
-      if (col.nullable !== expectedNullable) {
-        throw new DomainError(
-          "CONTROL_SCHEMA_UPGRADE_FAILED",
-          `Column ${col.name} nullable=${col.nullable}, expected ${expectedNullable}`
-        );
-      }
+      throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", `schema_migrations must be a BASE TABLE, not ${metadata.kind}`);
     }
   }
 
-  private detectLegacySchemaType(metadata: TableMetadata): string | null {
-    const columnSet = new Set(metadata.columns.map(c => c.name));
-    const columnCount = metadata.columns.length;
+  private isRecoverableStageMismatch(error: unknown): boolean {
+    return error instanceof DomainError && error.code === "CONTROL_SCHEMA_UPGRADE_FAILED";
+  }
 
-    // Gate0: EXACTLY 3 columns: logical_id, checksum, applied_at
-    if (columnCount === 3 && columnSet.has("logical_id") && columnSet.has("checksum") && columnSet.has("applied_at")) {
-      return "gate0";
+  private throwUnknownSchema(): never {
+    throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "schema_migrations table has unknown/hybrid/partial schema that cannot be safely upgraded; no mutation performed");
+  }
+
+  private quoteIdentifier(identifier: string): string {
+    if (!INTERNAL_CONTROL_IDENTIFIERS.test(identifier)) {
+      throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "Internal schema-upgrade identifier is not allowlisted");
     }
+    return this.dialect === "mysql" ? `\`${identifier}\`` : `"${identifier}"`;
+  }
 
-    // Dirty flag: EXACTLY 7 columns: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason
-    if (columnCount === 7 &&
-        columnSet.has("id") && columnSet.has("dialect") && columnSet.has("checksum") &&
-        columnSet.has("executed_at") && columnSet.has("duration_ms") &&
-        columnSet.has("dirty") && columnSet.has("dirty_reason")) {
-      return "dirty_flag";
+  private normalizeColumnType(rawType: string): string {
+    const type = rawType.trim().toLowerCase().replace(/\s+/g, " ");
+    if (this.dialect === "sqlite") return type;
+    if (this.dialect === "postgresql") return type === "int4" ? "integer" : type;
+    if (type === "int" || type === "integer" || type === "int(11)") return "int";
+    const varchar = type.match(/^varchar\s*\(\s*(\d+)\s*\)$/);
+    return varchar ? `varchar(${varchar[1]})` : type;
+  }
+
+  private columnSpecs(kind: "current" | LegacySchemaType): SchemaColumnSpec[] {
+    const text = this.dialect === "mysql" ? "varchar(255)" : "text";
+    const checksum = this.dialect === "mysql" ? "varchar(64)" : "text";
+    const executedAt = this.dialect === "mysql" ? "varchar(50)" : "text";
+    const lease = this.dialect === "mysql" ? "varchar(255)" : "text";
+    const manifestHash = this.dialect === "mysql" ? "varchar(64)" : "text";
+    const integer = this.dialect === "mysql" ? "int" : "integer";
+    const common: SchemaColumnSpec[] = [
+      { name: "id", type: text, nullable: false, primaryKey: true },
+      { name: "dialect", type: this.dialect === "mysql" ? "varchar(50)" : text, nullable: false, primaryKey: false },
+      { name: "checksum", type: checksum, nullable: false, primaryKey: false },
+    ];
+    if (kind === "current") return [
+      ...common,
+      { name: "status", type: this.dialect === "mysql" ? "varchar(20)" : text, nullable: false, primaryKey: false },
+      { name: "executed_at", type: executedAt, nullable: false, primaryKey: false },
+      { name: "duration_ms", type: integer, nullable: false, primaryKey: false },
+      { name: "dirty_reason", type: "text", nullable: true, primaryKey: false },
+      { name: "lease_token", type: lease, nullable: true, primaryKey: false },
+      { name: "manifest_version", type: integer, nullable: true, primaryKey: false },
+      { name: "verification_manifest_hash", type: manifestHash, nullable: true, primaryKey: false },
+      { name: "manifest_json", type: "text", nullable: true, primaryKey: false },
+    ];
+    if (kind === "gate0") return [
+      { name: "logical_id", type: text, nullable: false, primaryKey: true },
+      { name: "checksum", type: checksum, nullable: false, primaryKey: false },
+      { name: "applied_at", type: executedAt, nullable: false, primaryKey: false },
+    ];
+    const status = this.dialect === "mysql" ? "varchar(20)" : text;
+    const duration = { name: "duration_ms", type: integer, nullable: false, primaryKey: false };
+    if (kind === "dirty_flag") return [...common,
+      { name: "executed_at", type: executedAt, nullable: false, primaryKey: false }, duration,
+      { name: "dirty", type: integer, nullable: false, primaryKey: false },
+      { name: "dirty_reason", type: "text", nullable: true, primaryKey: false }];
+    if (kind === "strict_status_lease") return [...common,
+      { name: "status", type: status, nullable: false, primaryKey: false },
+      { name: "executed_at", type: executedAt, nullable: false, primaryKey: false }, duration,
+      { name: "lease_token", type: lease, nullable: true, primaryKey: false }];
+    return [...common,
+      { name: "status", type: status, nullable: true, primaryKey: false },
+      { name: "executed_at", type: executedAt, nullable: false, primaryKey: false }, duration];
+  }
+
+  private metadataMatches(metadata: TableMetadata, specs: SchemaColumnSpec[]): boolean {
+    if (metadata.kind !== "TABLE" || metadata.columns.length !== specs.length) return false;
+    return metadata.columns.every((column, index) => {
+      const expected = specs[index];
+      const defaultValue = column.default === undefined || column.default === null ? null : column.default.trim();
+      return column.name === expected.name && this.normalizeColumnType(column.type) === expected.type
+        && column.nullable === expected.nullable && column.primaryKey === expected.primaryKey && defaultValue === null;
+    });
+  }
+
+  private hasRequiredStatusCheck(metadata: TableMetadata): boolean {
+    return (metadata.checks ?? []).some((check) => {
+      const expression = check.toLowerCase().replace(/::[a-z0-9_]+/g, "").replace(/\s+/g, " ");
+      const values = [...expression.matchAll(/[\'\"](applying|applied|dirty)[\'\"]/g)].map((match) => match[1]);
+      return [...new Set(values)].sort().join(",") === "applied,applying,dirty"
+        && expression.includes("status") && (expression.includes(" in ") || expression.includes("any") || expression.includes("array"))
+        && !expression.includes(" or ") && !expression.includes(" not ") && !expression.includes("<>") && !expression.includes("!=");
+    });
+  }
+
+  private isCurrentSchema(metadata: TableMetadata): boolean {
+    return this.metadataMatches(metadata, this.columnSpecs("current")) && this.hasRequiredStatusCheck(metadata);
+  }
+
+  private validateCurrentSchema(metadata: TableMetadata): void {
+    if (!this.isCurrentSchema(metadata)) {
+      throw new DomainError(
+        "CONTROL_SCHEMA_UPGRADE_FAILED",
+        "schema_migrations current schema is malformed (kind, ordered columns, types, nullability, defaults, primary key, or status CHECK)",
+      );
     }
+  }
 
-    // Strict status + lease: EXACTLY 7 columns: id, dialect, checksum, status, executed_at, duration_ms, lease_token (no manifest, no dirty)
-    if (columnCount === 7 &&
-        columnSet.has("id") && columnSet.has("dialect") && columnSet.has("checksum") &&
-        columnSet.has("status") && columnSet.has("executed_at") && columnSet.has("duration_ms") &&
-        columnSet.has("lease_token") && !columnSet.has("manifest_version") && !columnSet.has("dirty")) {
-      return "strict_status_lease";
-    }
-
-    // Nullable status: EXACTLY 6 columns: id, dialect, checksum, status, executed_at, duration_ms (status may be NULL)
-    if (columnCount === 6 &&
-        columnSet.has("id") && columnSet.has("dialect") && columnSet.has("checksum") &&
-        columnSet.has("status") && columnSet.has("executed_at") && columnSet.has("duration_ms") &&
-        !columnSet.has("lease_token")) {
-      return "nullable_status";
-    }
-
-    // Unknown/hybrid/partial schema: fail closed, never upgrade
-    return null;
+  private detectLegacySchemaType(metadata: TableMetadata): LegacySchemaType | null {
+    const candidates: LegacySchemaType[] = ["gate0", "dirty_flag", "strict_status_lease", "nullable_status"];
+    return candidates.find((candidate) => this.metadataMatches(metadata, this.columnSpecs(candidate))) ?? null;
   }
 
   private async extractCanonicalRows(
     session: MigrationSession,
-    metadata: TableMetadata,
-    schemaType: string
+    tableName: string,
+    schemaType: LegacySchemaType,
   ): Promise<Array<Record<string, unknown>>> {
-    const rows = (await session.execute("SELECT * FROM schema_migrations")).rows;
+    const rows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier(tableName)}`)).rows;
 
     // Transform legacy rows to canonical format based on schema type
     return rows.map(row => {
@@ -594,14 +657,7 @@ export class MigrationService {
       // Helper to preserve string values exactly; never invent empty strings
       const asString = (value: unknown): string => {
         if (typeof value === "string" && value.length > 0) return value;
-        if (value === null || value === undefined || value === "") {
-          throw new DomainError(
-            "CONTROL_SCHEMA_UPGRADE_FAILED",
-            "Cannot upgrade row with missing required string field"
-          );
-        }
-        if (typeof value === "number" || typeof value === "bigint") return String(value);
-        return String(value);
+        throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "Cannot upgrade row with missing or non-string required field");
       };
 
       // Helper to preserve exact integer values as BigInt (prevent Number precision loss)
@@ -626,16 +682,23 @@ export class MigrationService {
               `Cannot upgrade row with non-integer numeric value ${value}`
             );
           }
+          if (!Number.isSafeInteger(value)) {
+            throw new DomainError(
+              "CONTROL_SCHEMA_UPGRADE_FAILED",
+              `Cannot upgrade unsafe integer value ${value}; refusing lossy coercion`,
+            );
+          }
           return BigInt(value);
         }
-        return BigInt(Number(value));
+        if (typeof value === "string" && /^-?(?:0|[1-9]\d*)$/.test(value)) return BigInt(value);
+        throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "Cannot upgrade non-integer numeric value without loss");
       };
 
       // Helper to handle nullable string fields (preserve null or exact value)
       const asNullableString = (value: unknown): string | null => {
         if (value === null || value === undefined) return null;
         if (typeof value === "string") return value;
-        return String(value);
+        throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "Cannot upgrade non-string nullable field without loss");
       };
 
       // Helper to validate exact enum values
@@ -759,11 +822,12 @@ export class MigrationService {
   }
 
   private async createStagingTable(session: MigrationSession, stagingTable: string): Promise<void> {
+    const quotedStagingTable = this.quoteIdentifier(stagingTable);
     let createSql: string;
 
     if (this.dialect === "sqlite") {
       createSql = `
-        CREATE TABLE ${stagingTable} (
+        CREATE TABLE ${quotedStagingTable} (
           id TEXT NOT NULL PRIMARY KEY,
           dialect TEXT NOT NULL,
           checksum TEXT NOT NULL,
@@ -779,7 +843,7 @@ export class MigrationService {
       `;
     } else if (this.dialect === "postgresql") {
       createSql = `
-        CREATE TABLE ${stagingTable} (
+        CREATE TABLE ${quotedStagingTable} (
           id TEXT NOT NULL PRIMARY KEY,
           dialect TEXT NOT NULL,
           checksum TEXT NOT NULL,
@@ -795,7 +859,7 @@ export class MigrationService {
       `;
     } else {
       createSql = `
-        CREATE TABLE ${stagingTable} (
+        CREATE TABLE ${quotedStagingTable} (
           id VARCHAR(255) NOT NULL PRIMARY KEY,
           dialect VARCHAR(50) NOT NULL,
           checksum VARCHAR(64) NOT NULL,
@@ -828,20 +892,19 @@ export class MigrationService {
     for (const row of rows) {
       builder.reset();
       const placeholders = colNames.map(() => builder.placeholder()).join(", ");
-      const sql = `INSERT INTO ${stagingTable} (${colNames.join(", ")}) VALUES (${placeholders})`;
+      const sql = `INSERT INTO ${this.quoteIdentifier(stagingTable)} (${colNames.join(", ")}) VALUES (${placeholders})`;
       const values = colNames.map(col => row[col]);
       await session.execute(sql, values);
     }
   }
 
   private async validateRowCount(session: MigrationSession, tableName: string, expectedCount: number): Promise<void> {
-    const result = (await session.execute(`SELECT COUNT(*) as count FROM ${tableName}`)).rows[0];
-    const actualCount = Number((result as any)?.count ?? 0);
-
-    if (actualCount !== expectedCount) {
+    const result = (await session.execute(`SELECT COUNT(*) as count FROM ${this.quoteIdentifier(tableName)}`)).rows[0];
+    const actualCount = this.exactInteger((result as any)?.count, "row count");
+    if (actualCount !== BigInt(expectedCount)) {
       throw new DomainError(
         "CONTROL_SCHEMA_UPGRADE_FAILED",
-        `Row count mismatch: expected ${expectedCount}, got ${actualCount}`
+        `Row count mismatch: expected ${expectedCount}, got ${actualCount.toString()}`
       );
     }
   }
@@ -851,7 +914,7 @@ export class MigrationService {
     tableName: string,
     expectedRows: Array<Record<string, unknown>>
   ): Promise<void> {
-    const actualRows = (await session.execute(`SELECT * FROM ${tableName}`)).rows;
+    const actualRows = (await session.execute(`SELECT * FROM ${this.quoteIdentifier(tableName)}`)).rows;
 
     if (actualRows.length !== expectedRows.length) {
       throw new DomainError(
@@ -860,9 +923,11 @@ export class MigrationService {
       );
     }
 
-    // Verify each row by id
-    const expectedById = new Map(expectedRows.map(r => [r.id as string, canonicalJson(r)]));
-    const actualById = new Map(actualRows.map(r => [r.id as string, canonicalJson(r)]));
+    const expectedById = new Map(expectedRows.map((row) => [row.id as string, canonicalJson(this.normalizeCanonicalRow(row))]));
+    const actualById = new Map(actualRows.map((row) => [row.id as string, canonicalJson(this.normalizeCanonicalRow(row))]));
+    if (expectedById.size !== expectedRows.length || actualById.size !== actualRows.length) {
+      throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", "Duplicate or missing migration IDs during exact row validation");
+    }
 
     for (const [actualId, actualJson] of actualById) {
       const expectedJson = expectedById.get(actualId);
@@ -881,6 +946,26 @@ export class MigrationService {
         );
       }
     }
+  }
+
+  private exactInteger(value: unknown, label: string): bigint {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+    if (typeof value === "string" && /^-?(?:0|[1-9]\d*)$/.test(value)) return BigInt(value);
+    throw new DomainError("CONTROL_SCHEMA_UPGRADE_FAILED", `Cannot compare ${label} without lossless integer normalization`);
+  }
+
+  private normalizeCanonicalRow(row: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = {};
+    for (const name of CURRENT_COLUMN_NAMES) {
+      const value = row[name];
+      if (name === "duration_ms" || name === "manifest_version") {
+        normalized[name] = value === null || value === undefined ? null : this.exactInteger(value, name);
+      } else {
+        normalized[name] = value;
+      }
+    }
+    return normalized;
   }
 
   /**

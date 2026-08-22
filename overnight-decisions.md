@@ -258,7 +258,7 @@ Keeping caller-supplied expected metadata without persisted provenance was rejec
 
 This is an interim recovery-correctness slice, not the operation barrier or backup capability. SQLite verified-backup integration and PostgreSQL/MySQL external-backup references remain required, along with maintenance-barrier integration, in later n68/n70 slices. Phase 1A must not be marked CLEAN from these probe results alone.
 
-## TENTATIVE - NOT OWNER-APPROVED: Legacy schema_migrations/control-schema upgrade (N80/N81) (2026-08-22)
+## TENTATIVE - NOT OWNER-APPROVED: Legacy schema_migrations/control-schema upgrade (N80/N81) (2026-08-22, repair in progress)
 
 ### Decision
 
@@ -266,14 +266,27 @@ Extend MigrationSession with pinned-connection table metadata API: `getTableMeta
 
 Public `upgradeControlSchema()` acquires `db.withMigrationLease` and calls private `upgradeControlSchemaOnSession(session)` helper. Migrate and recoverDirty call the upgrade helper inside their lease before ensureMigrationTableOnSession.
 
-Detect and upgrade legacy schema types:
+Detect and upgrade only exact, ordered, dialect-aware historical signatures:
 - **Gate0**: logical_id, checksum, applied_at → current 11-column schema
 - **Dirty flag**: id, dialect, checksum, executed_at, duration_ms, dirty, dirty_reason → preserve dirty state as DIRTY/APPLIED
-- **Nullable-status**: status column (preserve APPLIED/APPLYING/DIRTY; NULL → DIRTY + LEGACY_UNKNOWN_STATUS reason)
-- **Simple legacy**: id, version, dirty fallback
-- **Current 11-column**: validate schema structure and no-op
+- **Nullable-status**: preserve only APPLIED/APPLYING/DIRTY; NULL or unknown status fails closed
+- **Strict status + lease**: preserve status and lease_token exactly
+- **Current 11-column**: exact dialect-aware validation and no-op
 
-Data preservation: extract canonical rows with BigInt normalization (SQLite safeIntegers), create staging table with current schema, copy rows exactly, validate row counts before/after, validate exact rows via canonical JSON, SQLite/PostgreSQL drop original + atomic rename staging, MySQL atomic RENAME original→backup staging→original with optional backup cleanup.
+Simple `id/version/dirty` fallback is not a known historical signature and is
+rejected unchanged. A nullable or unknown status is never converted to APPLIED
+or silently invented DIRTY metadata. Current validation includes table kind,
+ordered names, normalized dialect-specific types, nullability, defaults, the
+single `id` primary key, and the required status CHECK.
+
+Data preservation: extract canonical rows with lossless integer normalization,
+reject unsafe JavaScript numbers before mutation, and compare driver integer
+representations as exact values. Gate0 logical_id/checksum/applied_at,
+timestamps, checksums, dirty state, lease, and manifest provenance are not
+invented or discarded. SQLite/PostgreSQL use pinned-session staged swaps;
+MySQL uses fixed-version stale-state validation/recovery and one atomic
+multi-table RENAME. The original MySQL table remains as a validated backup;
+history is never dropped.
 
 ### Reversibility
 
@@ -281,20 +294,22 @@ Schema detection logic can be rearranged; staging/backup naming scheme changed t
 
 ### Risks
 
-Legacy schema variability not yet encountered (Gate0, dirty flag, nullable-status, simple are candidates based on existing code and tests; unknown patterns fail closed as upgrade-not-attempted). Type coercion between legacy INTEGER columns and current schema (handled via BigInt for safeIntegers=true). Empty table upgrade is no-op; if future work requires structure-only upgrades, empty-table check can be removed. MySQL backup cleanup failure leaves recoverable state; operator manual cleanup required.
+Legacy schemas outside the exact committed signatures fail closed. PostgreSQL
+and MySQL still require live legacy probes where the environment permits; a
+fresh migrate gate is not legacy-upgrade proof.
 
 ### Rationale
 
 Operator upgrades existing databases from pre-current schema before running migrations. Lease ensures exclusive upgrade (no concurrent writes). Session pinning ensures all metadata reads, staging, swap, and validation occur on same connection (critical for transaction consistency). Staged upgrade with validation prevents silent data loss on type mismatches or copy failures. Dialect-specific swap strategy accounts for MySQL implicit DDL commits.
 
-### Test coverage (Phase 1A Repair Complete)
+### Test coverage (repair evidence; not a completion claim)
 
 Tests verified:
 - **tests/docs/n77-behavioral-repairs.test.ts**: Legacy dirty=1 → DIRTY status, row preservation, NULL manifest handling
 - **tests/persistence/schema-upgrade-behavioral.test.ts** (added 2026-08-22): 
-  - Each exact historical shape: Gate0, dirty-flag, nullable-status, simple-legacy, current 11-column
-  - Empty legacy table no-op
-  - Unknown schema fallback to simple_legacy
+  - Each exact historical shape: Gate0, dirty-flag, nullable-status, strict-lease, current 11-column
+  - Empty legacy table structure upgrade
+  - Unknown/partial/view/malformed-current rejection without mutation
   - Exact row equality including NULL values and large integer preservation (BigInt > 2^53)
   - Row count preservation across upgrade
   - Metadata error propagation
@@ -306,14 +321,21 @@ Tests verified:
 
 ### Known limitations
 
-- MySQL staging/backup naming uses randomUUID (reversible per OD decision; fixed names/versioning changeable for future optimization)
-- MySQL GET_LOCK interaction not tested in upgrade path (lease pattern assumes exclusive session; GET_LOCK verification remains optional)
-- MySQL preflight/retry/recovery state machine for crash combinations deferred to future (current implementation assumes DDL success; operator manual cleanup documented)
-- Schema detection assumes no unknown hybrid schemas (e.g., Gate0 with dirty flag columns together); first matching pattern wins
+- Fault-injection and exact before/after snapshot coverage remains a required
+  release check alongside live dialect probes.
 
 ### Open gates / Future Work
 
-- Deterministic versioned staging names (no UUID) — reversible; low priority per overnight-decisions reversibility section
-- MySQL crash state machine and idempotent retry for canonical/stage/backup combinations — deferred, documented for operator
+- Live PostgreSQL/MySQL legacy upgrade probes (transaction/lease and atomic rename behavior)
+- MySQL crash state machine retry probes for canonical/stage/backup combinations
 - Live integration of schema upgrade into operator runbooks (currently validated in test; operator verification pending)
 - Compatibility matrix updates for future schema changes (framework in place; change discovery via operator feedback)
+
+## TENTATIVE - NOT OWNER-APPROVED: PGlite as a future opt-in conformance spike (2026-08-22)
+
+V1 default remains SQLite. PGlite is not selected as a replacement and does
+not change the current dialect contract. A future, explicitly opt-in
+conformance spike may evaluate it only after multi-instance same-directory
+safety, upgrade dump/restore behavior, Bun single-binary asset packaging, and
+the unresolved MySQL branch are proven. This entry does not rely on or cite
+PGlite GitHub issue #704 as an advisory-lock bug; that claim is not established.

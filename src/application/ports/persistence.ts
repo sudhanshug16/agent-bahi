@@ -166,6 +166,8 @@ export interface TableMetadata {
   name: string;
   kind: "TABLE" | "VIEW";
   columns: ColumnMetadata[];
+  /** Raw CHECK constraint definitions, in catalog order. */
+  checks: string[];
 }
 
 /**

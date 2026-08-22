@@ -67,6 +67,15 @@ class SqliteMigrationSession implements MigrationSession {
 
   async getTableMetadata(tableName: string): Promise<TableMetadata | null> {
     this.checkActive();
+    const allowedMetadataTables = new Set([
+      "schema_migrations",
+      "schema_migrations_stage_v1",
+      "schema_migrations_backup_v1",
+    ]);
+    if (!allowedMetadataTables.has(tableName)) {
+      throw new DomainError("METADATA_IDENTIFIER_REJECTED", "SQLite metadata identifier is not allowlisted");
+    }
+    const quotedTableName = `"${tableName}"`;
     try {
       // Check if table or view exists
       const tableExists = this.db.prepare(
@@ -79,7 +88,7 @@ class SqliteMigrationSession implements MigrationSession {
 
       // Get column metadata via PRAGMA
       // Note: with safeIntegers=true, notnull and pk are returned as bigint
-      const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      const columns = this.db.prepare(`PRAGMA table_info(${quotedTableName})`).all() as Array<{
         cid: number | bigint;
         name: string;
         type: string;
@@ -88,24 +97,32 @@ class SqliteMigrationSession implements MigrationSession {
         pk: number | bigint;
       }>;
 
-      const columnMetadata: ColumnMetadata[] = columns.map(col => ({
-        name: col.name,
-        type: col.type,
-        nullable: BigInt(col.notnull) === BigInt(0),
-        default: col.dflt_value === null ? null : String(col.dflt_value),
-        primaryKey: BigInt(col.pk) > BigInt(0),
-      }));
+      const columnMetadata: ColumnMetadata[] = columns.map(col => {
+        const primaryKey = BigInt(col.pk) > BigInt(0);
+        return {
+          name: col.name,
+          type: col.type,
+          nullable: BigInt(col.notnull) === BigInt(0) && !primaryKey,
+          default: col.dflt_value === null ? null : String(col.dflt_value),
+          primaryKey,
+        };
+      });
+
+      const tableDefinition = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(tableName) as { sql?: string | null } | undefined;
+      const checks = [...(tableDefinition?.sql ?? "").matchAll(/CHECK\s*\(((?:[^()]|\([^)]*\))*)\)/gi)]
+        .map((match) => match[1].trim());
 
       return {
         name: tableName,
         kind,
         columns: columnMetadata,
+        checks,
       };
     } catch (error) {
-      // If table doesn't exist or can't be queried, return null
-      if (error instanceof Error && error.message.toLowerCase().includes("no such table")) {
-        return null;
-      }
+      // Absence was already established by sqlite_master. Any later failure is
+      // a real pinned-session metadata failure and must reach the upgrader.
       throw error;
     }
   }

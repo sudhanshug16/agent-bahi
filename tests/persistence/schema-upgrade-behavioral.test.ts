@@ -20,6 +20,74 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { DomainError } from "../../src/core/types.ts";
 
+async function createDirtyFlagLegacy(db: SqliteAdapter, id: string): Promise<void> {
+  await db.executeRaw(`
+    CREATE TABLE schema_migrations (
+      id TEXT PRIMARY KEY,
+      dialect TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      executed_at TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      dirty INTEGER NOT NULL,
+      dirty_reason TEXT
+    )
+  `);
+  await db.execute(
+    "INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, "sqlite", "checksum", "2026-08-22T10:00:00Z", 10, 0, null],
+  );
+}
+
+function injectUpgradeFault(db: SqliteAdapter, point: "copy" | "validate" | "swap"): void {
+  const originalLease = db.withMigrationLease.bind(db);
+  (db as any).withMigrationLease = (callback: (session: any) => Promise<unknown>, timeoutMs?: number) =>
+    originalLease(async (session: any) => {
+      const originalExecute = session.execute.bind(session);
+      const originalExecuteRaw = session.executeRaw.bind(session);
+      session.execute = async (sql: string, params?: unknown[]) => {
+        const shouldFail = (point === "copy" && sql.includes("INSERT INTO \"schema_migrations_stage_"))
+          || (point === "validate" && sql.includes("SELECT COUNT(*) as count FROM \"schema_migrations_stage_"));
+        if (shouldFail) {
+          throw new Error(`injected ${point} failure`);
+        }
+        return originalExecute(sql, params);
+      };
+      session.executeRaw = async (sql: string) => {
+        if (point === "swap" && sql.includes("ALTER TABLE \"schema_migrations_stage_")) {
+          throw new Error("injected swap failure");
+        }
+        return originalExecuteRaw(sql);
+      };
+      return callback(session);
+    }, timeoutMs);
+}
+
+function injectUnsafeInteger(db: SqliteAdapter): void {
+  const originalLease = db.withMigrationLease.bind(db);
+  (db as any).withMigrationLease = (callback: (session: any) => Promise<unknown>, timeoutMs?: number) =>
+    originalLease(async (session: any) => {
+      const originalExecute = session.execute.bind(session);
+      session.execute = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("SELECT * FROM \"schema_migrations\"")) {
+          return {
+            rows: [{
+              id: "unsafe",
+              dialect: "sqlite",
+              checksum: "checksum",
+              executed_at: "2026-08-22T10:00:00Z",
+              duration_ms: Number.MAX_SAFE_INTEGER + 1,
+              dirty: 0,
+              dirty_reason: null,
+            }],
+            rowCount: 1,
+          };
+        }
+        return originalExecute(sql, params);
+      };
+      return callback(session);
+    }, timeoutMs);
+}
+
 describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81)", () => {
   describe("Each exact historical shape", () => {
     describe("Gate0 shape: logical_id, checksum, applied_at (exactly 3 columns)", () => {
@@ -358,6 +426,68 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81)", () => {
     });
   });
 
+  describe("Malformed current schemas", () => {
+    it("rejects a malformed current schema without changing its exact snapshot", async () => {
+      const dbPath = `/tmp/schema-upgrade-malformed-current-${randomUUID()}.sqlite`;
+      const db = new SqliteAdapter({ path: dbPath });
+      await db.executeRaw(`
+        CREATE TABLE schema_migrations (
+          id TEXT PRIMARY KEY,
+          dialect TEXT NOT NULL,
+          checksum TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('APPLYING', 'APPLIED', 'DIRTY')),
+          executed_at TEXT NOT NULL,
+          duration_ms TEXT NOT NULL,
+          dirty_reason TEXT,
+          lease_token TEXT,
+          manifest_version INTEGER,
+          verification_manifest_hash TEXT,
+          manifest_json TEXT
+        )
+      `);
+      await db.execute(
+        "INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ["malformed", "sqlite", "checksum", "APPLIED", "2026-08-22T10:00:00Z", "17", null, null, null, null, null],
+      );
+      const beforeSchema = await db.query("PRAGMA table_info(\"schema_migrations\")");
+      const beforeRows = await db.query("SELECT * FROM schema_migrations");
+      await expect(new MigrationService(db, "sqlite").upgradeControlSchema()).rejects.toBeInstanceOf(DomainError);
+      expect(await db.query("PRAGMA table_info(\"schema_migrations\")")).toEqual(beforeSchema);
+      expect(await db.query("SELECT * FROM schema_migrations")).toEqual(beforeRows);
+      await db.close();
+    });
+  });
+
+  describe("Injected copy/validate/swap failures", () => {
+    for (const point of ["copy", "validate", "swap"] as const) {
+      it(`leaves the legacy schema and rows unchanged when ${point} fails`, async () => {
+        const dbPath = `/tmp/schema-upgrade-fault-${point}-${randomUUID()}.sqlite`;
+        const db = new SqliteAdapter({ path: dbPath });
+        await createDirtyFlagLegacy(db, `fault-${point}`);
+        const beforeSchema = await db.query("PRAGMA table_info(\"schema_migrations\")");
+        const beforeRows = await db.query("SELECT * FROM schema_migrations");
+        injectUpgradeFault(db, point);
+        await expect(new MigrationService(db, "sqlite").upgradeControlSchema()).rejects.toThrow();
+        expect(await db.query("PRAGMA table_info(\"schema_migrations\")")).toEqual(beforeSchema);
+        expect(await db.query("SELECT * FROM schema_migrations")).toEqual(beforeRows);
+        await db.close();
+      });
+    }
+
+    it("rejects an unsafe driver number before staging or mutation", async () => {
+      const dbPath = `/tmp/schema-upgrade-fault-unsafe-${randomUUID()}.sqlite`;
+      const db = new SqliteAdapter({ path: dbPath });
+      await createDirtyFlagLegacy(db, "unsafe");
+      const beforeSchema = await db.query("PRAGMA table_info(\"schema_migrations\")");
+      const beforeRows = await db.query("SELECT * FROM schema_migrations");
+      injectUnsafeInteger(db);
+      await expect(new MigrationService(db, "sqlite").upgradeControlSchema()).rejects.toThrow("unsafe integer");
+      expect(await db.query("PRAGMA table_info(\"schema_migrations\")")).toEqual(beforeSchema);
+      expect(await db.query("SELECT * FROM schema_migrations")).toEqual(beforeRows);
+      await db.close();
+    });
+  });
+
   describe("Empty legacy table", () => {
     it("should upgrade schema structure even on empty legacy table", async () => {
       const dbPath = `/tmp/schema-upgrade-empty-${randomUUID()}.sqlite`;
@@ -671,15 +801,10 @@ describe("Schema Upgrade Behavioral Tests (Phase 1A N80/N81)", () => {
       // Close database to simulate connection error
       await db.close();
 
-      // Attempt upgrade on closed database
+      // Attempt upgrade on closed database; the pinned-session metadata error
+      // must be observable rather than treated as an absent table.
       const migrationService = new MigrationService(db, "sqlite");
-      try {
-        await migrationService.upgradeControlSchema().catch(() => {
-          // Expected to fail
-        });
-      } catch {
-        // Expected
-      }
+      await expect(migrationService.upgradeControlSchema()).rejects.toThrow();
     });
   });
 
