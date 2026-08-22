@@ -40,6 +40,37 @@ async function setupTestDb(): Promise<{ db: Database; path: string }> {
   return { db: database, path: testDbPath };
 }
 
+function createOuterDatabaseReadSpy(database: Database): { database: Database; outerReads: string[] } {
+  const outerReads: string[] = [];
+  const readMethods = new Set([
+    "query",
+    "querySingle",
+    "execute",
+    "executeSingle",
+    "executeRaw",
+    // These names are not Database members today, but keep the spy explicit
+    // about the forbidden outer inspection boundary.
+    "getTableMetadata",
+    "inspect",
+  ]);
+
+  const wrapped = new Proxy(database, {
+    get(target, property) {
+      if (typeof property === "string" && readMethods.has(property)) {
+        return (..._args: unknown[]) => {
+          outerReads.push(property);
+          throw new Error(`Unexpected outer database read: ${property}`);
+        };
+      }
+
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+
+  return { database: wrapped, outerReads };
+}
+
 async function cleanupTestDb(): Promise<void> {
   if (db) {
     await db.close();
@@ -612,6 +643,61 @@ describe("Database Control Foundation - Corrected 0002", () => {
       expect(record2.createdAt).toBe(record1.createdAt);
       expect(record2.updatedAt).toBe(record1.updatedAt);
       expect(record2.lastMigrationChecksum).toBe(record1.lastMigrationChecksum);
+    });
+
+    it("should initialize a new row using only the migration session", async () => {
+      const outer = createOuterDatabaseReadSpy(db!);
+      const sessionService = new DatabaseControlService(outer.database, "sqlite");
+      const params = {
+        cliVersion: "0.1.0",
+        buildId: "session-only-new-row",
+        now: new Date("2025-08-22T12:00:00.000Z"),
+      };
+
+      let record: any;
+      await outer.database.withMigrationLease(async (session: MigrationSession) => {
+        record = await sessionService.initialize(params, session);
+      });
+
+      expect(outer.outerReads).toEqual([]);
+      expect(record).toEqual(expect.objectContaining({
+        lastWriterCliVersion: params.cliVersion,
+        lastWriterBuildId: params.buildId,
+        lastWriterAt: params.now.toISOString(),
+        createdAt: params.now.toISOString(),
+        updatedAt: params.now.toISOString(),
+      }));
+    });
+
+    it("should initialize an existing row idempotently using only the migration session", async () => {
+      const firstParams = {
+        cliVersion: "0.1.0",
+        buildId: "original-audit-fields",
+        now: new Date("2025-08-22T12:00:00.000Z"),
+      };
+      let firstRecord: any;
+      await db!.withMigrationLease(async (session: MigrationSession) => {
+        firstRecord = await dbControlService.initialize(firstParams, session);
+      });
+
+      const outer = createOuterDatabaseReadSpy(db!);
+      const sessionService = new DatabaseControlService(outer.database, "sqlite");
+      let secondRecord: any;
+      await outer.database.withMigrationLease(async (session: MigrationSession) => {
+        secondRecord = await sessionService.initialize({
+          cliVersion: "0.2.0",
+          buildId: "must-not-overwrite",
+          now: new Date("2025-08-22T13:00:00.000Z"),
+        }, session);
+      });
+
+      expect(outer.outerReads).toEqual([]);
+      expect(secondRecord).toEqual(firstRecord);
+      expect(secondRecord.lastWriterCliVersion).toBe(firstParams.cliVersion);
+      expect(secondRecord.lastWriterBuildId).toBe(firstParams.buildId);
+      expect(secondRecord.lastWriterAt).toBe(firstParams.now.toISOString());
+      expect(secondRecord.createdAt).toBe(firstParams.now.toISOString());
+      expect(secondRecord.updatedAt).toBe(firstParams.now.toISOString());
     });
   });
 

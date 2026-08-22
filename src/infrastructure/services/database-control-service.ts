@@ -282,10 +282,10 @@ export class DatabaseControlService {
         );
       }
 
-      // Return existing row without modification
-      const inspection = await this.inspect();
-      if (inspection.status === "AVAILABLE" && inspection.record) {
-        return inspection.record;
+      // Return existing row without modification, using only the pinned session.
+      const existingRecord = await this.readDatabaseControlRecord(session);
+      if (existingRecord) {
+        return existingRecord;
       }
 
       throw new DomainError(
@@ -326,8 +326,27 @@ export class DatabaseControlService {
       null, // recovery_reason
     ]);
 
-    // Read back the inserted row using the same session
-    const readbackRow = await session.executeSingle(
+    // Read back the inserted row using the same session.
+    const readbackRecord = await this.readDatabaseControlRecord(session);
+    if (readbackRecord) {
+      return readbackRecord;
+    }
+
+    throw new DomainError(
+      "DATABASE_CONTROL_INSERT_FAILED",
+      "database_control row could not be read after initialization",
+    );
+  }
+
+  /**
+   * Read and validate the complete database_control row through the pinned
+   * migration session. Invalid rows are reported to the caller as undefined so
+   * the caller can preserve its operation-specific failure code.
+   */
+  private async readDatabaseControlRecord(
+    session: MigrationSession,
+  ): Promise<DatabaseControlRecord | undefined> {
+    const row = await session.executeSingle(
       `SELECT id, schema_version, data_format_version, reader_compatibility_min,
               reader_compatibility_max, required_writer_protocol, state, revision,
               generation, last_migration_id, last_migration_checksum,
@@ -336,23 +355,8 @@ export class DatabaseControlService {
        FROM database_control WHERE id = 1`,
     );
 
-    if (readbackRow) {
-      const validation = this.validateAndParseRecord(readbackRow);
-      if (validation.record) {
-        return validation.record;
-      }
-      if (validation.error) {
-        throw new DomainError(
-          "DATABASE_CONTROL_INSERT_FAILED",
-          "database_control row could not be read after initialization",
-        );
-      }
-    }
-
-    throw new DomainError(
-      "DATABASE_CONTROL_INSERT_FAILED",
-      "database_control row could not be read after initialization",
-    );
+    if (!row) return undefined;
+    return this.validateAndParseRecord(row).record;
   }
 
   /**
