@@ -421,11 +421,12 @@ export async function startDatabaseContainer(
     const healthCommand =
       type === "postgres"
         ? `pg_isready -U ${creds.username} -d testdb`
-        : `mysqladmin ping -h 127.0.0.1 -u ${creds.username} -p${creds.password} --silent`;
+        : buildMySqlHealthCommand(creds.username, creds.password);
 
     // Exact-name cleanup is safe even if docker creates the container before
     // reporting a startup failure.
     containerStarted = true;
+    const mysqlArgs = type === "mysql" ? ["--log-bin-trust-function-creators=1"] : [];
     const runResult = runDocker(
       [
         "run",
@@ -453,6 +454,7 @@ export async function startDatabaseContainer(
         "--health-retries",
         "10",
         image,
+        ...mysqlArgs,
       ],
       secrets,
       `start ${type} test container`,
@@ -527,8 +529,8 @@ export function startMySQLContainer(_uniqueSuffix: string): Promise<{ config: Da
   return startDatabaseContainer("mysql");
 }
 
-export function createBunSqlClient(config: DatabaseConfig): SQL {
-  return new SQL({
+export function buildBunSqlConnectionOptions(config: DatabaseConfig): Record<string, unknown> {
+  const baseConfig: Record<string, unknown> = {
     adapter: config.type,
     hostname: config.host,
     port: config.port,
@@ -537,7 +539,27 @@ export function createBunSqlClient(config: DatabaseConfig): SQL {
     password: config.password,
     bigint: true,
     connectionTimeout: 10,
-  });
+  };
+
+  // Enable TLS for MySQL only; PostgreSQL behavior remains unchanged
+  if (config.type === "mysql") {
+    baseConfig.ssl = true;
+  }
+
+  return baseConfig;
+}
+
+export function buildMySqlHealthCommand(username: string, password: string): string {
+  // Use authenticated database-selecting SELECT 1 probe with TLS required (production-representative).
+  // mysql -h 127.0.0.1 -P 3306 --protocol=TCP -u {user} -p{password} -D testdb -Nse "SELECT 1" --ssl-mode=REQUIRED
+  // -N: no header row; -s: silent (no standard table output); -e: execute query and exit
+  // TLS required enforces encrypted auth (caching_sha2_password); wrong credentials fail at TLS handshake.
+  return `mysql -h 127.0.0.1 --protocol=TCP -u ${username} -p${password} -D testdb -Nse "SELECT 1" --ssl-mode=REQUIRED`;
+}
+
+export function createBunSqlClient(config: DatabaseConfig): SQL {
+  const options = buildBunSqlConnectionOptions(config);
+  return new SQL(options as any);
 }
 
 export function sha256MigrationText(text: string): string {

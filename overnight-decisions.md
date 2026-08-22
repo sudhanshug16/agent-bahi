@@ -140,6 +140,15 @@ The earlier `docker exec` and lifecycle references in this decision are historic
 - **Reversibility**: Remove the preflight helper and focused tests without changing digest pins, migration SQL, proof IDs, cleanup scope, or database semantics.
 - **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING; LIVE DIALECT STATUS MUST MATCH THE COMMITTED SUMMARY`.
 
+## OD-013 — MySQL TLS enablement and authenticated health readiness
+
+- **Date**: 2026-08-22
+- **Decision**: Enable TLS (`ssl: true`) in the Bun SQL MySQL client configuration only; PostgreSQL configuration remains unchanged. Replace unauthenticated `mysqladmin ping` Docker health check with an authenticated, database-selecting `SELECT 1` probe via `buildMySqlHealthCommand()`. Health check command: `mysql -h 127.0.0.1 --protocol=TCP -u {user} -p{password} -D testdb -Nse "SELECT 1" --ssl-mode=REQUIRED` (production-representative; caching_sha2_password enforces TLS). Wrong credentials fail TLS authentication and report unhealthy. Configure ephemeral MySQL container with `--log-bin-trust-function-creators=1` to allow trigger creation with binary logging (generated test user requires no privilege escalation). Production MySQL administrators must satisfy this prerequisite; application code does not mutate global server settings.
+- **Alternatives**: Use unauthenticated `mysqladmin ping` (allows wrong credentials to report healthy); enable TLS globally for both dialects; defer TLS configuration to later phase; grant SUPER privilege to test user.
+- **Evidence**: `buildBunSqlConnectionOptions()` adds `ssl: true` only for MySQL adapter (verified by `tests/gate0/tls-and-auth.test.ts` line 18). `buildMySqlHealthCommand()` returns `mysql ... -Nse "SELECT 1" --ssl-mode=REQUIRED` (verified by tests lines 44–88). `startDatabaseContainer()` line ~430 passes `--log-bin-trust-function-creators=1` to MySQL. Live negative tests in `tests/gate0/mysql-tls-authentication.test.ts` throw on wrong password/username (not skipped); live positive test verifies correct credentials via Bun SQL with TLS enabled.
+- **Reversibility**: Remove `ssl: true` conditional and replace health command with any authenticated command (e.g., `mysqladmin status --ssl-mode=REQUIRED` or different SELECT probe) without affecting migrations or dialect semantics. TLS is isolated to connection setup; health check format does not alter application behavior. Reversibility must maintain authentication (not downgrade to unauthenticated probes).
+- **Status**: `AGENT-RECOMMENDED / OWNER REVIEW PENDING; LIVE MYSQL SEMANTIC MATRIX WITH TRIGGER SUPPORT REQUIRED BEFORE MERGE`.
+
 ---
 
 **Blocking conditions for PostgreSQL/MySQL proofs:**
