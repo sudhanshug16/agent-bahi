@@ -7,6 +7,14 @@ import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.t
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 
 /**
+ * Nested session detection: track activeSession per runner instance to catch
+ * reentrant attempts from the same async context. This distinguishes genuine
+ * overlapping sessions (which are allowed as long as they use different connections)
+ * from reentrant attempts within the same callback.
+ */
+const nestedSessionStore = new WeakMap<SqliteBusinessSessionRunner, boolean>();
+
+/**
  * SQLite implementation of BusinessSessionRunner.
  *
  * V1 Semantics:
@@ -24,8 +32,6 @@ import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
  * contend at the native level; callback is not invoked if lock acquisition fails.
  */
 export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
-  private migrationLockedError = false;
-
   constructor(
     private dbPath: string,
     private controlService: DatabaseControlService,
@@ -39,11 +45,29 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
     mode: BusinessSessionMode,
     callback: (session: BusinessSession) => Promise<T>,
   ): Promise<T> {
-    const connection = this.openConnection();
+    // Check for nested session in same async context
+    if (nestedSessionStore.get(this)) {
+      throw new DomainError(
+        "BUSINESS_SESSION_NESTED",
+        "Nested business session detected in same async context; separate concurrent sessions are allowed, but reentrant calls are not"
+      );
+    }
+
+    nestedSessionStore.set(this, true);
+    let connection: BunDatabase | null = null;
     let session: SqliteBusinessSession | null = null;
+    let primaryError: Error | null = null;
+    let closeError: Error | null = null;
 
     try {
-      // Step 1: BEGIN IMMEDIATE (serializes all business sessions and migrations)
+      // Step 1: Open fresh connection
+      try {
+        connection = this.openConnection();
+      } catch (error) {
+        throw error;
+      }
+
+      // Step 2: BEGIN IMMEDIATE (serializes all business sessions and migrations)
       try {
         connection.exec("BEGIN IMMEDIATE");
       } catch (error) {
@@ -63,7 +87,7 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
         throw domainError;
       }
 
-      // Step 2: Validate database_control within the pinned transaction
+      // Step 3: Validate database_control within the pinned transaction
       const inspection = await this.controlService.inspect();
 
       if (inspection.status !== "AVAILABLE") {
@@ -82,7 +106,7 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
         );
       }
 
-      // Step 3: Validate protocol compatibility based on mode
+      // Step 4: Validate protocol compatibility based on mode
       if (mode === "read") {
         if (
           this.readerProtocol < record.readerCompatibilityMin ||
@@ -102,42 +126,61 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
         }
       }
 
-      // Step 4: Create session and invoke callback
+      // Step 5: Create session and invoke callback
       session = new SqliteBusinessSession(connection, mode, record);
 
-      const result = await callback(session);
-
-      // Step 5: Commit on success
       try {
-        connection.exec("COMMIT");
+        const result = await callback(session);
+
+        // Step 6: Commit on success
+        try {
+          connection.exec("COMMIT");
+        } catch (error) {
+          primaryError = error instanceof Error ? error : new Error(String(error));
+          const classified = classifySqliteError(error, "COMMIT");
+          throw toDomainError(classified);
+        }
+
+        return result;
       } catch (error) {
-        const classified = classifySqliteError(error, "COMMIT");
-        throw toDomainError(classified);
+        primaryError = error instanceof Error ? error : new Error(String(error));
+        throw error;
       }
-
-      return result;
     } catch (error) {
-      // Step 5b: Rollback on error
-      try {
-        connection.exec("ROLLBACK");
-      } catch (rollbackError) {
-        // Log but don't mask the original error
-        console.error("ROLLBACK failed:", rollbackError);
+      // Step 6b: Rollback on error
+      if (connection) {
+        try {
+          connection.exec("ROLLBACK");
+        } catch (rollbackError) {
+          // Preserve rollback error but don't mask the primary
+          if (!primaryError) {
+            primaryError = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+          }
+        }
       }
 
       throw error;
     } finally {
-      // Step 6: Mark session inactive and close connection
+      // Step 7: Mark session inactive and close connection
       if (session) {
         session.markInactive();
+        session = null;
       }
 
-      try {
-        connection.close();
-      } catch (closeError) {
-        // Log but don't mask prior errors
-        console.error("Connection close failed:", closeError);
+      if (connection) {
+        try {
+          connection.close();
+        } catch (error) {
+          closeError = error instanceof Error ? error : new Error(String(error));
+          // If there's a primary error, don't mask it; otherwise report close failure
+          if (!primaryError && closeError) {
+            throw closeError;
+          }
+        }
+        connection = null;
       }
+
+      nestedSessionStore.delete(this);
     }
   }
 

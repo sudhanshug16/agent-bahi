@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
-import type { Database } from "../../src/application/ports/persistence.ts";
+import type { Database, BusinessSessionRunner } from "../../src/application/ports/persistence.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
-import { SqliteTenantRepository } from "../../src/infrastructure/repositories/tenant-repository.ts";
-import { SqliteBookSetRepository } from "../../src/infrastructure/repositories/book-set-repository.ts";
+import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
@@ -11,17 +10,17 @@ import { IdempotencyConflictError, DomainError } from "../../src/core/types.ts";
 
 describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
   let db: Database;
+  let sessionRunner: BusinessSessionRunner;
   let tenantService: TenantService;
   let dbPath: string;
 
   beforeEach(async () => {
     dbPath = `/tmp/agent-bahi-test-idempotency-${randomUUID()}.sqlite`;
     db = new SqliteAdapter({ path: dbPath });
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
 
-    const tenantRepo = new SqliteTenantRepository(db);
-    const bookSetRepo = new SqliteBookSetRepository(db);
     const migrationService = new MigrationService(db, "sqlite");
-    tenantService = new TenantService(db, tenantRepo, bookSetRepo);
+    tenantService = new TenantService(sessionRunner);
 
     // Initialize database schema
     await migrationService.migrate([

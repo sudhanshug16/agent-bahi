@@ -1,38 +1,38 @@
 /**
  * Phase 1A Defect Tests - Negative tests that expose schema/implementation gaps
- * 
+ *
  * These tests MUST fail with current implementation to prove defects exist.
  * Each defect maps to one requirement from the task spec.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
-import type { Database } from "../../src/application/ports/persistence.ts";
+import type { Database, BusinessSessionRunner } from "../../src/application/ports/persistence.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
-import { SqliteTenantRepository } from "../../src/infrastructure/repositories/tenant-repository.ts";
-import { SqliteBookSetRepository } from "../../src/infrastructure/repositories/book-set-repository.ts";
-import { SqliteAccountRepository } from "../../src/infrastructure/repositories/account-repository.ts";
+import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
+import { BookSetService } from "../../src/application/services/book-set-service.ts";
+import { AccountService } from "../../src/application/services/account-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp, DirtyMigrationError } from "../../src/core/types.ts";
 
 describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
   let db: Database;
-  let tenantRepo: SqliteTenantRepository;
-  let bookSetRepo: SqliteBookSetRepository;
-  let accountRepo: SqliteAccountRepository;
+  let sessionRunner: BusinessSessionRunner;
   let migrationService: MigrationService;
   let tenantService: TenantService;
+  let bookSetService: BookSetService;
+  let accountService: AccountService;
 
   beforeEach(async () => {
     const dbPath = `/tmp/defect-test-${randomUUID()}.sqlite`;
     db = new SqliteAdapter({ path: dbPath });
-    tenantRepo = new SqliteTenantRepository(db);
-    bookSetRepo = new SqliteBookSetRepository(db);
-    accountRepo = new SqliteAccountRepository(db);
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
     migrationService = new MigrationService(db, "sqlite");
-    tenantService = new TenantService(db, tenantRepo, bookSetRepo);
+    tenantService = new TenantService(sessionRunner);
+    bookSetService = new BookSetService(sessionRunner);
+    accountService = new AccountService(sessionRunner);
 
     await migrationService.migrate([
       { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
@@ -51,7 +51,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       // DEFECT: This should fail because account.tenant_id=t1 but account.book_set_id=bs2 (which belongs to t2)
       // The FK on book_sets(id) doesn't check the tenant_id matches
       try {
-        await accountRepo.create({
+        await accountService.create({
           id: brandAccountId(randomUUID()),
           tenantId: t1.id,
           bookSetId: bs2.id,  // WRONG: bs2 belongs to t2
@@ -94,7 +94,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       const { tenant } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "TestCorp");
 
       try {
-        await bookSetRepo.create({
+        await bookSetService.create({
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "PERSONAL",  // WRONG: COMPANY tenant can only have COMPANY BookSet
@@ -114,7 +114,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       const { tenant } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "TestCorp");
 
       try {
-        await bookSetRepo.create({
+        await bookSetService.create({
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "PROPRIETORSHIP",  // WRONG: COMPANY can only have COMPANY
@@ -135,7 +135,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       const { tenant, defaultBookSet } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Test");
 
       const acct1Id = brandAccountId(randomUUID());
-      await accountRepo.create({
+      await accountService.create({
         id: acct1Id,
         tenantId: tenant.id,
         bookSetId: defaultBookSet.id,
@@ -147,11 +147,11 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
       });
 
       // Archive the account (mark as deleted but keep the row)
-      await accountRepo.archive(acct1Id, tenant.id, defaultBookSet.id);
+      await accountService.archive(acct1Id, tenant.id, defaultBookSet.id);
 
       // Code 1000 should still be blocked from reuse (even though account is archived)
       try {
-        await accountRepo.create({
+        await accountService.create({
           id: brandAccountId(randomUUID()),
           tenantId: tenant.id,
           bookSetId: defaultBookSet.id,
@@ -231,7 +231,7 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
           [bs2.id, t1.id]
         );
         // If we get here, composite FK failed
-        const updated = await tenantRepo.getById(t1.id);
+        const updated = await tenantService.getTenant(t1.id);
         if (updated.defaultBookSetId === bs2.id) {
           throw new Error("DEFECT: default_book_set_id not validated for tenant ownership");
         }

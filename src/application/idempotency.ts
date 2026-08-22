@@ -1,4 +1,5 @@
 import type { BusinessSession } from "./ports/persistence.ts";
+import { randomUUID } from "crypto";
 
 export class IdempotencyConflictError extends Error {
   readonly code = "IDEMPOTENCY_CONFLICT";
@@ -23,6 +24,9 @@ export type IdempotencyRecord = {
  * On conflict, checks if hash matches; if so, returns cached result.
  * If hash mismatch, throws IdempotencyConflictError.
  * All operations are atomic within the session transaction.
+ *
+ * Populates all required production columns: id, request_hash, result_json,
+ * result_hash, and created_at.
  */
 export async function getOrCreateIdempotencyRecord(
   session: BusinessSession,
@@ -48,10 +52,12 @@ export async function getOrCreateIdempotencyRecord(
     throw new IdempotencyConflictError();
   }
 
-  // Insert new record (will fail with constraint if concurrent insert by another session)
+  // Insert new record with all required production columns
+  const now = new Date().toISOString();
+  const id = randomUUID();
   await session.execute(
-    "INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash) VALUES (?, ?, ?, ?, ?)",
-    [tenantId, requestId, requestHash, resultJson, resultHash],
+    "INSERT INTO idempotency_records (id, tenant_id, request_id, request_hash, result_json, result_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, tenantId, requestId, requestHash, resultJson, resultHash, now],
   );
 
   return {

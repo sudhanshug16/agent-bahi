@@ -1,25 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
-import type { Database } from "../../src/application/ports/persistence.ts";
-import type { TenantRepository, BookSetRepository, AccountRepository } from "../../src/application/ports/repositories.ts";
+import type { Database, BusinessSessionRunner } from "../../src/application/ports/persistence.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
-import { SqliteTenantRepository } from "../../src/infrastructure/repositories/tenant-repository.ts";
-import { SqliteBookSetRepository } from "../../src/infrastructure/repositories/book-set-repository.ts";
-import { SqliteAccountRepository } from "../../src/infrastructure/repositories/account-repository.ts";
+import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
+import { BookSetService } from "../../src/application/services/book-set-service.ts";
+import { AccountService } from "../../src/application/services/account-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { brandTenantId, brandBookSetId, brandAccountId, currentTimestamp } from "../../src/core/types.ts";
 
 describe("Phase 1A: Production Persistence Foundation", () => {
   let db: Database;
-  let tenantRepo: TenantRepository;
-  let bookSetRepo: BookSetRepository;
-  let accountRepo: AccountRepository;
+  let sessionRunner: BusinessSessionRunner;
   let migrationService: MigrationService;
   let compatibilityService: CompatibilityService;
   let tenantService: TenantService;
+  let bookSetService: BookSetService;
+  let accountService: AccountService;
   let dbPath: string;
 
   beforeEach(async () => {
@@ -27,14 +26,12 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     dbPath = `/tmp/agent-bahi-test-${randomUUID()}.sqlite`;
 
     db = new SqliteAdapter({ path: dbPath });
-    // TODO: phase1a tests need refactoring to use BusinessSessionRunner architecture
-    // For now, skip repository instantiation - they expect BusinessSession, not Database
-    // tenantRepo = new SqliteTenantRepository(db);
-    // bookSetRepo = new SqliteBookSetRepository(db);
-    // accountRepo = new SqliteAccountRepository(db);
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
     migrationService = new MigrationService(db, "sqlite");
     compatibilityService = new CompatibilityService(db, "sqlite");
-    // tenantService = new TenantService(sessionRunner);
+    tenantService = new TenantService(sessionRunner);
+    bookSetService = new BookSetService(sessionRunner);
+    accountService = new AccountService(sessionRunner);
 
     // Initialize database schema
     await migrationService.migrate([
@@ -149,13 +146,13 @@ describe("Phase 1A: Production Persistence Foundation", () => {
   describe("BookSet Cardinality and Isolation", () => {
     it("should enforce one COMPANY BookSet per COMPANY tenant", async () => {
       const { tenant } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Test Corp");
-      const defaultBookSet = await bookSetRepo.getDefault(tenant.id);
+      const defaultBookSet = await bookSetService.getDefault(tenant.id);
 
       expect(defaultBookSet.kind).toBe("COMPANY");
 
       // Try to create another COMPANY BookSet (should fail due to UNIQUE constraint)
       try {
-        await bookSetRepo.create({
+        await bookSetService.create({
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "COMPANY",
@@ -171,13 +168,13 @@ describe("Phase 1A: Production Persistence Foundation", () => {
 
     it("should enforce one PERSONAL BookSet per INDIVIDUAL tenant", async () => {
       const { tenant } = await tenantService.createTenantWithDefaultBookSet("INDIVIDUAL", "John Doe");
-      const defaultBookSet = await bookSetRepo.getDefault(tenant.id);
+      const defaultBookSet = await bookSetService.getDefault(tenant.id);
 
       expect(defaultBookSet.kind).toBe("PERSONAL");
 
       // Try to create another PERSONAL BookSet (should fail)
       try {
-        await bookSetRepo.create({
+        await bookSetService.create({
           id: brandBookSetId(randomUUID()),
           tenantId: tenant.id,
           kind: "PERSONAL",
@@ -196,7 +193,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
 
       // Create PROPRIETORSHIP
       const propId = brandBookSetId(randomUUID());
-      await bookSetRepo.create({
+      await bookSetService.create({
         id: propId,
         tenantId: tenant.id,
         kind: "PROPRIETORSHIP",
@@ -206,7 +203,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       });
 
       // Verify exists
-      const bookSets = await bookSetRepo.listByTenant(tenant.id);
+      const bookSets = await bookSetService.listByTenant(tenant.id);
       const hasProp = bookSets.some((bs) => bs.kind === "PROPRIETORSHIP");
       expect(hasProp).toBe(true);
     });
@@ -215,7 +212,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       const { tenant, defaultBookSet } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Test");
 
       try {
-        await bookSetRepo.archive(defaultBookSet.id, tenant.id);
+        await bookSetService.archive(defaultBookSet.id, tenant.id);
         throw new Error("Should have failed");
       } catch (error) {
         expect((error as any).code).toBe("CANNOT_ARCHIVE_DEFAULT_BOOK_SET");
@@ -238,11 +235,11 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         updatedAt: currentTimestamp(),
       };
 
-      await accountRepo.create(account1);
+      await accountService.create(account1);
 
       // Try to create another account with same code in same BookSet (should fail)
       try {
-        await accountRepo.create({
+        await accountService.create({
           ...account1,
           id: brandAccountId(randomUUID()),
           name: "Bank",
@@ -265,9 +262,9 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),
       };
-      await bookSetRepo.create(prop1);
+      await bookSetService.create(prop1);
 
-      const defaultBookSet = await bookSetRepo.getDefault(tenant.id);
+      const defaultBookSet = await bookSetService.getDefault(tenant.id);
 
       // Create account in personal BookSet
       const personal = {
@@ -280,7 +277,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),
       };
-      await accountRepo.create(personal);
+      await accountService.create(personal);
 
       // Create account with same code in proprietorship BookSet (should succeed)
       const prop = {
@@ -293,11 +290,11 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),
       };
-      await accountRepo.create(prop);
+      await accountService.create(prop);
 
       // Verify both exist
-      expect(await accountRepo.getByCode("1000", tenant.id, defaultBookSet.id)).toBeDefined();
-      expect(await accountRepo.getByCode("1000", tenant.id, prop1.id)).toBeDefined();
+      expect(await accountService.getByCode("1000", tenant.id, defaultBookSet.id)).toBeDefined();
+      expect(await accountService.getByCode("1000", tenant.id, prop1.id)).toBeDefined();
     });
 
     it("should never reuse account code within scope", async () => {
@@ -313,13 +310,13 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),
       };
-      await accountRepo.create(account1);
+      await accountService.create(account1);
 
       // Delete (conceptually mark as archived) and try to reuse code
       // Note: actual deletion not implemented in this phase, so just verify code is locked
 
       try {
-        await accountRepo.create({
+        await accountService.create({
           id: brandAccountId(randomUUID()),
           tenantId: tenant.id,
           bookSetId: defaultBookSet.id,
@@ -341,8 +338,8 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       const { tenant: tenant1 } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Corp 1");
       const { tenant: tenant2 } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Corp 2");
 
-      const bookSet1 = await bookSetRepo.getDefault(tenant1.id);
-      const bookSet2 = await bookSetRepo.getDefault(tenant2.id);
+      const bookSet1 = await bookSetService.getDefault(tenant1.id);
+      const bookSet2 = await bookSetService.getDefault(tenant2.id);
 
       const account1 = {
         id: brandAccountId(randomUUID()),
@@ -354,11 +351,11 @@ describe("Phase 1A: Production Persistence Foundation", () => {
         createdAt: currentTimestamp(),
         updatedAt: currentTimestamp(),
       };
-      await accountRepo.create(account1);
+      await accountService.create(account1);
 
       // Try to access account1 from tenant2 (should fail with NOT_FOUND since it doesn't exist in their context)
       try {
-        await accountRepo.getById(account1.id, tenant2.id, bookSet2.id);
+        await accountService.getById(account1.id, tenant2.id, bookSet2.id);
         throw new Error("Should have failed");
       } catch (error) {
         // NOT_FOUND is acceptable - the account doesn't exist in tenant2's scope
@@ -370,11 +367,11 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       const { tenant: tenant1 } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Corp 1");
       const { tenant: tenant2 } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Corp 2");
 
-      const bookSet1 = await bookSetRepo.getDefault(tenant1.id);
+      const bookSet1 = await bookSetService.getDefault(tenant1.id);
 
       // Try to access bookSet1 from tenant2 (should fail with NOT_FOUND)
       try {
-        await bookSetRepo.getById(bookSet1.id, tenant2.id);
+        await bookSetService.getById(bookSet1.id, tenant2.id);
         throw new Error("Should have failed");
       } catch (error) {
         // NOT_FOUND is acceptable - the BookSet doesn't exist in tenant2's scope
