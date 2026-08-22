@@ -57,7 +57,10 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
         );
         throw new Error("Should have failed FK constraint");
       } catch (error) {
-        expect((error as any).message.toLowerCase()).toContain("foreign key");
+        expect(error).toMatchObject({
+          code: "SQLITE_CONSTRAINT",
+          message: "SQLite foreign key constraint violation",
+        });
       }
     });
 
@@ -99,8 +102,10 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
         });
         throw new Error("Should have failed composite trigger");
       } catch (error) {
-        // Trigger should prevent cross-tenant default book set assignment
-        expect((error as any).message.toLowerCase()).toContain("must belong to same tenant");
+        expect(error).toMatchObject({
+          code: "SQLITE_CONSTRAINT",
+          message: "SQLite trigger constraint violation",
+        });
       }
     });
   });

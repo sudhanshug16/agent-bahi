@@ -6,6 +6,24 @@ import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.ts";
 
+function normalizeSqliteError(error: unknown, operation: string): DomainError {
+  return error instanceof DomainError
+    ? error
+    : toDomainError(classifySqliteError(error, operation));
+}
+
+function isContentionError(error: unknown): boolean {
+  return error instanceof DomainError
+    && (error.code === "SQLITE_CONTENTION_BUSY" || error.code === "SQLITE_CONTENTION_LOCKED");
+}
+
+function waitForRetry(deadline: number, intervalMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const remaining = Math.max(0, deadline - Date.now());
+    setTimeout(resolve, Math.min(intervalMs, remaining));
+  });
+}
+
 /**
  * SQLite Migration Session (callback-scoped): holds BEGIN IMMEDIATE transaction.
  * Ensures all DDL, validation, and audit happen on same connection.
@@ -18,6 +36,7 @@ class SqliteMigrationSession implements MigrationSession {
   private token: string;
   private active = true;
   private finalized = false;
+  private rollbackAttempted = false;
 
   constructor(private db: BunDatabase) {
     this.token = randomUUID();
@@ -150,27 +169,41 @@ class SqliteMigrationSession implements MigrationSession {
   // Commit/rollback handled by withMigrationLease; never expose here
   async _commit(): Promise<void> {
     if (this.finalized) return; // Idempotent
-    this.active = false;
-    this.statements.clear();
     try {
       this.db.exec("COMMIT");
     } catch (error) {
-      const classified = classifySqliteError(error, "migration commit");
-      throw toDomainError(classified);
+      const classified = normalizeSqliteError(error, "migration commit");
+      await this.rollbackAfterCommitFailure();
+      throw classified;
+    }
+    this.active = false;
+    this.statements.clear();
+    this.finalized = true;
+  }
+
+  private async rollbackAfterCommitFailure(): Promise<void> {
+    if (this.rollbackAttempted) return;
+    this.rollbackAttempted = true;
+    try {
+      this.db.exec("ROLLBACK");
+    } catch {
+      // The original classified COMMIT error is authoritative.
     } finally {
-      this.finalized = true;
+      this.active = false;
+      this.statements.clear();
     }
   }
 
   async _rollback(): Promise<void> {
-    if (this.finalized) return; // Idempotent
-    this.active = false;
-    this.statements.clear();
+    if (this.finalized || this.rollbackAttempted) return; // Idempotent
+    this.rollbackAttempted = true;
     try {
       this.db.exec("ROLLBACK");
     } catch {
       // Already rolled back
     } finally {
+      this.active = false;
+      this.statements.clear();
       this.finalized = true;
     }
   }
@@ -182,6 +215,7 @@ class SqliteMigrationSession implements MigrationSession {
 class SqliteTransaction implements Transaction {
   private active = true;
   private finalized = false;
+  private rollbackAttempted = false;
   private statements = new Map<string, ReturnType<BunDatabase["prepare"]>>();
 
   constructor(private db: BunDatabase) {
@@ -203,29 +237,43 @@ class SqliteTransaction implements Transaction {
   async commit(): Promise<void> {
     if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
     if (this.finalized) return; // Idempotent
-    this.active = false;
-    this.statements.clear();
     try {
       this.db.exec("COMMIT");
     } catch (error) {
-      const classified = classifySqliteError(error, "commit");
-      throw toDomainError(classified);
-    } finally {
-      this.finalized = true;
+      const classified = normalizeSqliteError(error, "commit");
+      this.rollbackAfterCommitFailure();
+      throw classified;
     }
+    this.active = false;
+    this.statements.clear();
+    this.finalized = true;
   }
 
   async rollback(): Promise<void> {
     if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
-    if (this.finalized) return; // Idempotent
-    this.active = false;
-    this.statements.clear();
+    if (this.finalized || this.rollbackAttempted) return; // Idempotent
+    this.rollbackAttempted = true;
     try {
       this.db.exec("ROLLBACK");
     } catch {
       // Already rolled back
     } finally {
+      this.active = false;
+      this.statements.clear();
       this.finalized = true;
+    }
+  }
+
+  private rollbackAfterCommitFailure(): void {
+    if (this.rollbackAttempted) return;
+    this.rollbackAttempted = true;
+    try {
+      this.db.exec("ROLLBACK");
+    } catch {
+      // The original classified COMMIT error is authoritative.
+    } finally {
+      this.active = false;
+      this.statements.clear();
     }
   }
 
@@ -324,36 +372,47 @@ export class SqliteAdapter implements Database {
   constructor(config: SqliteConfig) {
     this.dbPath = assertSafeSqlitePath(config.path);
 
-    this.db = new BunDatabase(this.dbPath, {
-      strict: true,
-      create: true,
-      safeIntegers: true,
-      readonly: false,
-    });
+    let openedDb: BunDatabase | undefined;
+    try {
+      openedDb = new BunDatabase(this.dbPath, {
+        strict: true,
+        create: true,
+        safeIntegers: true,
+        readonly: false,
+      });
 
-    // Enable foreign key constraints
-    this.db.exec("PRAGMA foreign_keys = ON");
+      // Enable foreign key constraints
+      openedDb.exec("PRAGMA foreign_keys = ON");
 
-    // Enable WAL mode for concurrent read support
-    this.db.exec("PRAGMA journal_mode = WAL");
+      // Enable WAL mode for concurrent read support
+      openedDb.exec("PRAGMA journal_mode = WAL");
 
-    // Set busy_timeout to 0 (fail immediately on SQLITE_BUSY; visible to caller)
-    this.db.exec("PRAGMA busy_timeout = 0");
+      // Set busy_timeout to 0 (fail immediately on SQLITE_BUSY; visible to caller)
+      openedDb.exec("PRAGMA busy_timeout = 0");
 
-    // Verify settings
-    const fkCheck = Number(
-      (this.db.query("PRAGMA foreign_keys").get() as Record<string, unknown> | undefined)?.
-        foreign_keys || 0,
-    );
-    if (fkCheck !== 1) {
-      throw new DomainError("SQLITE_CONFIG_FAILED", "PRAGMA foreign_keys failed to enable");
+      // Verify settings
+      const fkCheck = Number(
+        (openedDb.query("PRAGMA foreign_keys").get() as Record<string, unknown> | undefined)?.
+          foreign_keys || 0,
+      );
+      if (fkCheck !== 1) {
+        throw new DomainError("SQLITE_CONFIG_FAILED", "PRAGMA foreign_keys failed to enable");
+      }
+
+      const journalMode = (openedDb.query("PRAGMA journal_mode").get() as Record<string, unknown> | undefined)
+        ?.journal_mode;
+      if (String(journalMode).toLowerCase() !== "wal") {
+        throw new DomainError("SQLITE_CONFIG_FAILED", "PRAGMA journal_mode WAL failed to enable");
+      }
+    } catch (error) {
+      try {
+        openedDb?.close();
+      } catch {
+        // Preserve the original open/configuration failure.
+      }
+      throw normalizeSqliteError(error, "open");
     }
-
-    const journalMode = (this.db.query("PRAGMA journal_mode").get() as Record<string, unknown> | undefined)
-      ?.journal_mode;
-    if (String(journalMode).toLowerCase() !== "wal") {
-      throw new DomainError("SQLITE_CONFIG_FAILED", "PRAGMA journal_mode WAL failed to enable");
-    }
+    this.db = openedDb;
   }
 
   async query(sql: string, params?: unknown[]): Promise<QueryResult> {
@@ -498,154 +557,111 @@ export class SqliteAdapter implements Database {
   }
 
   async acquireAdvisoryLock(lockName: string, timeoutMs: number = 5000): Promise<boolean> {
-    // Crash-safe advisory lock using uncommitted transaction
-    // Key insight: lock is held by keeping a transaction open with IMMEDIATE mode
-    // If process crashes, the transaction auto-rollbacks and lock is released
-    // No manual recovery needed; no stale lock rows survive crashes
+    return this.acquireAdvisoryLockStrict(lockName, timeoutMs);
+  }
 
-    const startTime = Date.now();
+  async releaseAdvisoryLock(lockName: string): Promise<void> {
+    return this.releaseAdvisoryLockStrict(lockName);
+  }
+
+  private async acquireAdvisoryLockStrict(lockName: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
     const ownerToken = this.adapterId;
+    if (this.heldLocks.has(lockName)) return true;
 
-    while (Date.now() - startTime < timeoutMs) {
+    while (true) {
+      let lockDb: BunDatabase | undefined;
+      let transactionStarted = false;
+      let attemptError: DomainError | undefined;
+      let cleanupError: DomainError | undefined;
+
       try {
-        // Create separate connection for lock transaction (independent of main db)
-        const lockDb = new BunDatabase(this.dbPath, {
+        lockDb = new BunDatabase(this.dbPath, {
           strict: true,
           create: true,
           safeIntegers: true,
           readonly: false,
         });
+        lockDb.exec("PRAGMA foreign_keys = ON");
+        lockDb.exec("PRAGMA busy_timeout = 0");
+        lockDb.exec(`
+          CREATE TABLE IF NOT EXISTS __migration_locks (
+            name TEXT PRIMARY KEY,
+            owner_token TEXT NOT NULL,
+            acquired_at INTEGER NOT NULL
+          )
+        `);
+        lockDb.exec("BEGIN IMMEDIATE");
+        transactionStarted = true;
 
-        try {
-          // Enable FK for consistency
-          lockDb.exec("PRAGMA foreign_keys = ON");
-          lockDb.exec("PRAGMA busy_timeout = 0");
-
-          // Initialize lock table if needed
-          try {
-            lockDb.exec(`
-              CREATE TABLE IF NOT EXISTS __migration_locks (
-                name TEXT PRIMARY KEY,
-                owner_token TEXT NOT NULL,
-                acquired_at INTEGER NOT NULL
-              )
-            `);
-          } catch (createError) {
-            const classified = classifySqliteError(createError, "advisory lock table creation");
-            if (!classified.isContention) {
-              // Non-contention errors during setup fail immediately
-              lockDb.close();
-              throw toDomainError(classified);
-            }
-            // Retry on contention
-            lockDb.close();
-            await new Promise(resolve => setTimeout(resolve, 50));
-            continue;
-          }
-
-          // BEGIN IMMEDIATE: acquire exclusive lock immediately
-          try {
-            lockDb.exec("BEGIN IMMEDIATE");
-          } catch (beginError) {
-            const classified = classifySqliteError(beginError, "advisory lock BEGIN IMMEDIATE");
-            lockDb.close();
-            if (!classified.isContention) {
-              // Non-contention acquisition errors fail immediately
-              throw toDomainError(classified);
-            }
-            // Retry on contention
-            await new Promise(resolve => setTimeout(resolve, 50));
-            continue;
-          }
-
-          try {
-            // Check if lock is held by different owner
-            const existing = lockDb.query(`SELECT owner_token FROM __migration_locks WHERE name = ?`).get(lockName) as any;
-
-            if (existing && existing.owner_token !== ownerToken) {
-              // Lock held by different owner - release and retry
-              lockDb.exec("ROLLBACK");
-              lockDb.close();
-              await new Promise(resolve => setTimeout(resolve, 50));
-              continue;
-            }
-
-            // We own or can take the lock
-            if (existing) {
-              // Renew lock timestamp (same owner)
-              lockDb.query(`UPDATE __migration_locks SET acquired_at = ? WHERE name = ?`).run(
-                Date.now(),
-                lockName
-              );
-            } else {
-              // New lock
-              lockDb.query(`INSERT INTO __migration_locks (name, owner_token, acquired_at) VALUES (?, ?, ?)`).run(
-                lockName,
-                ownerToken,
-                Date.now()
-              );
-            }
-
-            // Transaction held OPEN - do NOT commit
-            // Lock is held for duration of this process
-            // If crash: transaction auto-rollbacks, lock released
-            this.heldLocks.set(lockName, ownerToken);
-            this.lockTransactions.set(lockName, lockDb);
-            return true;
-          } catch (txError) {
-            lockDb.exec("ROLLBACK");
-            lockDb.close();
-            const classified = classifySqliteError(txError, "advisory lock transaction");
-            if (!classified.isContention) {
-              // Non-contention transaction errors fail immediately
-              throw toDomainError(classified);
-            }
-            // Retry on contention
-            await new Promise(resolve => setTimeout(resolve, 50));
-            continue;
-          }
-        } catch (error) {
-          try {
-            lockDb.close();
-          } catch {
-            // Already closed
-          }
-          // Check if it's a non-contention error
-          if (error instanceof DomainError) {
-            throw error;
-          }
-          // For other errors, retry
-          await new Promise(resolve => setTimeout(resolve, 50));
+        const existing = lockDb.query("SELECT owner_token FROM __migration_locks WHERE name = ?").get(lockName) as
+          | { owner_token?: unknown }
+          | undefined;
+        if (existing && existing.owner_token !== ownerToken) {
+          throw new DomainError("SQLITE_CONTENTION_BUSY", "SQLite advisory lock is contended");
         }
+
+        if (existing) {
+          lockDb.query("UPDATE __migration_locks SET acquired_at = ? WHERE name = ?").run(Date.now(), lockName);
+        } else {
+          lockDb.query("INSERT INTO __migration_locks (name, owner_token, acquired_at) VALUES (?, ?, ?)").run(
+            lockName,
+            ownerToken,
+            Date.now(),
+          );
+        }
+
+        this.heldLocks.set(lockName, ownerToken);
+        this.lockTransactions.set(lockName, lockDb);
+        lockDb = undefined;
+        return true;
       } catch (error) {
-        // Non-contention errors from advisory lock propagate immediately
-        if (error instanceof DomainError) {
-          throw error;
-        }
-        // Lock acquisition failed - wait and retry
-        await new Promise(resolve => setTimeout(resolve, 50));
+        attemptError = normalizeSqliteError(error, "advisory lock acquisition");
       }
-    }
 
-    // Timeout reached
-    return false;
-  }
-
-  async releaseAdvisoryLock(lockName: string): Promise<void> {
-    if (this.heldLocks.has(lockName)) {
-      const lockDb = this.lockTransactions.get(lockName);
+      if (transactionStarted && lockDb) {
+        try {
+          lockDb.exec("ROLLBACK");
+        } catch (error) {
+          cleanupError = normalizeSqliteError(error, "advisory lock rollback");
+        }
+      }
       if (lockDb) {
         try {
-          // Rollback the held transaction - this releases the lock
-          lockDb.exec("ROLLBACK");
           lockDb.close();
-        } catch {
-          // Already closed or rolled back
+        } catch (error) {
+          cleanupError ??= normalizeSqliteError(error, "advisory lock cleanup");
         }
-        this.lockTransactions.delete(lockName);
       }
-      this.heldLocks.delete(lockName);
+
+      if (cleanupError && !isContentionError(cleanupError)) throw cleanupError;
+      if (!isContentionError(attemptError)) throw attemptError;
+      if (Date.now() >= deadline) return false;
+      await waitForRetry(deadline, 50);
     }
+  }
+
+  private async releaseAdvisoryLockStrict(lockName: string): Promise<void> {
+    const lockDb = this.lockTransactions.get(lockName);
+    if (!lockDb) {
+      this.heldLocks.delete(lockName);
+      return;
+    }
+
+    let releaseError: DomainError | undefined;
+    try {
+      lockDb.exec("ROLLBACK");
+    } catch (error) {
+      releaseError = normalizeSqliteError(error, "advisory lock rollback");
+    }
+    try {
+      lockDb.close();
+    } catch (error) {
+      releaseError ??= normalizeSqliteError(error, "advisory lock cleanup");
+    }
+    this.lockTransactions.delete(lockName);
+    this.heldLocks.delete(lockName);
+    if (releaseError) throw releaseError;
   }
 
 }

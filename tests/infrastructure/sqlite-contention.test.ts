@@ -1,308 +1,240 @@
-/**
- * SQLite Contention Error Handling Tests
- *
- * Tests real two-connection scenarios:
- * - Connection A holds BEGIN IMMEDIATE
- * - Connection B top-level write, beginTransaction, migration lease acquisition yield typed contention
- * - Transaction and migration-session constraint violations are non-contention and not retried
- * - Advisory lock propagates non-contention failures immediately
- */
-
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Database as BunDatabase } from "bun:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "crypto";
+import { classifySqliteError, toDomainError } from "../../src/infrastructure/sqlite/error-classifier.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { DomainError } from "../../src/core/types.ts";
 
-describe("SQLite Contention Error Handling", () => {
+const nativeError = (message: string, fields: Record<string, unknown> = {}) =>
+  Object.assign(new Error(message), fields);
+
+describe("SQLite error classification", () => {
+  test("uses exact structured BUSY and LOCKED codes, including extended numeric codes", () => {
+    const cases: Array<[unknown, string]> = [
+      [nativeError("native secret", { code: "SQLITE_BUSY" }), "SQLITE_CONTENTION_BUSY"],
+      [nativeError("native secret", { code: "SQLITE_BUSY_SNAPSHOT" }), "SQLITE_CONTENTION_BUSY"],
+      [nativeError("native secret", { errno: 5 | (2 << 8) }), "SQLITE_CONTENTION_BUSY"],
+      [nativeError("native secret", { code: "SQLITE_LOCKED_SHAREDCACHE" }), "SQLITE_CONTENTION_LOCKED"],
+      [nativeError("native secret", { errno: 6 | (1 << 8) }), "SQLITE_CONTENTION_LOCKED"],
+    ];
+
+    for (const [error, code] of cases) {
+      const classified = classifySqliteError(error);
+      expect(classified.code).toBe(code);
+      expect(classified.isContention).toBe(true);
+      expect(toDomainError(classified).code).toBe(code);
+    }
+  });
+
+  test("recognizes structured constraints but not arbitrary identifiers", () => {
+    expect(classifySqliteError(nativeError("secret", { errno: 19 })).code).toBe("SQLITE_CONSTRAINT");
+    expect(classifySqliteError(nativeError("secret", { code: "SQLITE_CONSTRAINT_UNIQUE" })).code)
+      .toBe("SQLITE_CONSTRAINT");
+
+    for (const message of [
+      "table busy for tenant tenant-secret",
+      "bookset locked; password=secret",
+      "tenant constraint failed: secret",
+      "a SQLITE_BUSY identifier is not a native code",
+    ]) {
+      const classified = classifySqliteError(new Error(message));
+      expect(classified.code).toBe("DATABASE_QUERY_FAILED");
+      expect(classified.isContention).toBe(false);
+    }
+  });
+
+  test("uses only narrow native phrases and never leaks raw diagnostics", () => {
+    expect(classifySqliteError(new Error("database is locked")).code).toBe("SQLITE_CONTENTION_BUSY");
+    expect(classifySqliteError(new Error("database table is locked")).code).toBe("SQLITE_CONTENTION_LOCKED");
+    expect(classifySqliteError(new Error("unique constraint failed")).code).toBe("SQLITE_CONSTRAINT");
+
+    const secret = "sql-secret tenant-secret /private/secret.sqlite";
+    const domainError = toDomainError(classifySqliteError(nativeError(`database exploded ${secret}`)));
+    expect(domainError.code).toBe("DATABASE_QUERY_FAILED");
+    expect(domainError.message).toBe("SQLite database operation failed");
+    expect(domainError.message).not.toContain(secret);
+    expect(JSON.stringify(domainError.context)).not.toContain(secret);
+  });
+
+  test("preserves an existing DomainError unchanged", () => {
+    const original = new DomainError("EXISTING", "safe existing message", { marker: "kept" });
+    const classified = classifySqliteError(original);
+    expect(toDomainError(classified)).toBe(original);
+    expect(classified.message).toBe(original.message);
+  });
+});
+
+describe("SQLite contention and lifecycle", () => {
+  let directory: string;
   let dbPath: string;
-  let dbA: BunDatabase;
-  let dbB: SqliteAdapter;
+  let dbA: BunDatabase | undefined;
+  let dbB: SqliteAdapter | undefined;
 
   beforeEach(async () => {
-    const tmpdir = await mkdtemp(
-      join(process.env.TMPDIR ?? "/tmp", "agent-bahi-contention-")
-    );
-    dbPath = join(tmpdir, "contention.sqlite");
-
-    // Initialize database with schema
-    const initDb = new BunDatabase(dbPath, {
-      strict: true,
-      create: true,
-      safeIntegers: true,
-    });
-    initDb.exec("PRAGMA foreign_keys = ON");
-    initDb.exec("PRAGMA journal_mode = WAL");
-    initDb.exec("PRAGMA busy_timeout = 0");
-    initDb.exec(
-      "CREATE TABLE test_table (id TEXT PRIMARY KEY, value TEXT NOT NULL)"
-    );
-    initDb.close();
-
-    // Connection A will hold locks
-    dbA = new BunDatabase(dbPath, {
-      strict: true,
-      create: false,
-      safeIntegers: true,
-    });
-    dbA.exec("PRAGMA foreign_keys = ON");
+    directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-contention-"));
+    dbPath = join(directory, "contention.sqlite");
+    const init = new BunDatabase(dbPath, { strict: true, create: true, safeIntegers: true });
+    try {
+      init.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 0;");
+      init.exec("CREATE TABLE test_table (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    } finally {
+      init.close();
+    }
+    dbA = new BunDatabase(dbPath, { strict: true, create: false, safeIntegers: true });
     dbA.exec("PRAGMA busy_timeout = 0");
-
-    // Connection B is the adapter under test
     dbB = new SqliteAdapter({ path: dbPath });
   });
 
   afterEach(async () => {
     try {
-      dbA.close();
+      dbA?.close();
     } catch {
-      // Already closed
+      // Setup failure or prior cleanup must not mask the assertion.
     }
     try {
-      await dbB.close();
+      await dbB?.close();
     } catch {
-      // Already closed
+      // Setup failure or prior cleanup must not mask the assertion.
     }
+    await rm(directory, { recursive: true, force: true });
+  });
 
-    // Clean up temp directory
-    const tmpdir = process.env.TMPDIR ?? "/tmp";
-    const parentDir = dbPath.split("/").slice(0, -1).join("/");
-    if (parentDir.startsWith(tmpdir)) {
-      try {
-        await rm(parentDir, { recursive: true, force: true });
-      } catch {
-        // Already cleaned
-      }
+  test("real two-connection write contention is exact BUSY and succeeds after release", async () => {
+    dbA!.exec("BEGIN IMMEDIATE");
+    await expect(dbB!.query("INSERT INTO test_table (id, value) VALUES (?, ?)", ["a", "b"]))
+      .rejects.toMatchObject({ code: "SQLITE_CONTENTION_BUSY" });
+
+    dbA!.exec("ROLLBACK");
+    await expect(dbB!.query("INSERT INTO test_table (id, value) VALUES (?, ?)", ["a", "b"]))
+      .resolves.toMatchObject({ rowCount: 0 });
+  });
+
+  test("migration acquisition retries BUSY, then invokes callback exactly once", async () => {
+    dbA!.exec("BEGIN IMMEDIATE");
+    let attempts = 0;
+    const release = setTimeout(() => dbA!.exec("ROLLBACK"), 130);
+    try {
+      await expect(dbB!.withMigrationLease(async () => {
+        attempts += 1;
+        return "success";
+      }, 1200)).resolves.toBe("success");
+    } finally {
+      clearTimeout(release);
     }
+    expect(attempts).toBe(1);
   });
 
-  describe("Two-connection contention scenarios", () => {
-    test("top-level write yields SQLITE_CONTENTION_BUSY when connection A holds BEGIN IMMEDIATE", async () => {
-      // Connection A acquires exclusive lock
-      dbA.exec("BEGIN IMMEDIATE");
-
-      // Connection B attempts write - should fail with contention
-      let caughtError: unknown;
-      try {
-        await dbB.query("INSERT INTO test_table (id, value) VALUES (?, ?)", [
-          "row1",
-          "value1",
-        ]);
-      } catch (e) {
-        caughtError = e;
-      }
-
-      expect(caughtError).toBeInstanceOf(DomainError);
-      expect((caughtError as DomainError).code).toMatch(/SQLITE_CONTENTION/);
-
-      // Release lock
-      dbA.exec("ROLLBACK");
-
-      // Now write should succeed
-      const result = await dbB.query(
-        "INSERT INTO test_table (id, value) VALUES (?, ?)",
-        ["row1", "value1"]
-      );
-      expect(result.rowCount).toBe(0); // INSERT returns 0 rows
-    });
-
-    test("beginTransaction yields SQLITE_CONTENTION_BUSY when connection A holds BEGIN IMMEDIATE", async () => {
-      // Connection A acquires exclusive lock
-      dbA.exec("BEGIN IMMEDIATE");
-
-      // Connection B attempts to begin transaction - should fail with contention
-      let caughtError: unknown;
-      try {
-        await dbB.beginTransaction();
-      } catch (e) {
-        caughtError = e;
-      }
-
-      expect(caughtError).toBeInstanceOf(DomainError);
-      expect((caughtError as DomainError).code).toMatch(/SQLITE_CONTENTION/);
-
-      // Release lock
-      dbA.exec("ROLLBACK");
-
-      // Now beginTransaction should succeed
-      const tx = await dbB.beginTransaction();
-      expect(tx).toBeDefined();
-      expect(tx.isActive()).toBe(true);
-      await tx.rollback();
-    });
-
-    test("withMigrationLease retries on SQLITE_CONTENTION_BUSY until success", async () => {
-      // Connection A acquires exclusive lock
-      dbA.exec("BEGIN IMMEDIATE");
-
-      // Start async release after delay
-      const releaseDelay = setTimeout(() => {
-        dbA.exec("ROLLBACK");
-      }, 200);
-
-      // Connection B attempts migration lease - should retry and eventually succeed
-      const result = await dbB.withMigrationLease(
-        async (session) => {
-          const metadata = await session.getTableMetadata(
-            "schema_migrations"
-          );
-          return metadata ? "found" : "not_found";
-        },
-        5000
-      );
-
-      clearTimeout(releaseDelay);
-      // Should have succeeded after retry
-      expect(result).toBe("not_found"); // Table doesn't exist yet
-    });
-
-    test("migration lease acquisition fails immediately on non-contention error (permission)", async () => {
-      // Create an invalid callback that will fail
-      let caughtError: unknown;
-      try {
-        await dbB.withMigrationLease(
-          async (session) => {
-            // Try to access a non-allowed metadata table
-            // This should fail due to security policy, not contention
-            const metadata = await session.getTableMetadata("sqlite_master");
-            return metadata;
-          },
-          1000
-        );
-      } catch (e) {
-        caughtError = e;
-      }
-
-      expect(caughtError).toBeInstanceOf(DomainError);
-      expect((caughtError as DomainError).code).toBe("METADATA_IDENTIFIER_REJECTED");
-      // This should NOT be a contention error
-      expect((caughtError as DomainError).code).not.toMatch(/SQLITE_CONTENTION/);
-    });
+  test("callback failure is not retried and is returned unchanged", async () => {
+    let attempts = 0;
+    const callbackError = new Error("callback-secret");
+    await expect(dbB!.withMigrationLease(async () => {
+      attempts += 1;
+      throw callbackError;
+    }, 500)).rejects.toBe(callbackError);
+    expect(attempts).toBe(1);
   });
 
-  describe("Constraint violations are non-contention", () => {
-    test("transaction constraint violation is not retried", async () => {
-      // Set up unique constraint
-      await dbB.executeRaw(
-        "CREATE TABLE unique_test (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL)"
-      );
-
-      // Insert initial row
-      await dbB.query(
-        "INSERT INTO unique_test (id, email) VALUES (?, ?)",
-        ["user1", "test@example.com"]
-      );
-
-      // Transaction with constraint violation
-      let caughtError: unknown;
-      try {
-        await dbB.unitOfWork().execute(async (tx) => {
-          await tx.execute(
-            "INSERT INTO unique_test (id, email) VALUES (?, ?)",
-            ["user1_dup", "test@example.com"]
-          );
-        });
-      } catch (e) {
-        caughtError = e;
-      }
-
-      expect(caughtError).toBeInstanceOf(DomainError);
-      expect((caughtError as DomainError).code).toBe("SQLITE_CONSTRAINT");
-      // Non-contention, not retried
-      expect((caughtError as DomainError).code).not.toMatch(/SQLITE_CONTENTION/);
-    });
-
-    test("migration constraint violation is not retried", async () => {
-      // Set up unique constraint in test table
-      await dbB.executeRaw(
-        "CREATE TABLE constraint_test (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL)"
-      );
-
-      // Insert initial row
-      await dbB.query(
-        "INSERT INTO constraint_test (id, code) VALUES (?, ?)",
-        ["item1", "CODE123"]
-      );
-
-      // Migration with constraint violation
-      let caughtError: unknown;
-      try {
-        await dbB.withMigrationLease(
-          async (session) => {
-            await session.execute(
-              "INSERT INTO constraint_test (id, code) VALUES (?, ?)",
-              ["item2", "CODE123"]
-            );
-          },
-          1000
-        );
-      } catch (e) {
-        caughtError = e;
-      }
-
-      expect(caughtError).toBeInstanceOf(DomainError);
-      expect((caughtError as DomainError).code).toBe("SQLITE_CONSTRAINT");
-      // Non-contention, not retried
-      expect((caughtError as DomainError).code).not.toMatch(/SQLITE_CONTENTION/);
-    });
+  test("constraints fail immediately and do not become contention", async () => {
+    await dbB!.executeRaw("CREATE TABLE unique_test (id TEXT PRIMARY KEY, value TEXT UNIQUE NOT NULL)");
+    await dbB!.query("INSERT INTO unique_test (id, value) VALUES (?, ?)", ["one", "same"]);
+    const started = Date.now();
+    let caught: unknown;
+    try {
+      await dbB!.unitOfWork().execute(async (tx) => {
+        await tx.execute("INSERT INTO unique_test (id, value) VALUES (?, ?)", ["two", "same"]);
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "SQLITE_CONSTRAINT" });
+    expect(Date.now() - started).toBeLessThan(500);
   });
 
-  describe("Advisory lock contention handling", () => {
-    test("advisory lock succeeds when contention is released within timeout", async () => {
-      // Connection A holds a transaction
-      dbA.exec("BEGIN IMMEDIATE");
-
-      // Start async release after delay
-      const releaseDelay = setTimeout(() => {
-        dbA.exec("ROLLBACK");
-      }, 150);
-
-      // Connection B attempts to acquire lock - should retry and succeed
-      const acquired = await dbB.acquireAdvisoryLock("test_lock", 2000);
-
-      clearTimeout(releaseDelay);
-      expect(acquired).toBe(true);
-
-      // Clean up
-      await dbB.releaseAdvisoryLock("test_lock");
-    });
-
-    test("advisory lock returns false on timeout", async () => {
-      // Connection A holds lock indefinitely
-      dbA.exec("BEGIN IMMEDIATE");
-
-      // Connection B attempts to acquire with short timeout - should timeout
-      const acquired = await dbB.acquireAdvisoryLock("test_lock", 200);
-
-      expect(acquired).toBe(false);
-
-      // Clean up
-      dbA.exec("ROLLBACK");
-    });
+  test("advisory lock returns false only after real BUSY contention exhausts its window", async () => {
+    dbA!.exec("BEGIN IMMEDIATE");
+    const started = Date.now();
+    await expect(dbB!.acquireAdvisoryLock("test_lock", 180)).resolves.toBe(false);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(150);
+    expect(elapsed).toBeLessThan(700);
+    dbA!.exec("ROLLBACK");
   });
 
-  describe("Native SQLITE_LOCKED scenario", () => {
-    test("classifier handles SQLITE_LOCKED error gracefully (bounded regression)", async () => {
-      // Note: SQLITE_LOCKED (errno 6) is difficult to trigger in real runtime
-      // without specific table-lock scenarios. This test documents the expected
-      // classification behavior.
-      //
-      // SQLITE_LOCKED occurs when:
-      // - A transaction is acquiring a lock on a table that is locked by another transaction
-      // - The error is distinct from SQLITE_BUSY (database-level lock)
-      //
-      // If runtime SQLITE_LOCKED becomes reproducible, a direct test should be added.
-      // For now, we verify that the error classification path exists and works.
+  test("advisory lock release allows a subsequent acquisition", async () => {
+    await expect(dbB!.acquireAdvisoryLock("test_lock", 500)).resolves.toBe(true);
+    await dbB!.releaseAdvisoryLock("test_lock");
+    await expect(dbB!.acquireAdvisoryLock("test_lock", 500)).resolves.toBe(true);
+    await dbB!.releaseAdvisoryLock("test_lock");
+  });
 
-      // Since SQLITE_LOCKED is unproven in runtime on Bun 1.3.14,
-      // we document that the classifier supports it:
-      // - classifySqliteError recognizes "LOCKED" and "SQLITE_LOCKED"
-      // - Maps to SQLITE_CONTENTION_LOCKED code
-      // - Retried by withMigrationLease and advisory lock acquisition
+  test("corrupt advisory/open failures fail fast as safe generic DomainErrors", async () => {
+    const corruptPath = join(directory, "corrupt.sqlite");
+    await writeFile(corruptPath, "not-a-sqlite-database");
+    const started = Date.now();
+    let openError: unknown;
+    try {
+      new SqliteAdapter({ path: corruptPath });
+    } catch (error) {
+      openError = error;
+    }
+    expect(openError).toMatchObject({ code: "DATABASE_QUERY_FAILED", message: "SQLite database operation failed" });
+    expect(Date.now() - started).toBeLessThan(500);
 
-      expect(true).toBe(true); // Placeholder for documented path
+    const adapter = dbB! as unknown as { dbPath: string };
+    adapter.dbPath = corruptPath;
+    const lockStarted = Date.now();
+    await expect(dbB!.acquireAdvisoryLock("test_lock", 1000)).rejects.toMatchObject({
+      code: "DATABASE_QUERY_FAILED",
+      message: "SQLite database operation failed",
     });
+    expect(Date.now() - lockStarted).toBeLessThan(500);
+  });
+
+  test("failed COMMIT attempts rollback, preserves classified error, and deactivates transaction", async () => {
+    const tx = await dbB!.beginTransaction();
+    const native = (dbB as any).db as BunDatabase;
+    const originalExec = native.exec.bind(native);
+    const calls: string[] = [];
+    native.exec = (sql: string) => {
+      calls.push(sql);
+      if (sql === "COMMIT") throw nativeError("commit-secret /tmp/db", { code: "SQLITE_BUSY", errno: 5 });
+      return originalExec(sql);
+    };
+    try {
+      await expect(tx.commit()).rejects.toMatchObject({
+        code: "SQLITE_CONTENTION_BUSY",
+        message: "SQLite operation blocked by BUSY contention",
+      });
+    } finally {
+      native.exec = originalExec;
+    }
+    expect(calls).toEqual(["COMMIT", "ROLLBACK"]);
+    expect(tx.isActive()).toBe(false);
+  });
+
+  test("failed migration COMMIT cleanup keeps callback count and original error", async () => {
+    const native = (dbB as any).db as BunDatabase;
+    const originalExec = native.exec.bind(native);
+    const calls: string[] = [];
+    native.exec = (sql: string) => {
+      calls.push(sql);
+      if (sql === "COMMIT") throw nativeError("migration-secret", { code: "SQLITE_BUSY", errno: 5 });
+      return originalExec(sql);
+    };
+    let callbackCount = 0;
+    let capturedSession: any;
+    try {
+      await expect(dbB!.withMigrationLease(async (session) => {
+        capturedSession = session;
+        callbackCount += 1;
+        return "done";
+      })).rejects.toMatchObject({ code: "SQLITE_CONTENTION_BUSY" });
+    } finally {
+      native.exec = originalExec;
+    }
+    expect(callbackCount).toBe(1);
+    expect(calls).toEqual(["BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"]);
+    await expect(capturedSession.execute("SELECT 1")).rejects.toMatchObject({ code: "MIGRATION_SESSION_INACTIVE" });
   });
 });

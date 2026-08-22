@@ -1,12 +1,9 @@
 /**
  * SQLite native error classification for contention vs non-contention errors.
  *
- * Maps SQLite native error codes to typed DomainError contracts:
- * - SQLITE_BUSY (errno 5) and extended SQLITE_BUSY_* → contention (with DomainError code SQLITE_CONTENTION_BUSY)
- * - SQLITE_LOCKED (errno 6) and extended SQLITE_LOCKED_* → contention (with DomainError code SQLITE_CONTENTION_LOCKED)
- * - All other errors (permission, corruption, constraint, closed, fs) → non-contention (DATABASE_QUERY_FAILED)
- *
- * Preserves original error code/operation in safe context without leaking SQL parameters/secrets.
+ * Native SQLite errors are deliberately reduced to stable, safe domain
+ * contracts.  Native messages are useful only as a narrow compatibility
+ * fallback because Bun's SQLite binding exposes code/errno on normal errors.
  */
 
 import { DomainError } from "../../core/types.ts";
@@ -19,130 +16,157 @@ export interface ClassifiedError {
   originalError: unknown;
 }
 
+type SqliteErrorFields = {
+  code?: unknown;
+  errno?: unknown;
+  message?: unknown;
+};
+
+const BUSY_CODE = "SQLITE_CONTENTION_BUSY";
+const LOCKED_CODE = "SQLITE_CONTENTION_LOCKED";
+
 /**
- * Classify a SQLite error as contention or non-contention.
+ * Classify a SQLite error without exposing native diagnostics.
  *
- * SQLITE_BUSY (errno 5) and extended errno variants map to contention.
- * SQLITE_LOCKED (errno 6) and extended errno variants map to contention.
- * All other errors are non-contention.
- *
- * When classifying as non-contention, returns a DomainError with code DATABASE_QUERY_FAILED.
- * Contention errors are returned for the caller to decide how to handle (with DomainError code SQLITE_CONTENTION_BUSY/LOCKED).
+ * SQLite result codes are the authority. Extended numeric result codes are
+ * reduced to their primary result code (`result & 0xff`). String codes are
+ * accepted only for the documented SQLite families. Message matching is
+ * intentionally limited to exact native phrases and is used only when code
+ * and errno are absent.
  */
-export function classifySqliteError(error: unknown, operation: string = "database"): ClassifiedError {
-  if (!(error instanceof Error)) {
-    return {
-      isDomainError: false,
-      isContention: false,
-      code: "UNKNOWN_ERROR",
-      message: String(error),
-      originalError: error,
-    };
-  }
-
-  const errorMsg = error.message || "";
-  const errorName = error.name || "";
-
-  // SQLite native error classification by code/message and errno
-  // Extract errno-style codes: "SQLITE_BUSY", "SQLITE_IOERR_BUSY", etc.
-  const sqliteErrorMatch = errorMsg.match(/\b(SQLITE_\w+)\b/i);
-  const sqliteErrorCode = sqliteErrorMatch?.[1]?.toUpperCase() || "";
-
-  // Check for SQLITE_BUSY or extended SQLITE_BUSY_* variants (base errno 5)
-  if (
-    sqliteErrorCode === "SQLITE_BUSY" ||
-    sqliteErrorCode.startsWith("SQLITE_BUSY_") ||
-    errorMsg.toUpperCase().includes("BUSY") ||
-    errorMsg.toUpperCase().includes("DATABASE IS LOCKED")
-  ) {
-    return {
-      isDomainError: false,
-      isContention: true,
-      code: "SQLITE_CONTENTION_BUSY",
-      message: `SQLite BUSY during ${operation}: ${errorMsg}`,
-      originalError: error,
-    };
-  }
-
-  // Check for SQLITE_LOCKED or extended SQLITE_LOCKED_* variants (base errno 6)
-  if (
-    sqliteErrorCode === "SQLITE_LOCKED" ||
-    sqliteErrorCode.startsWith("SQLITE_LOCKED_") ||
-    /\bLOCKED\b/.test(errorMsg.toUpperCase())
-  ) {
-    return {
-      isDomainError: false,
-      isContention: true,
-      code: "SQLITE_CONTENTION_LOCKED",
-      message: `SQLite LOCKED during ${operation}: ${errorMsg}`,
-      originalError: error,
-    };
-  }
-
-  // All other errors are non-contention database errors
-  // Check for specific error types to provide more context
-  if (
-    errorMsg.toLowerCase().includes("no such table") &&
-    errorMsg.toLowerCase().includes("schema_migrations")
-  ) {
+export function classifySqliteError(error: unknown, _operation: string = "database"): ClassifiedError {
+  if (error instanceof DomainError) {
     return {
       isDomainError: true,
-      isContention: false,
-      code: "CONTROL_TABLE_MISSING",
-      message: "Migration control table is not initialized",
+      isContention: error.code === BUSY_CODE || error.code === LOCKED_CODE,
+      code: error.code,
+      message: error.message,
       originalError: error,
     };
   }
 
-  // Constraint violations are non-contention
-  if (
-    sqliteErrorCode === "SQLITE_CONSTRAINT" ||
-    /constraint|foreign key|unique|check constraint|tenant|book.?set/i.test(errorMsg)
-  ) {
-    return {
-      isDomainError: true,
-      isContention: false,
-      code: "SQLITE_CONSTRAINT",
-      message: `Constraint violation: ${errorMsg}`,
-      originalError: error,
-    };
+  const fields = getErrorFields(error);
+  const structuredFieldsPresent = fields.code !== undefined || fields.errno !== undefined;
+
+  // Bun reports missing tables with the generic SQLITE_ERROR code. This one
+  // allowlisted control-table condition remains a stable domain outcome.
+  if ((fields.code === "SQLITE_ERROR" || fields.errno === 1) && isMissingMigrationControlTable(fields.message)) {
+    return makeClassified({ code: "CONTROL_TABLE_MISSING", message: "Migration control table is not initialized" }, error, true);
   }
 
-  // Generic database error for all other non-contention cases
+  for (const value of [fields.code, fields.errno]) {
+    const result = classifyStructuredValue(value);
+    if (result) return makeClassified(result, error);
+  }
+
+  if (!structuredFieldsPresent && error instanceof Error) {
+    const fallback = classifyNativeMessage(fields.message ?? error.message);
+    if (fallback) return makeClassified(fallback, error);
+  }
+
+  if (!structuredFieldsPresent && error instanceof Error && isMissingMigrationControlTable(fields.message ?? error.message)) {
+    return makeClassified({ code: "CONTROL_TABLE_MISSING", message: "Migration control table is not initialized" }, error, true);
+  }
+
+  return makeClassified({ code: "DATABASE_QUERY_FAILED", message: "SQLite database operation failed" }, error, true);
+}
+
+function getErrorFields(error: unknown): SqliteErrorFields {
+  if (typeof error !== "object" || error === null) return {};
+  const candidate = error as SqliteErrorFields;
   return {
-    isDomainError: true,
-    isContention: false,
-    code: "DATABASE_QUERY_FAILED",
-    message: `SQLite database ${operation} failed: ${errorMsg}`,
-    originalError: error,
+    code: candidate.code,
+    errno: candidate.errno,
+    message: candidate.message,
   };
 }
 
-/**
- * Convert a classified error to a DomainError.
- * If already contention, caller decides whether to retry.
- * For non-contention, always wraps in DomainError.
- */
+function classifyStructuredValue(value: unknown): { code: string; message: string } | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    switch (value & 0xff) {
+      case 5:
+        return { code: BUSY_CODE, message: "SQLite operation blocked by BUSY contention" };
+      case 6:
+        return { code: LOCKED_CODE, message: "SQLite operation blocked by LOCKED contention" };
+      case 19:
+        return { code: "SQLITE_CONSTRAINT", message: "SQLite constraint violation" };
+      default:
+        return undefined;
+    }
+  }
+
+  if (typeof value !== "string") return undefined;
+  const code = value.toUpperCase();
+  if (isSqliteFamily(code, "SQLITE_BUSY")) {
+    return { code: BUSY_CODE, message: "SQLite operation blocked by BUSY contention" };
+  }
+  if (isSqliteFamily(code, "SQLITE_LOCKED")) {
+    return { code: LOCKED_CODE, message: "SQLite operation blocked by LOCKED contention" };
+  }
+  if (isSqliteFamily(code, "SQLITE_CONSTRAINT")) {
+    if (code === "SQLITE_CONSTRAINT_FOREIGNKEY") {
+      return { code: "SQLITE_CONSTRAINT", message: "SQLite foreign key constraint violation" };
+    }
+    if (code === "SQLITE_CONSTRAINT_TRIGGER") {
+      return { code: "SQLITE_CONSTRAINT", message: "SQLite trigger constraint violation" };
+    }
+    if (code === "SQLITE_CONSTRAINT_UNIQUE") {
+      return { code: "SQLITE_CONSTRAINT", message: "SQLite UNIQUE constraint violation" };
+    }
+    return { code: "SQLITE_CONSTRAINT", message: "SQLite constraint violation" };
+  }
+  return undefined;
+}
+
+function isSqliteFamily(value: string, base: string): boolean {
+  return value === base || new RegExp(`^${base}_[A-Z0-9_]+$`).test(value);
+}
+
+function classifyNativeMessage(message: unknown): { code: string; message: string } | undefined {
+  if (typeof message !== "string") return undefined;
+  const normalized = message.trim().toLowerCase();
+
+  // These are SQLite's stable native phrases for the corresponding primary
+  // result codes. Do not broaden this to arbitrary identifiers or substrings.
+  if (normalized === "database is locked" || normalized === "database is busy") {
+    return { code: BUSY_CODE, message: "SQLite operation blocked by BUSY contention" };
+  }
+  if (normalized === "database table is locked" || normalized === "database schema is locked") {
+    return { code: LOCKED_CODE, message: "SQLite operation blocked by LOCKED contention" };
+  }
+  if (normalized === "foreign key constraint failed") {
+    return { code: "SQLITE_CONSTRAINT", message: "SQLite foreign key constraint violation" };
+  }
+  if (/^(?:constraint failed|not null constraint failed|unique constraint failed|check constraint failed)(?:: .+)?$/.test(normalized)) {
+    return { code: "SQLITE_CONSTRAINT", message: "SQLite constraint violation" };
+  }
+  return undefined;
+}
+
+function isMissingMigrationControlTable(message: unknown): boolean {
+  return typeof message === "string" && /^no such table:\s*schema_migrations$/i.test(message.trim());
+}
+
+function makeClassified(
+  result: { code: string; message: string },
+  originalError: unknown,
+  isDomainError = false,
+): ClassifiedError {
+  return {
+    isDomainError,
+    isContention: result.code === BUSY_CODE || result.code === LOCKED_CODE,
+    code: result.code,
+    message: result.message,
+    originalError,
+  };
+}
+
+/** Convert a classified native error to a safe DomainError. */
 export function toDomainError(classified: ClassifiedError): DomainError {
-  if (classified.code === "CONTROL_TABLE_MISSING") {
-    return new DomainError(classified.code, classified.message, {
-      dialect: "sqlite",
-      cause: String(classified.originalError),
-    });
+  if (classified.originalError instanceof DomainError) {
+    return classified.originalError;
   }
 
-  if (classified.code === "SQLITE_CONSTRAINT") {
-    return new DomainError(classified.code, classified.message);
-  }
-
-  if (classified.isContention) {
-    // Contention errors: let caller decide retry strategy
-    return new DomainError(classified.code, classified.message);
-  }
-
-  // All other non-contention errors
-  return new DomainError(classified.code, classified.message, {
-    dialect: "sqlite",
-    cause: String(classified.originalError),
-  });
+  const context = { dialect: "sqlite" };
+  return new DomainError(classified.code, classified.message, context);
 }
