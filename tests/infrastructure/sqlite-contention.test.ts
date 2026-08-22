@@ -211,6 +211,8 @@ describe("SQLite contention and lifecycle", () => {
     }
     expect(calls).toEqual(["COMMIT", "ROLLBACK"]);
     expect(tx.isActive()).toBe(false);
+    await expect(tx.commit()).rejects.toMatchObject({ code: "TRANSACTION_NOT_ACTIVE" });
+    expect(calls).toEqual(["COMMIT", "ROLLBACK"]);
   });
 
   test("failed migration COMMIT cleanup keeps callback count and original error", async () => {
@@ -234,6 +236,8 @@ describe("SQLite contention and lifecycle", () => {
       native.exec = originalExec;
     }
     expect(callbackCount).toBe(1);
+    expect(calls).toEqual(["BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"]);
+    await capturedSession._commit();
     expect(calls).toEqual(["BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"]);
     await expect(capturedSession.execute("SELECT 1")).rejects.toMatchObject({ code: "MIGRATION_SESSION_INACTIVE" });
   });

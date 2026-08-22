@@ -191,6 +191,7 @@ class SqliteMigrationSession implements MigrationSession {
     } finally {
       this.active = false;
       this.statements.clear();
+      this.finalized = true;
     }
   }
 
@@ -274,6 +275,7 @@ class SqliteTransaction implements Transaction {
     } finally {
       this.active = false;
       this.statements.clear();
+      this.finalized = true;
     }
   }
 
