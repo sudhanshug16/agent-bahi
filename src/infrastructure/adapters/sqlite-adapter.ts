@@ -111,6 +111,8 @@ class SqliteMigrationSession implements MigrationSession {
       "schema_migrations",
       "schema_migrations_stage_v1",
       "schema_migrations_backup_v1",
+      "migration_recovery_audit",
+      "database_control",
     ]);
     if (!allowedMetadataTables.has(tableName)) {
       throw new DomainError("METADATA_IDENTIFIER_REJECTED", "SQLite metadata identifier is not allowlisted");

@@ -33,6 +33,34 @@ multi-instance same-directory safety, upgrade dump/restore, Bun single-binary
 assets, and the MySQL branch remain unresolved. This decision does not cite
 PGlite GitHub issue #704 as an advisory-lock bug; that claim is not established.
 
+## Database control metadata authority — TENTATIVE - NOT OWNER-APPROVED
+
+Singleton `database_control` table holds schema versions, compatibility, and database state.
+- Schema versions (schema_version, data_format_version) and protocol integers (reader min/max/writer)
+  are persisted-format compatibility, NOT CLI semver. Patch-only CLI releases with unchanged
+  protocols do not trigger DB version changes.
+- Revision (future CAS) and generation (committed snapshot) begin at 1.
+- Singleton is enforced via PRIMARY KEY CHECK(id=1). initialize() runs under withMigrationLease,
+  validates exact 0002 schema and history, inserts id=1 bound to exact APPLIED migration checksum.
+  Idempotent: if exact initialized row already exists, returns it without rewriting audit fields.
+  Does not repair or overwrite conflicting/malformed state; fails safe.
+- inspect() is metadata-only: never creates, repairs, or executes business queries. Fails closed
+  (UNINITIALIZED or UNAVAILABLE) on empty table, wrong schema, malformed data, or unexpected row count.
+- requireCompatible() checks AVAILABLE + READY, reader protocol within min/max, writer protocol
+  exact match. Uses safe DomainError codes; does not leak SQL, paths, or raw values.
+- compatibility_matrix is legacy rules-only; database_control is the new DB authority.
+  Real future fence is callback-scoped BusinessSession + SQLite transactions (not part of this slice).
+- Pre-barrier Gate0 binaries cannot be retroactively forced; unsupported before production baseline.
+  Backup must precede automatic migration.
+- No implicit transitions, auto-migration logic, or universal BusinessSession enforcement in this slice.
+
+## MCP HTTP binding — OWNER-APPROVED n95
+
+Hosted MCP endpoint supports http:// and https://. HTTPS is optional. Default bind is loopback
+(127.0.0.1:port). Explicit non-loopback binding (0.0.0.0, hostname) requires operator override.
+TLS is not a hard gate; auth and origin checking are separate concerns. MCP is not assumed to exist
+in this phase; stdio remains valid for local deployments.
+
 ## Superseded by OWNER-APPROVED n94/n95
 
 The active boundary is SQLite local-file only with one CLI+MCP shared core:

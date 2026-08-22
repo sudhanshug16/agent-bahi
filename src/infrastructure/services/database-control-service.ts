@@ -1,0 +1,621 @@
+import type { Database, MigrationSession } from "../../application/ports/persistence.ts";
+import type { Dialect } from "../../core/types.ts";
+import { DomainError } from "../../core/types.ts";
+import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
+
+/**
+ * Database control inspection status.
+ */
+export type DatabaseControlStatus = "UNINITIALIZED" | "UNAVAILABLE" | "AVAILABLE";
+
+/**
+ * Database control metadata record from database_control table.
+ * Represents the complete state when status is AVAILABLE.
+ */
+export interface DatabaseControlRecord {
+  schemaVersion: number;
+  dataFormatVersion: number;
+  readerCompatibilityMin: number;
+  readerCompatibilityMax: number;
+  requiredWriterProtocol: number;
+  state: "READY" | "APPLYING" | "RECOVERY_REQUIRED";
+  revision: number;
+  generation: number;
+  lastMigrationId: string;
+  lastMigrationChecksum: string;
+  lastWriterCliVersion: string;
+  lastWriterBuildId: string;
+  lastWriterAt: string;
+  createdAt: string;
+  updatedAt: string;
+  recoveryReason: string | null;
+}
+
+/**
+ * Database control inspection result.
+ */
+export interface DatabaseControlInspection {
+  status: DatabaseControlStatus;
+  record?: DatabaseControlRecord;
+  reason?: string;
+}
+
+/**
+ * Initialization parameters for database_control.
+ */
+export interface DatabaseControlInitParams {
+  cliVersion: string;
+  buildId: string;
+  now: Date;
+}
+
+/**
+ * Reader compatibility check parameters.
+ */
+export interface DatabaseControlReaderParams {
+  readerProtocol: number;
+}
+
+/**
+ * Writer compatibility check parameters.
+ */
+export interface DatabaseControlWriterParams {
+  writerProtocol: number;
+}
+
+/**
+ * Database control service: singleton metadata authority for schema versions,
+ * compatibility, and database state.
+ *
+ * Key invariants:
+ * - Exactly one row (id=1), enforced via CHECK constraint
+ * - Cannot repair or pre-seed; initialize() inserts first row atomically
+ * - Binds to exact APPLIED 0002-database-control migration checksum
+ * - Never creates/repairs in inspect(); fails closed on malformed state
+ */
+export class DatabaseControlService {
+  constructor(
+    private db: Database,
+    private dialect: Dialect,
+  ) {}
+
+  /**
+   * Metadata-only inspection: never creates, repairs, or modifies.
+   * Returns status and optionally a complete record if AVAILABLE.
+   *
+   * Status mapping:
+   * - UNINITIALIZED: table missing or contains zero rows
+   * - UNAVAILABLE: table present but malformed, invalid data, partial schema,
+   *                unexpected row count, unknown state, or mismatch to expected
+   *                migration identity/checksum
+   * - AVAILABLE: exactly one structurally and semantically valid row exists
+   */
+  async inspect(): Promise<DatabaseControlInspection> {
+    try {
+      // Check if table exists
+      const result = await this.db.query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='database_control'",
+        [],
+      );
+
+      const tableExists = (result.rows[0]?.count as number) > 0;
+      if (!tableExists) {
+        return { status: "UNINITIALIZED", reason: "Table database_control does not exist" };
+      }
+
+      // Query the table contents
+      const rows = await this.db.query(
+        `SELECT id, schema_version, data_format_version, reader_compatibility_min,
+                reader_compatibility_max, required_writer_protocol, state, revision,
+                generation, last_migration_id, last_migration_checksum,
+                last_writer_cli_version, last_writer_build_id, last_writer_at,
+                created_at, updated_at, recovery_reason
+         FROM database_control`,
+        [],
+      );
+
+      // Exactly zero rows is UNINITIALIZED
+      if (rows.rowCount === 0) {
+        return { status: "UNINITIALIZED", reason: "Table exists but contains no rows" };
+      }
+
+      // Anything other than exactly one row is UNAVAILABLE
+      if (rows.rowCount !== 1) {
+        return { status: "UNAVAILABLE", reason: `Expected exactly 1 row, found ${rows.rowCount}` };
+      }
+
+      const row = rows.rows[0];
+
+      // Validate row structure and parse record
+      const validation = this.validateAndParseRecord(row);
+      if (validation.error) {
+        return { status: "UNAVAILABLE", reason: validation.error };
+      }
+
+      return { status: "AVAILABLE", record: validation.record };
+    } catch (error) {
+      // Any database error during inspection means UNAVAILABLE
+      return {
+        status: "UNAVAILABLE",
+        reason: `Inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
+   * Initialize the database control row under migration lease.
+   * Validates the exact 0002 table schema, requires exact 0002 history row status APPLIED
+   * with 64-hex checksum, and inserts id=1 from that history checksum.
+   *
+   * Idempotent: if exact valid row already exists, returns it without rewriting audit fields.
+   * Never repairs or overwrites malformed/conflicting state; fails safe.
+   *
+   * Requires: withMigrationLease callback context.
+   */
+  async initialize(params: DatabaseControlInitParams, session: MigrationSession): Promise<DatabaseControlRecord> {
+    const builder = new DialectSqlBuilder();
+
+    // First, validate the table schema exists and is exactly correct
+    const tableMetadata = await session.getTableMetadata("database_control");
+    if (!tableMetadata) {
+      throw new DomainError("DATABASE_CONTROL_UNINITIALIZED", "database_control table does not exist");
+    }
+
+    // Validate table schema structure
+    const schemaError = this.validateTableSchema(tableMetadata);
+    if (schemaError) {
+      throw new DomainError("DATABASE_CONTROL_MALFORMED", schemaError);
+    }
+
+    // Fetch 0002 migration from schema_migrations
+    const migrationRecord = await session.executeSingle(
+      `SELECT id, checksum, status FROM schema_migrations WHERE id = ${builder.placeholder()}`,
+      ["0002-database-control"],
+    );
+
+    if (!migrationRecord) {
+      throw new DomainError(
+        "DATABASE_CONTROL_MISSING_MIGRATION",
+        "Migration 0002-database-control not found in schema_migrations",
+      );
+    }
+
+    if (migrationRecord.status !== "APPLIED") {
+      throw new DomainError(
+        "DATABASE_CONTROL_MIGRATION_NOT_APPLIED",
+        `Expected 0002-database-control status=APPLIED, got ${migrationRecord.status}`,
+      );
+    }
+
+    const migrationChecksum = String(migrationRecord.checksum);
+    if (!this.isValidHexChecksum(migrationChecksum)) {
+      throw new DomainError(
+        "DATABASE_CONTROL_INVALID_CHECKSUM",
+        `Invalid migration checksum format: ${migrationChecksum}`,
+      );
+    }
+
+    // Check for existing row
+    const existingRow = await session.executeSingle(
+      `SELECT id, last_migration_checksum, last_writer_cli_version, last_writer_build_id
+       FROM database_control WHERE id = 1`,
+    );
+
+    if (existingRow) {
+      // Row exists; validate it matches exactly
+      if (String(existingRow.last_migration_checksum) !== migrationChecksum) {
+        throw new DomainError(
+          "DATABASE_CONTROL_CHECKSUM_MISMATCH",
+          "Existing database_control row has different migration checksum",
+        );
+      }
+
+      // Return existing row without modification
+      const inspection = await this.inspect();
+      if (inspection.status === "AVAILABLE" && inspection.record) {
+        return inspection.record;
+      }
+
+      throw new DomainError(
+        "DATABASE_CONTROL_READ_FAILED",
+        "Could not read existing database_control row",
+      );
+    }
+
+    // Insert new row with initial state
+    const now = params.now.toISOString();
+    const insertSql = `
+      INSERT INTO database_control (
+        id, schema_version, data_format_version, reader_compatibility_min,
+        reader_compatibility_max, required_writer_protocol, state, revision,
+        generation, last_migration_id, last_migration_checksum,
+        last_writer_cli_version, last_writer_build_id, last_writer_at,
+        created_at, updated_at, recovery_reason
+      ) VALUES (${Array.from({ length: 17 }, () => builder.placeholder()).join(", ")})
+    `;
+
+    await session.execute(insertSql, [
+      1, // id
+      2, // schema_version
+      1, // data_format_version
+      1, // reader_compatibility_min
+      1, // reader_compatibility_max
+      1, // required_writer_protocol
+      "READY", // state
+      1, // revision
+      1, // generation
+      "0002-database-control", // last_migration_id
+      migrationChecksum, // last_migration_checksum
+      params.cliVersion, // last_writer_cli_version
+      params.buildId, // last_writer_build_id
+      now, // last_writer_at
+      now, // created_at
+      now, // updated_at
+      null, // recovery_reason
+    ]);
+
+    // Read back the inserted row using the same session
+    const readbackRow = await session.executeSingle(
+      `SELECT id, schema_version, data_format_version, reader_compatibility_min,
+              reader_compatibility_max, required_writer_protocol, state, revision,
+              generation, last_migration_id, last_migration_checksum,
+              last_writer_cli_version, last_writer_build_id, last_writer_at,
+              created_at, updated_at, recovery_reason
+       FROM database_control WHERE id = 1`,
+    );
+
+    if (readbackRow) {
+      const validation = this.validateAndParseRecord(readbackRow);
+      if (validation.record) {
+        return validation.record;
+      }
+      if (validation.error) {
+        throw new DomainError(
+          "DATABASE_CONTROL_INSERT_FAILED",
+          `Failed to read back inserted database_control row: ${validation.error}`,
+        );
+      }
+    }
+
+    throw new DomainError(
+      "DATABASE_CONTROL_INSERT_FAILED",
+      "Failed to read back inserted database_control row: no row found",
+    );
+  }
+
+  /**
+   * Verify reader protocol compatibility.
+   * Requires status AVAILABLE + state READY.
+   * Reader protocol must be within [readerCompatibilityMin, readerCompatibilityMax] inclusive.
+   */
+  async requireCompatibleReader(params: DatabaseControlReaderParams): Promise<void> {
+    const inspection = await this.inspect();
+
+    if (inspection.status !== "AVAILABLE") {
+      throw new DomainError(
+        "DATABASE_CONTROL_UNAVAILABLE",
+        `Database control unavailable: ${inspection.reason || "unknown"}`,
+      );
+    }
+
+    const record = inspection.record!;
+
+    if (record.state !== "READY") {
+      throw new DomainError(
+        "DATABASE_CONTROL_NOT_READY",
+        `Database is not READY (current state: ${record.state})`,
+      );
+    }
+
+    if (
+      params.readerProtocol < record.readerCompatibilityMin ||
+      params.readerProtocol > record.readerCompatibilityMax
+    ) {
+      throw new DomainError(
+        "DATABASE_READER_INCOMPATIBLE",
+        `Reader protocol ${params.readerProtocol} outside range [${record.readerCompatibilityMin}, ${record.readerCompatibilityMax}]`,
+      );
+    }
+  }
+
+  /**
+   * Verify writer protocol compatibility.
+   * Requires status AVAILABLE + state READY.
+   * Writer protocol must exactly equal requiredWriterProtocol.
+   */
+  async requireCompatibleWriter(params: DatabaseControlWriterParams): Promise<void> {
+    const inspection = await this.inspect();
+
+    if (inspection.status !== "AVAILABLE") {
+      throw new DomainError(
+        "DATABASE_CONTROL_UNAVAILABLE",
+        `Database control unavailable: ${inspection.reason || "unknown"}`,
+      );
+    }
+
+    const record = inspection.record!;
+
+    if (record.state !== "READY") {
+      throw new DomainError(
+        "DATABASE_CONTROL_NOT_READY",
+        `Database is not READY (current state: ${record.state})`,
+      );
+    }
+
+    if (params.writerProtocol !== record.requiredWriterProtocol) {
+      throw new DomainError(
+        "DATABASE_WRITER_INCOMPATIBLE",
+        `Writer protocol ${params.writerProtocol} does not match required ${record.requiredWriterProtocol}`,
+      );
+    }
+  }
+
+  /**
+   * Validate table schema structure against expected database_control schema.
+   * Returns error message if invalid, undefined if valid.
+   */
+  private validateTableSchema(metadata: any): string | undefined {
+    // Must be a TABLE, not a VIEW
+    if (metadata.kind !== "TABLE") {
+      return `database_control must be a TABLE, not ${metadata.kind}`;
+    }
+
+    // Check for required columns
+    const expectedColumns = [
+      "id",
+      "schema_version",
+      "data_format_version",
+      "reader_compatibility_min",
+      "reader_compatibility_max",
+      "required_writer_protocol",
+      "state",
+      "revision",
+      "generation",
+      "last_migration_id",
+      "last_migration_checksum",
+      "last_writer_cli_version",
+      "last_writer_build_id",
+      "last_writer_at",
+      "created_at",
+      "updated_at",
+      "recovery_reason",
+    ];
+
+    const actualColumnNames = metadata.columns.map((c: any) => c.name);
+
+    if (actualColumnNames.length !== expectedColumns.length) {
+      return `Expected ${expectedColumns.length} columns, found ${actualColumnNames.length}`;
+    }
+
+    for (let i = 0; i < expectedColumns.length; i++) {
+      if (actualColumnNames[i] !== expectedColumns[i]) {
+        return `Column ${i}: expected ${expectedColumns[i]}, got ${actualColumnNames[i]}`;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Validate and parse a row from database_control into a DatabaseControlRecord.
+   * Returns either a valid record or an error message.
+   */
+  private validateAndParseRecord(
+    row: Record<string, unknown>,
+  ): { record?: DatabaseControlRecord; error?: string } {
+    try {
+      // Validate id is exactly 1
+      let id: number;
+      try {
+        id = this.parseInteger(row.id, "id");
+      } catch (e) {
+        return { error: `Failed to parse id: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (id !== 1) {
+        return { error: `Invalid id: expected 1, got ${id}` };
+      }
+
+      // Parse integer fields with strict validation
+      let schemaVersion: number;
+      try {
+        schemaVersion = this.parseInteger(row.schema_version, "schema_version");
+      } catch (e) {
+        return { error: `Failed to parse schema_version: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (schemaVersion < 1) return { error: "schema_version must be >= 1" };
+
+      let dataFormatVersion: number;
+      try {
+        dataFormatVersion = this.parseInteger(row.data_format_version, "data_format_version");
+      } catch (e) {
+        return { error: `Failed to parse data_format_version: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (dataFormatVersion < 1) return { error: "data_format_version must be >= 1" };
+
+      let readerMin: number;
+      try {
+        readerMin = this.parseInteger(row.reader_compatibility_min, "reader_compatibility_min");
+      } catch (e) {
+        return { error: `Failed to parse reader_compatibility_min: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (readerMin < 1) return { error: "reader_compatibility_min must be >= 1" };
+
+      let readerMax: number;
+      try {
+        readerMax = this.parseInteger(row.reader_compatibility_max, "reader_compatibility_max");
+      } catch (e) {
+        return { error: `Failed to parse reader_compatibility_max: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (readerMax < readerMin) return { error: "reader_compatibility_max must be >= reader_compatibility_min" };
+
+      let writerProtocol: number;
+      try {
+        writerProtocol = this.parseInteger(row.required_writer_protocol, "required_writer_protocol");
+      } catch (e) {
+        return { error: `Failed to parse required_writer_protocol: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (writerProtocol < 1) return { error: "required_writer_protocol must be >= 1" };
+
+      let revision: number;
+      try {
+        revision = this.parseInteger(row.revision, "revision");
+      } catch (e) {
+        return { error: `Failed to parse revision: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (revision < 1) return { error: "revision must be >= 1" };
+
+      let generation: number;
+      try {
+        generation = this.parseInteger(row.generation, "generation");
+      } catch (e) {
+        return { error: `Failed to parse generation: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (generation < 1) return { error: "generation must be >= 1" };
+
+      // Parse state
+      const state = String(row.state);
+      if (!["READY", "APPLYING", "RECOVERY_REQUIRED"].includes(state)) {
+        return { error: `Invalid state: ${state}` };
+      }
+
+      // Validate state-specific recovery_reason constraint
+      const recoveryReason = row.recovery_reason === null || row.recovery_reason === undefined ? null : String(row.recovery_reason);
+      if (state === "RECOVERY_REQUIRED" && !recoveryReason) {
+        return { error: "RECOVERY_REQUIRED state requires nonblank recovery_reason" };
+      }
+      if ((state === "READY" || state === "APPLYING") && recoveryReason) {
+        return { error: `${state} state requires NULL recovery_reason` };
+      }
+
+      // Parse string fields
+      let lastMigrationId: string;
+      try {
+        lastMigrationId = this.parseNonblankString(row.last_migration_id, "last_migration_id")!;
+      } catch (e) {
+        return { error: `Failed to parse last_migration_id: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!lastMigrationId) return { error: "last_migration_id is blank" };
+
+      let lastMigrationChecksum: string;
+      try {
+        lastMigrationChecksum = this.parseNonblankString(row.last_migration_checksum, "last_migration_checksum")!;
+      } catch (e) {
+        return { error: `Failed to parse last_migration_checksum: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!lastMigrationChecksum) return { error: "last_migration_checksum is blank" };
+      if (!this.isValidHexChecksum(lastMigrationChecksum)) {
+        return { error: "last_migration_checksum is not 64 hex characters" };
+      }
+
+      let lastWriterCliVersion: string;
+      try {
+        lastWriterCliVersion = this.parseNonblankString(row.last_writer_cli_version, "last_writer_cli_version")!;
+      } catch (e) {
+        return { error: `Failed to parse last_writer_cli_version: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!lastWriterCliVersion) return { error: "last_writer_cli_version is blank" };
+
+      let lastWriterBuildId: string;
+      try {
+        lastWriterBuildId = this.parseNonblankString(row.last_writer_build_id, "last_writer_build_id")!;
+      } catch (e) {
+        return { error: `Failed to parse last_writer_build_id: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!lastWriterBuildId) return { error: "last_writer_build_id is blank" };
+
+      // Parse and validate timestamp fields (must be valid ISO strings)
+      let lastWriterAt: string;
+      try {
+        lastWriterAt = this.parseTimestamp(row.last_writer_at, "last_writer_at")!;
+      } catch (e) {
+        return { error: `Failed to parse last_writer_at: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!lastWriterAt) return { error: "last_writer_at is not a valid ISO timestamp" };
+
+      let createdAt: string;
+      try {
+        createdAt = this.parseTimestamp(row.created_at, "created_at")!;
+      } catch (e) {
+        return { error: `Failed to parse created_at: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!createdAt) return { error: "created_at is not a valid ISO timestamp" };
+
+      let updatedAt: string;
+      try {
+        updatedAt = this.parseTimestamp(row.updated_at, "updated_at")!;
+      } catch (e) {
+        return { error: `Failed to parse updated_at: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (!updatedAt) return { error: "updated_at is not a valid ISO timestamp" };
+
+      return {
+        record: {
+          schemaVersion,
+          dataFormatVersion,
+          readerCompatibilityMin: readerMin,
+          readerCompatibilityMax: readerMax,
+          requiredWriterProtocol: writerProtocol,
+          state: state as "READY" | "APPLYING" | "RECOVERY_REQUIRED",
+          revision,
+          generation,
+          lastMigrationId,
+          lastMigrationChecksum,
+          lastWriterCliVersion,
+          lastWriterBuildId,
+          lastWriterAt,
+          createdAt,
+          updatedAt,
+          recoveryReason,
+        },
+      };
+    } catch (error) {
+      return {
+        error: `Row validation failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  private parseInteger(value: unknown, fieldName: string): number {
+    if (typeof value === "number" && Number.isInteger(value) && Number.isSafeInteger(value)) {
+      return value;
+    }
+    if (typeof value === "bigint") {
+      if (value >= Number.MIN_SAFE_INTEGER && value <= Number.MAX_SAFE_INTEGER) {
+        return Number(value);
+      }
+    }
+    if (typeof value === "string") {
+      const parsed = parseInt(value, 10);
+      if (!isNaN(parsed) && String(parsed) === value && Number.isSafeInteger(parsed)) {
+        return parsed;
+      }
+    }
+    throw new Error(`${fieldName} is not a valid integer`);
+  }
+
+  private parseNonblankString(value: unknown, fieldName: string): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string" && value.length > 0) return value;
+    throw new Error(`${fieldName} is not a nonblank string`);
+  }
+
+  private parseTimestamp(value: unknown, fieldName: string): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string" && value.length > 0) {
+      try {
+        // Must parse as ISO and re-stringify to validate canonical format
+        const date = new Date(value);
+        if (!Number.isNaN(date.getTime()) && date.toISOString() === value) {
+          return value;
+        }
+      } catch {
+        // Fall through to error
+      }
+    }
+    throw new Error(`${fieldName} is not a valid canonical UTC ISO string: ${String(value)}`);
+  }
+
+  private isValidHexChecksum(value: string): boolean {
+    return value.length === 64 && /^[0-9a-f]{64}$/.test(value);
+  }
+}
