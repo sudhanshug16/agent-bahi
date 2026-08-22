@@ -8,6 +8,7 @@ import {
   TenantNotFoundError,
   currentTimestamp,
   IdempotencyConflictError,
+  DomainError,
 } from "../../core/types.ts";
 import type { Tenant, BookSet } from "../ports/repositories.ts";
 
@@ -52,44 +53,69 @@ export class TenantService {
     tenantKind: "COMPANY" | "INDIVIDUAL",
     tenantName: string,
     baseCurrency: string = "INR",
-    requestId: string = randomUUID(),  // Can be provided for true idempotency
+    requestId: string = randomUUID(),
   ): Promise<{ tenant: Tenant; defaultBookSet: BookSet }> {
-    // Compute request hash from parameters
     const requestHash = this.computeRequestHash(tenantKind, tenantName, baseCurrency);
 
-    // Use UnitOfWork for atomic transaction with automatic rollback
-    // Insert-first pattern: idempotency record + tenant + bookset all in one transaction
     return this.db.unitOfWork().execute(async (tx) => {
-      // Check if request was already processed (WITHIN transaction for consistency)
+      // Check if request already processed
       const existingRequest = await tx.executeSingle(
-        "SELECT tenant_id, result_json, request_hash FROM tenant_creation_requests WHERE request_id = ?",
+        "SELECT tenant_id, request_hash, result_json FROM tenant_creation_requests WHERE request_id = ?",
         [requestId],
       );
 
       if (existingRequest) {
-        // Request already exists - verify hash matches
         if ((existingRequest.request_hash as string) !== requestHash) {
-          // Hash mismatch - client sent same request_id with different parameters
           throw new IdempotencyConflictError(
             `Request ${requestId} already exists with different parameters`,
           );
         }
 
-        // Hash matches - return cached result
         if (existingRequest.result_json) {
-          const result = JSON.parse(existingRequest.result_json as string);
-          return result;
+          return JSON.parse(existingRequest.result_json as string);
         }
+
+        // Partial: idempotency row reserved but result not finalized
+        throw new DomainError(
+          "IDEMPOTENCY_PARTIAL",
+          `Request ${requestId} is partially applied; retry may succeed`,
+        );
       }
 
-      // New request - create tenant and BookSet atomically with request record
+      // Reserve idempotency row FIRST (tenant_id=NULL, result=NULL)
+      const requestRecordId = randomUUID();
       const tenantId = brandTenantId(randomUUID());
       const bookSetId = brandBookSetId(randomUUID());
       const now = currentTimestamp();
-
-      // Determine default BookSet kind based on tenant kind
       const bookSetKind = tenantKind === "COMPANY" ? "COMPANY" : "PERSONAL";
 
+      await tx.execute(
+        `INSERT INTO tenant_creation_requests (id, request_id, request_hash, tenant_id, result_json, result_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [requestRecordId, requestId, requestHash, null, null, null, now],
+      );
+
+      // Insert tenant with default_book_set_id=NULL (FK will be added later)
+      await tx.execute(
+        `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tenantId, tenantKind, "CREATING", tenantName, baseCurrency, null, now, now],
+      );
+
+      // Insert BookSet (FK to tenant satisfied)
+      await tx.execute(
+        `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [bookSetId, tenantId, bookSetKind, "ACTIVE", now, now],
+      );
+
+      // Update tenant default_book_set_id (trigger validates same-tenant row exists)
+      await tx.execute(
+        `UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?`,
+        [bookSetId, now, tenantId],
+      );
+
+      // Construct result and finalize idempotency row
       const tenant: Tenant = {
         id: tenantId,
         kind: tenantKind,
@@ -110,34 +136,16 @@ export class TenantService {
         updatedAt: now,
       };
 
-      // Create idempotency record FIRST (insert-first pattern)
       const result = { tenant, defaultBookSet };
       const resultJson = JSON.stringify(result);
       const resultHash = this.computeRequestHash(JSON.stringify(result));
 
-      // Insert request record first - if this fails, nothing is created
+      // Update idempotency row with final result
       await tx.execute(
-        `INSERT INTO tenant_creation_requests (id, request_id, request_hash, tenant_id, result_json, result_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), requestId, requestHash, tenantId, resultJson, resultHash, now],
+        `UPDATE tenant_creation_requests SET tenant_id = ?, result_json = ?, result_hash = ? WHERE request_id = ?`,
+        [tenantId, resultJson, resultHash, requestId],
       );
 
-      // Now create tenant and BookSet (transaction will rollback if either fails)
-      // Insert tenant
-      await tx.execute(
-        `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tenantId, tenant.kind, "CREATING", tenant.name, tenant.baseCurrency, bookSetId, now, now],
-      );
-
-      // Insert BookSet
-      await tx.execute(
-        `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [bookSetId, tenantId, bookSetKind, "ACTIVE", now, now],
-      );
-
-      // Entire transaction committed by UnitOfWork - no partial state possible
       return result;
     });
   }

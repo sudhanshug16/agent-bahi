@@ -1,6 +1,41 @@
-import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork } from "../../application/ports/persistence.ts";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession } from "../../application/ports/persistence.ts";
 import type { PostgresConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
+import { randomUUID } from "crypto";
+
+/**
+ * PostgreSQL Migration Session (callback-scoped): uses pinned connection with xact-scoped lock.
+ * txSql held by db.begin() callback; never escape scope.
+ * Commit/rollback handled automatically by Bun on callback return/error.
+ */
+class PostgresMigrationSession implements MigrationSession {
+  private token: string;
+
+  constructor(private txSql: any) {
+    this.token = randomUUID();
+  }
+
+  async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
+    const result = await this.txSql.query(sql, params || []);
+    return {
+      rows: Array.isArray(result) ? result : result?.rows || [],
+      rowCount: (result?.length || result?.rows?.length || 0) as number,
+    };
+  }
+
+  async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
+    const result = await this.txSql.query(sql, params || []);
+    return (Array.isArray(result) ? result[0] : result?.rows?.[0]) as Record<string, unknown> | undefined;
+  }
+
+  async executeRaw(sql: string): Promise<void> {
+    await this.txSql.query(sql);
+  }
+
+  leaseToken(): string {
+    return this.token;
+  }
+}
 
 /**
  * PostgreSQL Transaction using Bun.sql transaction callback (pinned connection).
@@ -175,6 +210,39 @@ export class PostgresAdapter implements Database {
     return new PostgresUnitOfWork(this.db);
   }
 
+  async withMigrationLease<T>(
+    callback: (session: MigrationSession) => Promise<T>,
+    timeoutMs: number = 30000,
+  ): Promise<T> {
+    await this.ensureConnected();
+    const lockId = this.hashToLockId("agent-bahi-migration");
+    const deadline = Date.now() + timeoutMs;
+
+    // Use db.begin() to get pinned connection; acquire xact-scoped advisory lock inside.
+    // Set lock_timeout to enforce deadline; pg_try_advisory_xact_lock returns false if timeout.
+    return this.db.begin(async (txSql: any) => {
+      // Set lock_timeout to enforce deadline
+      const lockTimeoutMs = Math.max(100, timeoutMs);
+      await txSql.query(`SET lock_timeout = '${lockTimeoutMs}ms'`);
+
+      // Acquire transaction-scoped advisory lock; pg_advisory_xact_lock holds until COMMIT/ROLLBACK
+      // Use pg_try_advisory_xact_lock(id) which returns true/false instead of blocking
+      const lockResult = await txSql.query(
+        "SELECT pg_advisory_xact_lock($1) as acquired",
+        [lockId],
+      );
+      if (!lockResult || !lockResult[0]) {
+        throw new MigrationLockedError(
+          "Failed to acquire migration advisory lock within timeout",
+        );
+      }
+
+      const session = new PostgresMigrationSession(txSql);
+      return await callback(session);
+      // Bun automatically commits if callback returns, rolls back if callback throws
+    });
+  }
+
   async isConnected(): Promise<boolean> {
     try {
       if (!this.db) return false;
@@ -226,15 +294,13 @@ export class PostgresAdapter implements Database {
   }
 
   private hashToLockId(name: string): number {
-    // Simple hash to convert lock name to lock ID.
-    // In production, use a more robust approach or just use string IDs.
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
       const char = name.charCodeAt(i);
       hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
+      hash = hash & hash;
     }
-    return Math.abs(hash) % 2147483647; // Ensure positive 31-bit value
+    return Math.abs(hash) % 2147483647;
   }
 
   private handlePostgresError(error: unknown): void {

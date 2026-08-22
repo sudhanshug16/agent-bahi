@@ -1,6 +1,41 @@
-import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork } from "../../application/ports/persistence.ts";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession } from "../../application/ports/persistence.ts";
 import type { MysqlConfig } from "../config/database.ts";
-import { DomainError } from "../../core/types.ts";
+import { DomainError, MigrationLockedError } from "../../core/types.ts";
+import { randomUUID } from "crypto";
+
+/**
+ * MySQL Migration Session (callback-scoped): uses db.begin() with GET_LOCK on reserved connection.
+ * DDL auto-commits in MySQL; tracked with APPLYING row committed before DDL, then APPLIED/DIRTY after.
+ * Never construct outside callback; session lifetime is callback scope.
+ */
+class MysqlMigrationSession implements MigrationSession {
+  private token: string;
+
+  constructor(private txSql: any) {
+    this.token = randomUUID();
+  }
+
+  async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
+    const result = await this.txSql.query(sql, params || []);
+    return {
+      rows: Array.isArray(result) ? result : result?.rows || [],
+      rowCount: (result?.length || result?.rows?.length || 0) as number,
+    };
+  }
+
+  async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
+    const result = await this.txSql.query(sql, params || []);
+    return (Array.isArray(result) ? result[0] : result?.rows?.[0]) as Record<string, unknown> | undefined;
+  }
+
+  async executeRaw(sql: string): Promise<void> {
+    await this.txSql.query(sql);
+  }
+
+  leaseToken(): string {
+    return this.token;
+  }
+}
 
 /**
  * MySQL Transaction using Bun.sql transaction callback (pinned connection).
@@ -178,6 +213,42 @@ export class MysqlAdapter implements Database {
 
   unitOfWork(config?: TransactionConfig): UnitOfWork {
     return new MysqlUnitOfWork(this.db);
+  }
+
+  async withMigrationLease<T>(
+    callback: (session: MigrationSession) => Promise<T>,
+    timeoutMs: number = 30000,
+  ): Promise<T> {
+    await this.ensureConnected();
+
+    // Use db.begin() to get reserved connection; acquire GET_LOCK inside transaction.
+    // MySQL DDL auto-commits; track APPLYING before DDL, APPLIED/DIRTY after.
+    return this.db.begin(async (txSql: any) => {
+      // Acquire GET_LOCK on reserved connection; timeout in seconds
+      const lockTimeoutSecs = Math.ceil(Math.max(1, timeoutMs / 1000));
+      const lockResult = await txSql.query(
+        "SELECT GET_LOCK(?, ?) as lock_result",
+        ["agent-bahi-migration", lockTimeoutSecs],
+      );
+
+      if ((lockResult[0]?.lock_result || 0) !== 1) {
+        throw new MigrationLockedError(
+          `Failed to acquire migration lock within ${timeoutMs}ms`,
+        );
+      }
+
+      const session = new MysqlMigrationSession(txSql);
+      try {
+        return await callback(session);
+      } finally {
+        // RELEASE_LOCK on same reserved connection
+        try {
+          await txSql.query("SELECT RELEASE_LOCK('agent-bahi-migration')");
+        } catch {
+          // Lock already released
+        }
+      }
+    });
   }
 
   async isConnected(): Promise<boolean> {

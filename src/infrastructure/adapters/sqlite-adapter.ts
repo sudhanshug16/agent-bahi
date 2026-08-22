@@ -1,9 +1,68 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import { randomUUID } from "crypto";
-import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork } from "../../application/ports/persistence.ts";
+import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork, MigrationSession } from "../../application/ports/persistence.ts";
 import type { SqliteConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { resolve } from "path";
+
+/**
+ * SQLite Migration Session (callback-scoped): holds BEGIN IMMEDIATE transaction.
+ * Ensures all DDL, validation, and audit happen on same connection.
+ * Never construct outside callback; never call commit/rollback (automatic).
+ */
+class SqliteMigrationSession implements MigrationSession {
+  private statements = new Map<string, ReturnType<BunDatabase["prepare"]>>();
+  private token: string;
+
+  constructor(private db: BunDatabase) {
+    this.token = randomUUID();
+    this.db.exec("BEGIN IMMEDIATE");
+  }
+
+  private prepareStatement(sql: string) {
+    if (!this.statements.has(sql)) {
+      this.statements.set(sql, this.db.prepare(sql));
+    }
+    return this.statements.get(sql)!;
+  }
+
+  async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
+    const stmt = this.prepareStatement(sql);
+    const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
+    return {
+      rows: results,
+      rowCount: results.length,
+    };
+  }
+
+  async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
+    const stmt = this.prepareStatement(sql);
+    return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
+  }
+
+  async executeRaw(sql: string): Promise<void> {
+    this.db.exec(sql);
+  }
+
+  leaseToken(): string {
+    return this.token;
+  }
+
+  // Commit/rollback handled by withMigrationLease; never expose here
+  async _commit(): Promise<void> {
+    this.statements.clear();
+    this.db.exec("COMMIT");
+  }
+
+  async _rollback(): Promise<void> {
+    this.statements.clear();
+    try {
+      this.db.exec("ROLLBACK");
+    } catch {
+      // Already rolled back
+    }
+  }
+}
 
 /**
  * SQLite Transaction adapter wrapping Bun's native Database API.
@@ -240,6 +299,27 @@ export class SqliteAdapter implements Database {
 
   unitOfWork(config?: TransactionConfig): UnitOfWork {
     return new SqliteUnitOfWork(this.db);
+  }
+
+  async withMigrationLease<T>(
+    callback: (session: MigrationSession) => Promise<T>,
+    timeoutMs?: number,
+  ): Promise<T> {
+    // SQLite: BEGIN IMMEDIATE on main connection; entire callback executes in transaction.
+    // Timeout is advisory; SQLite has no native transaction timeout.
+    const session = new SqliteMigrationSession(this.db);
+    try {
+      const result = await callback(session);
+      await session._commit();
+      return result;
+    } catch (error) {
+      try {
+        await session._rollback();
+      } catch {
+        // Already rolled back
+      }
+      throw error;
+    }
   }
 
   async isConnected(): Promise<boolean> {

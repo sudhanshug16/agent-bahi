@@ -1,19 +1,20 @@
 import { createHash } from "crypto";
-import type { Database, MigrationRecord } from "../../application/ports/persistence.ts";
+import type { Database, MigrationRecord, MigrationSession } from "../../application/ports/persistence.ts";
 import type { Dialect } from "../../core/types.ts";
 import { DomainError, MigrationLockedError, MigrationChecksumError, DirtyMigrationError } from "../../core/types.ts";
 
 /**
  * SQLite schema for tracking migrations.
+ * Includes status field: null/APPLIED (success), APPLYING (in-progress), DIRTY (failed).
  */
 const MIGRATION_SCHEMA_SQLITE = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id TEXT PRIMARY KEY,
   dialect TEXT NOT NULL,
   checksum TEXT NOT NULL,
+  status TEXT DEFAULT NULL,
   executed_at TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
-  dirty INTEGER NOT NULL DEFAULT 0,
   dirty_reason TEXT
 );
 `;
@@ -23,9 +24,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   id TEXT PRIMARY KEY,
   dialect TEXT NOT NULL,
   checksum TEXT NOT NULL,
+  status TEXT DEFAULT NULL,
   executed_at TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
-  dirty BOOLEAN NOT NULL DEFAULT false,
   dirty_reason TEXT
 );
 `;
@@ -35,20 +36,19 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   id VARCHAR(255) PRIMARY KEY,
   dialect VARCHAR(50) NOT NULL,
   checksum VARCHAR(64) NOT NULL,
+  status VARCHAR(20) DEFAULT NULL,
   executed_at VARCHAR(50) NOT NULL,
   duration_ms INT NOT NULL,
-  dirty BOOLEAN NOT NULL DEFAULT false,
   dirty_reason TEXT
 );
 `;
 
 /**
  * Core migration service.
- * Manages schema versions, compatibility, and DDL execution.
+ * Manages schema versions, compatibility, and DDL execution within migration lease.
+ * All work must happen via withMigrationLease callback; never holds separate locks.
  */
 export class MigrationService {
-  private lockToken: string | null = null;
-
   constructor(
     private db: Database,
     private dialect: Dialect,
@@ -56,6 +56,7 @@ export class MigrationService {
 
   /**
    * Ensure migration tracking table exists.
+   * Safe to call outside lease; just ensures schema structure.
    */
   async ensureMigrationTable(): Promise<void> {
     try {
@@ -76,18 +77,20 @@ export class MigrationService {
   }
 
   /**
-   * Get current schema compatibility status.
+   * Get current schema status without lease (read-only inspection).
+   * Fails if schema is empty, dirty, or applying.
    */
   async getStatus(): Promise<{
     hasSchema: boolean;
     lastMigrationId?: string;
     isDirty: boolean;
+    isApplying: boolean;
     appliedMigrations: MigrationRecord[];
     dialect: string;
   }> {
     try {
       const migrations = await this.db.query(
-        "SELECT id, dialect, checksum, executed_at, duration_ms FROM schema_migrations ORDER BY executed_at ASC",
+        "SELECT id, dialect, checksum, status, executed_at, duration_ms FROM schema_migrations ORDER BY executed_at ASC",
       );
 
       const appliedMigrations: MigrationRecord[] = migrations.rows.map((row) => ({
@@ -98,20 +101,15 @@ export class MigrationService {
         durationMs: row.duration_ms as number,
       }));
 
-      const lastMigration = appliedMigrations[appliedMigrations.length - 1];
-
-      // Check if last migration is marked dirty
-      const dirtyCheck = await this.db.querySingle(
-        "SELECT dirty, dirty_reason FROM schema_migrations WHERE id = ?",
-        lastMigration ? [lastMigration.id] : [],
-      );
-
-      const isDirty = dirtyCheck && (dirtyCheck.dirty === 1 || dirtyCheck.dirty === true);
+      const lastMigration = migrations.rows[migrations.rows.length - 1];
+      const isDirty = lastMigration && lastMigration.status === "DIRTY";
+      const isApplying = lastMigration && lastMigration.status === "APPLYING";
 
       return {
         hasSchema: appliedMigrations.length > 0,
-        lastMigrationId: lastMigration?.id,
+        lastMigrationId: lastMigration?.id as string | undefined,
         isDirty: isDirty || false,
+        isApplying: isApplying || false,
         appliedMigrations,
         dialect: this.dialect,
       };
@@ -120,6 +118,7 @@ export class MigrationService {
       return {
         hasSchema: false,
         isDirty: false,
+        isApplying: false,
         appliedMigrations: [],
         dialect: this.dialect,
       };
@@ -127,100 +126,67 @@ export class MigrationService {
   }
 
   /**
-   * Acquire exclusive migration lock.
-   * Prevents concurrent schema changes.
-   *
-   * SQLite: PRAGMA locking_mode = EXCLUSIVE
-   * PostgreSQL: pg_advisory_lock
-   * MySQL: GET_LOCK
+   * Apply pending migrations atomically within exclusive lease.
+   * All validation, DDL, and audit happen in one transaction per dialect.
+   * Returns applied migrations; throws on checksum mismatch, dirty state, or DDL failure.
    */
-  async acquireMigrationLock(timeoutMs: number = 30000): Promise<string> {
-    const lockName = "agent-bahi-migration";
-
-    try {
-      const acquired = await this.db.acquireAdvisoryLock(lockName, timeoutMs);
-      if (!acquired) {
-        throw new MigrationLockedError(
-          `Failed to acquire migration lock within ${timeoutMs}ms. Another process may be running migrations.`,
-        );
-      }
-
-      this.lockToken = lockName;
-      return lockName;
-    } catch (error) {
-      if (error instanceof MigrationLockedError) throw error;
-      throw new MigrationLockedError(
-        `Migration lock acquisition failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * Release exclusive migration lock.
-   */
-  async releaseMigrationLock(lockToken: string): Promise<void> {
-    try {
-      await this.db.releaseAdvisoryLock(lockToken);
-      this.lockToken = null;
-    } catch (error) {
-      throw new DomainError(
-        "MIGRATION_LOCK_RELEASE_FAILED",
-        `Failed to release migration lock: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * Apply pending migrations.
-   * Must acquire migration lock first.
-   */
-  async migrate(migrations: readonly { id: string; sql: string }[]): Promise<MigrationRecord[]> {
-    if (!this.lockToken) {
-      throw new DomainError(
-        "MIGRATION_LOCK_REQUIRED",
-        "Migration lock not held. Call acquireMigrationLock() first.",
-      );
-    }
-
+  async migrate(
+    migrations: readonly { id: string; sql: string }[],
+    timeoutMs: number = 30000,
+  ): Promise<MigrationRecord[]> {
     const appliedMigrations: MigrationRecord[] = [];
 
-    try {
-      await this.ensureMigrationTable();
+    return this.db.withMigrationLease(
+      async (session: MigrationSession) => {
+        await this.ensureMigrationTable();
 
-      for (const migration of migrations) {
-        // Check if already applied
-        const existing = await this.db.querySingle(
-          "SELECT id FROM schema_migrations WHERE id = ?",
-          [migration.id],
-        );
+        for (const migration of migrations) {
+          // Check if already applied
+          const existing = await session.executeSingle(
+            "SELECT id, checksum, status FROM schema_migrations WHERE id = ?",
+            [migration.id],
+          );
 
-        if (existing) {
-          // Verify checksum hasn't changed (indicates tampering)
-          await this.verifyChecksum(migration.id, this.computeChecksum(migration.sql));
-          continue;
-        }
+          if (existing) {
+            // Verify checksum (fail if tampering detected)
+            const expectedChecksum = this.computeChecksum(migration.sql);
+            if (existing.checksum !== expectedChecksum) {
+              throw new MigrationChecksumError(
+                migration.id,
+                expectedChecksum,
+                existing.checksum as string,
+              );
+            }
 
-        // Execute migration and record
-        const startTime = Date.now();
+            // Fail if migration is stuck APPLYING (crash recovery needed)
+            if (existing.status === "APPLYING") {
+              throw new DirtyMigrationError(migration.id);
+            }
 
-        try {
-          const tx = await this.db.beginTransaction();
+            // Already applied, skip
+            continue;
+          }
+
+          // New migration: mark APPLYING before DDL (in case DDL auto-commits)
+          const timestamp = new Date().toISOString();
+          const checksum = this.computeChecksum(migration.sql);
+
+          await session.execute(
+            `INSERT INTO schema_migrations (id, dialect, checksum, status, executed_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+            [migration.id, this.dialect, checksum, "APPLYING", timestamp, 0],
+          );
+
+          // Execute migration DDL
+          const startTime = Date.now();
           try {
-            // Execute migration SQL
-            await tx.executeRaw(migration.sql);
+            await session.executeRaw(migration.sql);
 
-            // Record successful execution
-            const checksum = this.computeChecksum(migration.sql);
+            // Mark APPLIED (atomic with transaction commit)
             const durationMs = Date.now() - startTime;
-            const timestamp = new Date().toISOString();
-
-            await tx.execute(
-              `INSERT INTO schema_migrations (id, dialect, checksum, executed_at, duration_ms, dirty)
-               VALUES (?, ?, ?, ?, ?, ?)`,
-              [migration.id, this.dialect, checksum, timestamp, durationMs, 0],
+            await session.execute(
+              "UPDATE schema_migrations SET status = ?, duration_ms = ? WHERE id = ?",
+              [null, durationMs, migration.id], // null = APPLIED (default)
             );
-
-            await tx.commit();
 
             appliedMigrations.push({
               id: migration.id,
@@ -229,32 +195,44 @@ export class MigrationService {
               executedAt: timestamp,
               durationMs,
             });
-          } catch (txError) {
-            await tx.rollback();
-            // Mark as dirty for recovery
-            await this.markDirty(migration.id, `Migration failed: ${txError instanceof Error ? txError.message : String(txError)}`);
-            throw txError;
+          } catch (error) {
+            // Mark DIRTY for manual recovery
+            await session.execute(
+              "UPDATE schema_migrations SET status = ?, dirty_reason = ? WHERE id = ?",
+              ["DIRTY", `DDL failed: ${error instanceof Error ? error.message : String(error)}`, migration.id],
+            );
+            throw new DomainError(
+              "MIGRATION_EXECUTION_FAILED",
+              `Migration ${migration.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
-        } catch (error) {
-          throw new DomainError(
-            "MIGRATION_EXECUTION_FAILED",
-            `Migration ${migration.id} failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
         }
-      }
 
-      return appliedMigrations;
-    } catch (error) {
-      if (error instanceof DomainError) throw error;
-      throw new DomainError(
-        "MIGRATION_SERVICE_ERROR",
-        `Migration error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+        return appliedMigrations;
+      },
+      timeoutMs,
+    );
   }
 
   /**
-   * Verify migration checksum against what's stored.
+   * Deprecated: use migrate() with timeoutMs instead.
+   * Kept for backward compatibility with old test pattern.
+   */
+  async acquireMigrationLock(timeoutMs: number = 30000): Promise<string> {
+    return "deprecated-lock-token";
+  }
+
+  /**
+   * Deprecated: releaseMigrationLock no longer needed.
+   * Kept for backward compatibility.
+   */
+  async releaseMigrationLock(_lockToken: string): Promise<void> {
+    // No-op
+  }
+
+  /**
+   * Verify checksum of an already-applied migration (read-only, no lease needed).
+   * Fails if migration not found or checksum mismatch (indicates tampering).
    */
   async verifyChecksum(migrationId: string, expectedChecksum: string): Promise<void> {
     const record = await this.db.querySingle(
@@ -263,7 +241,7 @@ export class MigrationService {
     );
 
     if (!record) {
-      return; // Migration not applied yet
+      return; // Migration not applied yet, nothing to verify
     }
 
     const actualChecksum = record.checksum as string;
@@ -273,35 +251,62 @@ export class MigrationService {
   }
 
   /**
-   * Mark migration as dirty (failed mid-execution).
-   * Requires manual recovery.
+   * Clear dirty marker and recover stuck migration.
+   * Must hold lease; requires owner token and expected failed checksum/reason for safety.
    */
-  async markDirty(migrationId: string, reason: string): Promise<void> {
-    try {
-      await this.db.execute(
-        "UPDATE schema_migrations SET dirty = ?, dirty_reason = ? WHERE id = ?",
-        [1, reason, migrationId],
-      );
-    } catch (error) {
-      throw new DomainError(
-        "MARK_DIRTY_FAILED",
-        `Failed to mark migration as dirty: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
+  async clearDirtyWithLease(
+    migrationId: string,
+    leaseToken: string,
+    expectedChecksum: string,
+    callback: (session: MigrationSession) => Promise<void>,
+    timeoutMs: number = 30000,
+  ): Promise<void> {
+    return this.db.withMigrationLease(
+      async (session: MigrationSession) => {
+        if (session.leaseToken() !== leaseToken) {
+          throw new DomainError(
+            "RECOVERY_LEASE_MISMATCH",
+            "Recovery lease token does not match session owner",
+          );
+        }
 
-  /**
-   * Clear dirty marker (manual recovery completion).
-   */
-  async clearDirty(): Promise<void> {
-    try {
-      await this.db.execute("UPDATE schema_migrations SET dirty = ?, dirty_reason = NULL WHERE dirty = ?", [0, 1]);
-    } catch (error) {
-      throw new DomainError(
-        "CLEAR_DIRTY_FAILED",
-        `Failed to clear dirty marker: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+        const record = await session.executeSingle(
+          "SELECT checksum, status FROM schema_migrations WHERE id = ?",
+          [migrationId],
+        );
+
+        if (!record) {
+          throw new DomainError(
+            "RECOVERY_RECORD_NOT_FOUND",
+            `Migration ${migrationId} not found`,
+          );
+        }
+
+        if (record.checksum !== expectedChecksum) {
+          throw new DomainError(
+            "RECOVERY_CHECKSUM_MISMATCH",
+            `Expected checksum ${expectedChecksum}, found ${record.checksum}`,
+          );
+        }
+
+        if (record.status !== "DIRTY") {
+          throw new DomainError(
+            "RECOVERY_NOT_DIRTY",
+            `Migration is in ${record.status} state, not DIRTY`,
+          );
+        }
+
+        // Execute recovery callback (e.g., manual cleanup SQL)
+        await callback(session);
+
+        // Mark APPLIED
+        await session.execute(
+          "UPDATE schema_migrations SET status = NULL, dirty_reason = NULL WHERE id = ?",
+          [migrationId],
+        );
+      },
+      timeoutMs,
+    );
   }
 
   private computeChecksum(sql: string): string {

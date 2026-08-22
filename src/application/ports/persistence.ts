@@ -43,6 +43,13 @@ export interface Database {
   // UnitOfWork: atomic transaction with automatic rollback on error
   unitOfWork(config?: TransactionConfig): UnitOfWork;
 
+  // withMigrationLease: execute callback within exclusive migration lease.
+  // Session is callback-scoped; never escapes. Commit/rollback automatic per dialect.
+  // SQLite: BEGIN IMMEDIATE on main connection; rollback on error or callback throw.
+  // PostgreSQL: db.begin() with xact-scoped advisory lock; deadline-enforced timeout.
+  // MySQL: reserved connection with GET_LOCK/RELEASE_LOCK; DDL auto-commits tracked with APPLYING row.
+  withMigrationLease<T>(callback: (session: MigrationSession) => Promise<T>, timeoutMs?: number): Promise<T>;
+
   // Metadata/health
   isConnected(): Promise<boolean>;
   close(): Promise<void>;
@@ -90,10 +97,11 @@ export interface MigrationService {
   }>;
 
   /**
-   * Apply pending migrations. MUST acquire migration lock first.
+   * Apply pending migrations atomically within exclusive lease.
+   * All validation, DDL, and audit happen in one transaction per dialect.
    * Never auto-run during business operations.
    */
-  migrate(migrations: readonly { id: string; sql: string }[]): Promise<MigrationRecord[]>;
+  migrate(migrations: readonly { id: string; sql: string }[], timeoutMs?: number): Promise<MigrationRecord[]>;
 
   /**
    * Acquire exclusive migration lock. Fails if lock held by another process.
@@ -128,12 +136,29 @@ export interface MigrationService {
 }
 
 /**
+ * MigrationSession: passed to withMigrationLease callback; lifetime-bound to callback scope.
+ * Never expose outside callback; never call commit/rollback—that's automatic per dialect.
+ * Transaction-scoped lease and DDL execution on one pinned connection/session.
+ */
+export interface MigrationSession {
+  // Execute arbitrary SQL within the migration session (no auto-commit)
+  execute(sql: string, params?: unknown[]): Promise<QueryResult>;
+  executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined>;
+  executeRaw(sql: string): Promise<void>;
+
+  // Lease metadata
+  leaseToken(): string; // Unique token for this session/lease owner
+}
+
+/**
  * CompatibilityService: ensures CLI version, schema version, and data format are compatible.
+ * Never creates/writes to tables; only inspects existing schema_migrations and version metadata.
  */
 export interface CompatibilityService {
   /**
    * Check if current CLI version is compatible with database.
-   * Compares CLI semver, schema logical ID, and data format version.
+   * Inspects schema_migrations table and explicit schema_version/data_format_version metadata.
+   * Fails closed if empty, dirty, applying, or mismatch.
    *
    * Returns compatibility info or throws IncompatibleDatabaseError.
    */
