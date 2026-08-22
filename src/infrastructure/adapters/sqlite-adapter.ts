@@ -4,6 +4,7 @@ import type { Database, Transaction, TransactionConfig, QueryResult, UnitOfWork,
 import type { SqliteConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
+import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.ts";
 
 /**
  * SQLite Migration Session (callback-scoped): holds BEGIN IMMEDIATE transaction.
@@ -20,7 +21,12 @@ class SqliteMigrationSession implements MigrationSession {
 
   constructor(private db: BunDatabase) {
     this.token = randomUUID();
-    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.exec("BEGIN IMMEDIATE");
+    } catch (error) {
+      const classified = classifySqliteError(error, "BEGIN IMMEDIATE");
+      throw toDomainError(classified);
+    }
   }
 
   private prepareStatement(sql: string) {
@@ -41,23 +47,38 @@ class SqliteMigrationSession implements MigrationSession {
 
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
     this.checkActive();
-    const stmt = this.prepareStatement(sql);
-    const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
-    return {
-      rows: results,
-      rowCount: results.length,
-    };
+    try {
+      const stmt = this.prepareStatement(sql);
+      const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
+      return {
+        rows: results,
+        rowCount: results.length,
+      };
+    } catch (error) {
+      const classified = classifySqliteError(error, "migration execute");
+      throw toDomainError(classified);
+    }
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
     this.checkActive();
-    const stmt = this.prepareStatement(sql);
-    return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
+    try {
+      const stmt = this.prepareStatement(sql);
+      return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
+    } catch (error) {
+      const classified = classifySqliteError(error, "migration executeSingle");
+      throw toDomainError(classified);
+    }
   }
 
   async executeRaw(sql: string): Promise<void> {
     this.checkActive();
-    this.db.exec(sql);
+    try {
+      this.db.exec(sql);
+    } catch (error) {
+      const classified = classifySqliteError(error, "migration executeRaw");
+      throw toDomainError(classified);
+    }
   }
 
   leaseToken(): string {
@@ -121,9 +142,8 @@ class SqliteMigrationSession implements MigrationSession {
         checks,
       };
     } catch (error) {
-      // Absence was already established by sqlite_master. Any later failure is
-      // a real pinned-session metadata failure and must reach the upgrader.
-      throw error;
+      const classified = classifySqliteError(error, "migration getTableMetadata");
+      throw toDomainError(classified);
     }
   }
 
@@ -134,6 +154,9 @@ class SqliteMigrationSession implements MigrationSession {
     this.statements.clear();
     try {
       this.db.exec("COMMIT");
+    } catch (error) {
+      const classified = classifySqliteError(error, "migration commit");
+      throw toDomainError(classified);
     } finally {
       this.finalized = true;
     }
@@ -162,7 +185,12 @@ class SqliteTransaction implements Transaction {
   private statements = new Map<string, ReturnType<BunDatabase["prepare"]>>();
 
   constructor(private db: BunDatabase) {
-    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.exec("BEGIN IMMEDIATE");
+    } catch (error) {
+      const classified = classifySqliteError(error, "BEGIN IMMEDIATE");
+      throw toDomainError(classified);
+    }
   }
 
   private prepareStatement(sql: string) {
@@ -179,6 +207,9 @@ class SqliteTransaction implements Transaction {
     this.statements.clear();
     try {
       this.db.exec("COMMIT");
+    } catch (error) {
+      const classified = classifySqliteError(error, "commit");
+      throw toDomainError(classified);
     } finally {
       this.finalized = true;
     }
@@ -201,25 +232,40 @@ class SqliteTransaction implements Transaction {
   async execute(sql: string, params?: unknown[]): Promise<QueryResult> {
     if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
 
-    const stmt = this.prepareStatement(sql);
-    const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
+    try {
+      const stmt = this.prepareStatement(sql);
+      const results = stmt.all(...((params || []) as any)) as Record<string, unknown>[];
 
-    return {
-      rows: results,
-      rowCount: results.length,
-    };
+      return {
+        rows: results,
+        rowCount: results.length,
+      };
+    } catch (error) {
+      const classified = classifySqliteError(error, "transaction execute");
+      throw toDomainError(classified);
+    }
   }
 
   async executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined> {
     if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
 
-    const stmt = this.prepareStatement(sql);
-    return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
+    try {
+      const stmt = this.prepareStatement(sql);
+      return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
+    } catch (error) {
+      const classified = classifySqliteError(error, "transaction executeSingle");
+      throw toDomainError(classified);
+    }
   }
 
   async executeRaw(sql: string): Promise<void> {
     if (!this.active) throw new DomainError("TRANSACTION_NOT_ACTIVE", "Transaction not active");
-    this.db.exec(sql);
+    try {
+      this.db.exec(sql);
+    } catch (error) {
+      const classified = classifySqliteError(error, "transaction executeRaw");
+      throw toDomainError(classified);
+    }
   }
 
   isActive(): boolean {
@@ -319,8 +365,8 @@ export class SqliteAdapter implements Database {
         rowCount: rows.length,
       };
     } catch (error) {
-      this.handleSqliteError(error);
-      throw error;
+      const classified = classifySqliteError(error, "query");
+      throw toDomainError(classified);
     }
   }
 
@@ -329,8 +375,8 @@ export class SqliteAdapter implements Database {
       const stmt = this.db.prepare(sql);
       return stmt.get(...((params || []) as any)) as Record<string, unknown> | undefined;
     } catch (error) {
-      this.handleSqliteError(error);
-      throw error;
+      const classified = classifySqliteError(error, "querySingle");
+      throw toDomainError(classified);
     }
   }
 
@@ -346,15 +392,20 @@ export class SqliteAdapter implements Database {
     try {
       this.db.exec(sql);
     } catch (error) {
-      this.handleSqliteError(error);
-      throw error;
+      const classified = classifySqliteError(error, "executeRaw");
+      throw toDomainError(classified);
     }
   }
 
   async beginTransaction(config?: TransactionConfig): Promise<Transaction> {
-    // Note: SQLite doesn't support PRAGMA isolation_level the same way.
-    // Use DEFERRED (default), IMMEDIATE, or EXCLUSIVE via BEGIN clause.
-    return new SqliteTransaction(this.db);
+    try {
+      // Note: SQLite doesn't support PRAGMA isolation_level the same way.
+      // Use DEFERRED (default), IMMEDIATE, or EXCLUSIVE via BEGIN clause.
+      return new SqliteTransaction(this.db);
+    } catch (error) {
+      const classified = classifySqliteError(error, "beginTransaction");
+      throw toDomainError(classified);
+    }
   }
 
   unitOfWork(config?: TransactionConfig): UnitOfWork {
@@ -370,7 +421,7 @@ export class SqliteAdapter implements Database {
 
     try {
       // BEGIN IMMEDIATE inside try to ensure ROLLBACK on error
-      // Try to acquire with bounded retries on SQLITE_BUSY
+      // Try to acquire with bounded retries on SQLITE_BUSY/LOCKED
       const retryIntervalMs = 50;
       let beginAcquired = false;
 
@@ -381,9 +432,16 @@ export class SqliteAdapter implements Database {
           beginAcquired = true;
           break;
         } catch (err) {
-          // Handle SQLITE_BUSY or SQLITE_LOCKED during BEGIN IMMEDIATE
-          const errMsg = (err instanceof Error ? err.message : String(err)).toUpperCase();
-          if (errMsg.includes("BUSY") || errMsg.includes("LOCKED")) {
+          // Classify error from BEGIN IMMEDIATE acquisition
+          if (!(err instanceof DomainError)) {
+            throw err;
+          }
+
+          const isContention =
+            err.code === "SQLITE_CONTENTION_BUSY" ||
+            err.code === "SQLITE_CONTENTION_LOCKED";
+
+          if (isContention) {
             const remainingMs = deadline - Date.now();
             if (remainingMs > 0) {
               await new Promise(resolve =>
@@ -392,11 +450,11 @@ export class SqliteAdapter implements Database {
               continue;
             } else {
               throw new MigrationLockedError(
-                `Failed to acquire migration lease within ${timeoutMs}ms (SQLITE_BUSY/LOCKED)`
+                `Failed to acquire migration lease within ${timeoutMs}ms (${err.code})`
               );
             }
           }
-          // Non-busy errors propagate
+          // Non-contention acquisition errors propagate immediately
           throw err;
         }
       }
@@ -464,16 +522,41 @@ export class SqliteAdapter implements Database {
           lockDb.exec("PRAGMA busy_timeout = 0");
 
           // Initialize lock table if needed
-          lockDb.exec(`
-            CREATE TABLE IF NOT EXISTS __migration_locks (
-              name TEXT PRIMARY KEY,
-              owner_token TEXT NOT NULL,
-              acquired_at INTEGER NOT NULL
-            )
-          `);
+          try {
+            lockDb.exec(`
+              CREATE TABLE IF NOT EXISTS __migration_locks (
+                name TEXT PRIMARY KEY,
+                owner_token TEXT NOT NULL,
+                acquired_at INTEGER NOT NULL
+              )
+            `);
+          } catch (createError) {
+            const classified = classifySqliteError(createError, "advisory lock table creation");
+            if (!classified.isContention) {
+              // Non-contention errors during setup fail immediately
+              lockDb.close();
+              throw toDomainError(classified);
+            }
+            // Retry on contention
+            lockDb.close();
+            await new Promise(resolve => setTimeout(resolve, 50));
+            continue;
+          }
 
           // BEGIN IMMEDIATE: acquire exclusive lock immediately
-          lockDb.exec("BEGIN IMMEDIATE");
+          try {
+            lockDb.exec("BEGIN IMMEDIATE");
+          } catch (beginError) {
+            const classified = classifySqliteError(beginError, "advisory lock BEGIN IMMEDIATE");
+            lockDb.close();
+            if (!classified.isContention) {
+              // Non-contention acquisition errors fail immediately
+              throw toDomainError(classified);
+            }
+            // Retry on contention
+            await new Promise(resolve => setTimeout(resolve, 50));
+            continue;
+          }
 
           try {
             // Check if lock is held by different owner
@@ -512,7 +595,14 @@ export class SqliteAdapter implements Database {
           } catch (txError) {
             lockDb.exec("ROLLBACK");
             lockDb.close();
-            throw txError;
+            const classified = classifySqliteError(txError, "advisory lock transaction");
+            if (!classified.isContention) {
+              // Non-contention transaction errors fail immediately
+              throw toDomainError(classified);
+            }
+            // Retry on contention
+            await new Promise(resolve => setTimeout(resolve, 50));
+            continue;
           }
         } catch (error) {
           try {
@@ -520,9 +610,18 @@ export class SqliteAdapter implements Database {
           } catch {
             // Already closed
           }
-          throw error;
+          // Check if it's a non-contention error
+          if (error instanceof DomainError) {
+            throw error;
+          }
+          // For other errors, retry
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
       } catch (error) {
+        // Non-contention errors from advisory lock propagate immediately
+        if (error instanceof DomainError) {
+          throw error;
+        }
         // Lock acquisition failed - wait and retry
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -549,34 +648,4 @@ export class SqliteAdapter implements Database {
     }
   }
 
-  private handleSqliteError(error: unknown): void {
-    if (error instanceof Error) {
-      if (error.message.toLowerCase().includes("no such table") && error.message.toLowerCase().includes("schema_migrations")) {
-        throw new DomainError("CONTROL_TABLE_MISSING", "Migration control table is not initialized", {
-          dialect: "sqlite",
-          cause: error.message,
-        });
-      }
-      if (error.message.includes("SQLITE_BUSY")) {
-        throw new DomainError(
-          "SQLITE_BUSY",
-          "Database is locked. SQLite is configured with busy_timeout=0 to fail immediately. Ensure writer serialization.",
-        );
-      }
-      if (
-        error.message.includes("SQLITE_CONSTRAINT") ||
-        /constraint|foreign key|unique|check constraint|tenant|book.?set/i.test(error.message)
-      ) {
-        throw new DomainError(
-          "SQLITE_CONSTRAINT",
-          `Constraint violation: ${error.message}`,
-        );
-      }
-      throw new DomainError("DATABASE_QUERY_FAILED", "SQLite database query failed", {
-        dialect: "sqlite",
-        cause: error.message,
-      });
-    }
-    throw new DomainError("DATABASE_QUERY_FAILED", "SQLite database query failed", { dialect: "sqlite" });
-  }
 }
