@@ -57,12 +57,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE TABLE IF NOT EXISTS idempotency_records (
+  id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   result_json TEXT NOT NULL,
   result_hash TEXT NOT NULL,
-  PRIMARY KEY (tenant_id, request_id),
+  created_at TEXT NOT NULL,
+  UNIQUE (tenant_id, request_id),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
 

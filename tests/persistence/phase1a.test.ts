@@ -69,7 +69,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     await db.close();
     // Clean up test database file
     try {
-      await Bun.write(`${dbPath}.delete`, "");
+      for (const suffix of ["", "-wal", "-shm"]) await Bun.file(`${dbPath}${suffix}`).delete();
     } catch {
       // Ignore deletion errors
     }
@@ -148,20 +148,25 @@ describe("Phase 1A: Production Persistence Foundation", () => {
       expect(fetched.lifecycle).toBe("ACTIVE");
     });
 
-    it("should rollback on partial failure (e.g., invalid parent)", async () => {
-      // Attempt to create tenant with invalid default_book_set_id should rollback
+    it("should rollback on a real invalid-parent failure", async () => {
       const tenantId = brandTenantId(randomUUID());
       const invalidBookSetId = brandBookSetId(randomUUID());
 
-      // Try to set an invalid default BookSet (doesn't exist)
-      // This should fail gracefully without corrupting tenant state
+      await expect(
+        sessionRunner.withBusinessSession("write", async (session) => {
+          const now = new Date().toISOString();
+          await session.execute(
+            "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [tenantId, "COMPANY", "CREATING", "Rollback Corp", "INR", now, now],
+          );
+          await session.execute(
+            "UPDATE tenants SET default_book_set_id = ? WHERE id = ?",
+            [invalidBookSetId, tenantId],
+          );
+        }),
+      ).rejects.toMatchObject({ code: "SQLITE_CONSTRAINT" });
 
-      const { tenant } = await tenantService.createTenantWithDefaultBookSet("COMPANY", "Test");
-      expect(tenant).toBeDefined();
-
-      // Verify tenant exists
-      const fetched = await tenantService.getTenant(tenant.id);
-      expect(fetched.id).toBe(tenant.id);
+      expect(await db.querySingle("SELECT id FROM tenants WHERE id = ?", [tenantId])).toBeNull();
     });
   });
 

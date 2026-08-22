@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
 import type { Database, BusinessSessionRunner, BusinessSession } from "../../src/application/ports/persistence.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
-import { SqliteBusinessSessionRunner } from "../../src/infrastructure/adapters/business-session-runner.ts";
+import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
@@ -45,13 +45,13 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     });
 
     // Create session runner (reader protocol 1, writer protocol 1)
-    sessionRunner = new SqliteBusinessSessionRunner(dbPath, 1, 1);
+    sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
   });
 
   afterEach(async () => {
     await db.close();
     try {
-      await Bun.write(`${dbPath}.delete`, "");
+      for (const suffix of ["", "-wal", "-shm"]) await Bun.file(`${dbPath}${suffix}`).delete();
     } catch {
       // Ignore deletion errors
     }
@@ -161,7 +161,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
       const badDb = new SqliteAdapter({ path: badDbPath });
 
       const controlService = new DatabaseControlService(badDb, "sqlite");
-      const badSessionRunner = new SqliteBusinessSessionRunner(badDbPath, 1, 1);
+      const badSessionRunner = BusinessSessionFactory.createSessionRunner(badDbPath, "sqlite", 1, 1);
 
       try {
         await badSessionRunner.withBusinessSession("write", async (session) => {
@@ -174,14 +174,22 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
 
       await badDb.close();
       try {
-        await Bun.write(`${badDbPath}.delete`, "");
+        for (const suffix of ["", "-wal", "-shm"]) await Bun.file(`${badDbPath}${suffix}`).delete();
       } catch {}
     });
 
     it("should fail if database_control state is not READY", async () => {
-      // Temporarily update control state to RECOVERY_REQUIRED (would need to manually do this in DB)
-      // For now, just verify that state checking happens
-      // This is a placeholder for when we add recovery testing
+      await db.execute(
+        "UPDATE database_control SET state = ?, recovery_reason = ? WHERE id = 1",
+        ["RECOVERY_REQUIRED", "test recovery required"],
+      );
+      let callbackCount = 0;
+      await expect(
+        sessionRunner.withBusinessSession("write", async () => {
+          callbackCount += 1;
+        }),
+      ).rejects.toMatchObject({ code: "DATABASE_CONTROL_NOT_READY" });
+      expect(callbackCount).toBe(0);
     });
   });
 
@@ -217,19 +225,20 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
 
   describe("Session Isolation", () => {
     it("should use fresh connection per callback", async () => {
-      // This test verifies we create new connections, not reuse shared connections
-      // If we were reusing, BEGIN IMMEDIATE would fail or nest incorrectly
-      let connCount = 0;
-
+      // A read callback enables connection-local query_only. A subsequent write
+      // must succeed, proving the runner opened a new native connection.
+      const tenantId = randomUUID();
       await sessionRunner.withBusinessSession("read", async (session) => {
-        connCount++;
+        await session.query("SELECT id FROM tenants LIMIT 1");
       });
-
       await sessionRunner.withBusinessSession("write", async (session) => {
-        connCount++;
+        const now = new Date().toISOString();
+        await session.execute(
+          "INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [tenantId, "COMPANY", "CREATING", "Fresh connection", "INR", now, now],
+        );
       });
-
-      expect(connCount).toBe(2);
+      expect(await db.querySingle("SELECT id FROM tenants WHERE id = ?", [tenantId])).toBeDefined();
     });
   });
 
@@ -237,7 +246,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     it("should check reader protocol compatibility", async () => {
       // Create session runner with protocol 999 that doesn't match DB defaults
       const controlService = new DatabaseControlService(db, "sqlite");
-      const incompatibleRunner = new SqliteBusinessSessionRunner(dbPath, 999, 1);
+      const incompatibleRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 999, 1);
 
       try {
         await incompatibleRunner.withBusinessSession("read", async (session) => {
@@ -252,7 +261,7 @@ describe("BusinessSession Compatibility Fence (V1)", () => {
     it("should check writer protocol compatibility", async () => {
       // Create session runner with protocol 999 that doesn't match DB defaults
       const controlService = new DatabaseControlService(db, "sqlite");
-      const incompatibleRunner = new SqliteBusinessSessionRunner(dbPath, 1, 999);
+      const incompatibleRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 999);
 
       try {
         await incompatibleRunner.withBusinessSession("write", async (session) => {

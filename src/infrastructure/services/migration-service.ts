@@ -328,7 +328,7 @@ export class MigrationService {
     return `"${identifier}"`;
   }
 
-  private normalizeColumnType(rawType: string): string {
+  private static normalizeColumnType(rawType: string): string {
     const type = rawType.trim().toLowerCase().replace(/\s+/g, " ");
     return type;
   }
@@ -376,17 +376,17 @@ export class MigrationService {
       { name: "executed_at", type: executedAt, nullable: false, primaryKey: false }, duration];
   }
 
-  private metadataMatches(metadata: TableMetadata, specs: SchemaColumnSpec[]): boolean {
+  private static metadataMatches(metadata: TableMetadata, specs: SchemaColumnSpec[]): boolean {
     if (metadata.kind !== "TABLE" || metadata.columns.length !== specs.length) return false;
     return metadata.columns.every((column, index) => {
       const expected = specs[index];
       const defaultValue = column.default === undefined || column.default === null ? null : column.default.trim();
-      return column.name === expected.name && this.normalizeColumnType(column.type) === expected.type
+      return column.name === expected.name && MigrationService.normalizeColumnType(column.type) === expected.type
         && column.nullable === expected.nullable && column.primaryKey === expected.primaryKey && defaultValue === null;
     });
   }
 
-  private hasRequiredStatusCheck(metadata: TableMetadata): boolean {
+  private static hasRequiredStatusCheck(metadata: TableMetadata): boolean {
     return (metadata.checks ?? []).some((check) => {
       const expression = check.toLowerCase().replace(/::[a-z0-9_]+/g, "").replace(/\s+/g, " ");
       const values = [...expression.matchAll(/[\'\"](applying|applied|dirty)[\'\"]/g)].map((match) => match[1]);
@@ -397,7 +397,24 @@ export class MigrationService {
   }
 
   private isCurrentSchema(metadata: TableMetadata): boolean {
-    return this.metadataMatches(metadata, this.columnSpecs("current")) && this.hasRequiredStatusCheck(metadata);
+    return MigrationService.isCurrentMigrationSchema(metadata);
+  }
+
+  static isCurrentMigrationSchema(metadata: TableMetadata): boolean {
+    const specs: SchemaColumnSpec[] = [
+      { name: "id", type: "text", nullable: false, primaryKey: true },
+      { name: "dialect", type: "text", nullable: false, primaryKey: false },
+      { name: "checksum", type: "text", nullable: false, primaryKey: false },
+      { name: "status", type: "text", nullable: false, primaryKey: false },
+      { name: "executed_at", type: "text", nullable: false, primaryKey: false },
+      { name: "duration_ms", type: "integer", nullable: false, primaryKey: false },
+      { name: "dirty_reason", type: "text", nullable: true, primaryKey: false },
+      { name: "lease_token", type: "text", nullable: true, primaryKey: false },
+      { name: "manifest_version", type: "integer", nullable: true, primaryKey: false },
+      { name: "verification_manifest_hash", type: "text", nullable: true, primaryKey: false },
+      { name: "manifest_json", type: "text", nullable: true, primaryKey: false },
+    ];
+    return MigrationService.metadataMatches(metadata, specs) && MigrationService.hasRequiredStatusCheck(metadata);
   }
 
   private validateCurrentSchema(metadata: TableMetadata): void {
@@ -411,7 +428,7 @@ export class MigrationService {
 
   private detectLegacySchemaType(metadata: TableMetadata): LegacySchemaType | null {
     const candidates: LegacySchemaType[] = ["gate0", "dirty_flag", "strict_status_lease", "nullable_status"];
-    return candidates.find((candidate) => this.metadataMatches(metadata, this.columnSpecs(candidate))) ?? null;
+    return candidates.find((candidate) => MigrationService.metadataMatches(metadata, this.columnSpecs(candidate))) ?? null;
   }
 
   private async extractCanonicalRows(

@@ -1,11 +1,13 @@
 /**
  * Phase 1A Defect Tests - Negative tests that expose schema/implementation gaps
  *
- * These tests MUST fail with current implementation to prove defects exist.
- * Each defect maps to one requirement from the task spec.
+ * These tests exercise the previously defective paths and keep each
+ * requirement from the task spec executable.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { Database, BusinessSessionRunner } from "../../src/application/ports/persistence.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
@@ -455,9 +457,18 @@ describe("Phase 1A Defects - Negative Tests for Real Constraints", () => {
 
   describe("DEFECT-12: Path checks accept symlinks/traversal", () => {
     it("should reject database paths with symlink components", async () => {
-      // This would require actual filesystem symlink creation
-      // For now, document the requirement
-      expect(true).toBe(true);  // Placeholder
+      const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-symlink-"));
+      const target = join(directory, "real.sqlite");
+      const linked = join(directory, "linked.sqlite");
+      try {
+        await Bun.write(target, "not a database");
+        await symlink(target, linked);
+        expect(() => BusinessSessionFactory.createSessionRunner(linked, "sqlite", 1, 1)).toThrow(
+          expect.objectContaining({ code: "SQLITE_UNSAFE_PATH" }),
+        );
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     });
   });
 

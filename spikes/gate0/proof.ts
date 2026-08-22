@@ -1,6 +1,10 @@
 import { Database } from "bun:sqlite";
 import { isBalanced, type PostingAmount } from "../../src/domain/ledger/balance.ts";
-import { IdempotencyConflictError } from "../../src/application/idempotency.ts";
+import {
+  getOrCreateIdempotencyRecord,
+  IdempotencyConflictError,
+} from "../../src/application/idempotency.ts";
+import type { BusinessSession } from "../../src/application/ports/persistence.ts";
 
 export type ProofStatus = "PASS" | "PARTIAL" | "BLOCKED";
 
@@ -131,6 +135,27 @@ function insertBalancedEntry(db: Database, id: string, key: string, bookSetId: s
     .run("tenant-a", bookSetId, id, 1, 100n);
   db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units) VALUES (?, ?, ?, ?, ?)")
     .run("tenant-a", bookSetId, id, 2, 100n);
+}
+
+function productionIdempotencySession(db: Database): BusinessSession {
+  return {
+    async query(sql, params) {
+      const rows = db.query(sql).all(...((params ?? []) as any[])) as Record<string, unknown>[];
+      return { rows, rowCount: rows.length };
+    },
+    async querySingle(sql, params) {
+      return db.query(sql).get(...((params ?? []) as any[])) as Record<string, unknown> | undefined;
+    },
+    async execute(sql, params) {
+      const result = db.query(sql).run(...((params ?? []) as any[]));
+      return { rows: [], rowCount: Number(result.changes ?? 0) };
+    },
+    async executeSingle(sql, params) {
+      return db.query(sql).get(...((params ?? []) as any[])) as Record<string, unknown> | undefined;
+    },
+    mode: () => "write",
+    isActive: () => true,
+  };
 }
 
 async function withTemporaryDatabase<T>(fn: (db: Database, path: string) => Promise<T> | T): Promise<T> {
@@ -323,45 +348,43 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     );
     pass("STK-003r", "posted journal entry immutability", "posted journal entry cannot revert to draft, change identity/status, be deleted, or have postings added");
 
-    // Test idempotency helper: same request_id + same hash returns original result
+    // Exercise the production idempotency helper on the production-shaped table
+    // and inside the same transaction used by the proof.
     const request1 = JSON.stringify({ action: "create_entry", amount: 100 });
     const requestHash1 = sha256(request1);
     const result1 = JSON.stringify({ entry_id: "idempotent-entry-1", created: true });
     const resultHash1 = sha256(result1);
-
-    // Inline idempotency test: first insert
-    const existing1 = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
-      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
-    ).get("tenant-a", "req-1");
-
-    if (!existing1) {
-      db.query(
-        "INSERT INTO idempotency_records (tenant_id, request_id, request_hash, result_json, result_hash) VALUES (?, ?, ?, ?, ?)",
-      ).run("tenant-a", "req-1", requestHash1, result1, resultHash1);
-    }
-
-    const record1 = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
-      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
-    ).get("tenant-a", "req-1");
-
-    if (!record1 || record1.result_json !== result1 || record1.result_hash !== resultHash1) {
-      throw new Error("idempotency first create returned wrong result");
-    }
-
-    // Replay with deliberately different candidate result bytes/hash; assert stored original is returned
     const differentCandidate = JSON.stringify({ entry_id: "different-id", created: false });
     const differentCandidateHash = sha256(differentCandidate);
-
-    // Inline replay test: same request_id should return original, not new candidate
-    const replayRecord = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
-      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
-    ).get("tenant-a", "req-1");
-
-    if (!replayRecord || replayRecord.result_json !== result1) {
-      throw new Error(`idempotency replay must return original result_json, got ${replayRecord?.result_json}`);
-    }
-    if (replayRecord.result_hash !== resultHash1) {
-      throw new Error(`idempotency replay must return original result_hash, got ${replayRecord.result_hash}`);
+    const productionSession = productionIdempotencySession(db);
+    beginImmediate(db);
+    try {
+      const first = await getOrCreateIdempotencyRecord(
+        productionSession,
+        "tenant-a",
+        "req-1",
+        requestHash1,
+        result1,
+        resultHash1,
+      );
+      if (first.result_json !== result1 || first.result_hash !== resultHash1) {
+        throw new Error("idempotency first create returned wrong result");
+      }
+      const replay = await getOrCreateIdempotencyRecord(
+        productionSession,
+        "tenant-a",
+        "req-1",
+        requestHash1,
+        differentCandidate,
+        differentCandidateHash,
+      );
+      if (replay.result_json !== result1 || replay.result_hash !== resultHash1) {
+        throw new Error("idempotency replay must return original result bytes/hash");
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      rollbackQuietly(db);
+      throw error;
     }
     pass("STK-003s", "idempotency replay", "same request_id + same hash returns exact stored result_json/hash, ignoring different candidate bytes");
 
@@ -371,24 +394,27 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     const conflictCandidate = JSON.stringify({ entry_id: "different" });
     const conflictCandidateHash = sha256(conflictCandidate);
 
-    // Get original row data before conflict attempt
-    const storedBefore = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
-      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
+    // Get original row data before conflict attempt, including production columns.
+    const storedBefore = db.query<{ id: string; request_hash: string; result_json: string; result_hash: string; created_at: string }, [string, string]>(
+      "SELECT id, request_hash, result_json, result_hash, created_at FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
     ).get("tenant-a", "req-1");
 
     let conflictThrown = false;
     let isTypedConflict = false;
     let hasCorrectErrorCode = false;
     try {
-      // Inline conflict detection: different hash for same request_id
-      const existing = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
-        "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
-      ).get("tenant-a", "req-1");
-
-      if (existing && existing.request_hash !== requestHash2) {
-        throw new IdempotencyConflictError();
-      }
+      beginImmediate(db);
+      await getOrCreateIdempotencyRecord(
+        productionSession,
+        "tenant-a",
+        "req-1",
+        requestHash2,
+        conflictCandidate,
+        conflictCandidateHash,
+      );
+      db.exec("COMMIT");
     } catch (error) {
+      rollbackQuietly(db);
       conflictThrown = true;
       isTypedConflict = error instanceof IdempotencyConflictError;
       hasCorrectErrorCode = (error as any)?.code === "IDEMPOTENCY_CONFLICT";
@@ -399,8 +425,8 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     if (!hasCorrectErrorCode) throw new Error("error must have code='IDEMPOTENCY_CONFLICT'");
 
     // Verify original row is unchanged
-    const storedAfter = db.query<{ request_hash: string; result_json: string; result_hash: string }, [string, string]>(
-      "SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
+    const storedAfter = db.query<{ id: string; request_hash: string; result_json: string; result_hash: string; created_at: string }, [string, string]>(
+      "SELECT id, request_hash, result_json, result_hash, created_at FROM idempotency_records WHERE tenant_id = ? AND request_id = ?",
     ).get("tenant-a", "req-1");
 
     if (storedAfter?.request_hash !== storedBefore?.request_hash || storedAfter?.result_json !== storedBefore?.result_json) {
@@ -408,6 +434,9 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     }
     if (storedAfter?.result_hash !== storedBefore?.result_hash) {
       throw new Error("idempotency conflict: original result_hash was modified");
+    }
+    if (!storedAfter?.id || !storedAfter.created_at) {
+      throw new Error("idempotency production columns id and created_at were not populated");
     }
 
     // Verify exactly one row exists (zero new rows created)

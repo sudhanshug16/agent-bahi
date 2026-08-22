@@ -63,7 +63,7 @@ describe("Phase 1A: Idempotency and FK Enforcement Regression Tests", () => {
   afterEach(async () => {
     await db.close();
     try {
-      await Bun.write(`${dbPath}.delete`, "");
+      for (const suffix of ["", "-wal", "-shm"]) await Bun.file(`${dbPath}${suffix}`).delete();
     } catch {
       // Ignore deletion errors
     }

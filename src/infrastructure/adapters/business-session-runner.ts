@@ -1,14 +1,47 @@
 import { Database as BunDatabase } from "bun:sqlite";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { BusinessSession, BusinessSessionMode, BusinessSessionRunner } from "../../application/ports/persistence.ts";
-import { SqliteBusinessSession } from "./business-session.ts";
+import type { BusinessSession, BusinessSessionMode, BusinessSessionRunner, QueryResult, TableMetadata, ColumnMetadata } from "../../application/ports/persistence.ts";
 import { DomainError } from "../../core/types.ts";
 import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
+import { DatabaseControlService } from "../services/database-control-service.ts";
+import { MigrationService, MIGRATION_SCHEMA_SQLITE } from "../services/migration-service.ts";
+import {
+  CURRENT_DATA_FORMAT_VERSION,
+  CURRENT_DATABASE_GENERATION,
+  CURRENT_DATABASE_REVISION,
+  CURRENT_READER_PROTOCOL_MAX,
+  CURRENT_READER_PROTOCOL_MIN,
+  CURRENT_SCHEMA_VERSION,
+  CURRENT_SQLITE_MIGRATIONS,
+  CURRENT_WRITER_PROTOCOL,
+} from "../schema/current-manifest.ts";
+
+const BUSINESS_TABLE_ALLOWLIST = new Set([
+  "tenants",
+  "book_sets",
+  "accounts",
+  "legal_identities",
+  "gst_registrations",
+  "evidence",
+  "audit_records",
+  "idempotency_records",
+  "tenant_creation_requests",
+]);
+
+const FORBIDDEN_SQL_WORDS = new Set([
+  "attach", "detach", "alter", "analyze", "begin", "commit", "create", "delete", "drop", "explain",
+  "insert", "pragma", "reindex", "release", "replace", "returning", "rollback", "savepoint", "select",
+  "vacuum", "update", "with", "union", "intersect", "except", "from", "join",
+]);
+
+const FORBIDDEN_IDENTIFIERS = [
+  "sqlite_", "sqlite_master", "sqlite_schema", "database_control", "schema_migrations", "migration_recovery_audit",
+];
 
 /**
  * Error indicating business session lock cannot be acquired due to contention.
- * Does not claim knowledge of who holds the lock (migration or other session).
+ * Does not claim knowledge of who holds the lock.
  */
 export class BusinessSessionBusyError extends Error {
   readonly code = "BUSINESS_SESSION_BUSY";
@@ -19,33 +52,238 @@ export class BusinessSessionBusyError extends Error {
   }
 }
 
-/**
- * Async-context-local nested session detection (Bun AsyncLocalStorage compatible).
- * Distinguishes reentrant attempts (same async context, rejected) from
- * independent concurrent sessions (separate async contexts, allowed with lock contention).
- */
 const nestedSessionStore = new AsyncLocalStorage<boolean>();
 
-/**
- * SQLite implementation of BusinessSessionRunner.
- *
- * V1 Semantics:
- * - Fresh canonical-path SQLite connection per callback (not shared).
- * - BEGIN IMMEDIATE before gate validation (serializes all concurrent sessions).
- * - Gate validation happens on the same fresh connection:
- *   - Exact database_control DDL, exact schema_migrations DDL
- *   - Exact complete current manifest rows (IDs/order/checksums/sqlite dialect/APPLIED)
- *   - READY state, exact schema_version/data_format_version
- *   - Reader protocol range and exact writer protocol validation
- * - Callback invoked only if gate passes.
- * - Commit on success, rollback on error; close in finally.
- * - Session marked inactive in finally.
- * - Reentrant calls (same async context) rejected with BUSINESS_SESSION_NESTED.
- * - Lock contention mapped to truthful BusinessSessionBusyError.
- */
-export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
-  private connection: BunDatabase | null = null;
+function invalidSql(message: string): never {
+  throw new DomainError("INVALID_SQL", message);
+}
 
+function tokenizeSql(sql: string): string[] {
+  const tokens: string[] = [];
+  let index = 0;
+  while (index < sql.length) {
+    const character = sql[index];
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === "'" ) {
+      let end = index + 1;
+      while (end < sql.length) {
+        if (sql[end] === "'" && sql[end + 1] === "'") {
+          end += 2;
+          continue;
+        }
+        if (sql[end] === "'") break;
+        end += 1;
+      }
+      if (end >= sql.length) invalidSql("Unterminated string literal is not allowed");
+      tokens.push("<string>");
+      index = end + 1;
+      continue;
+    }
+    if (character === '"' || character === "`" || character === "[") {
+      invalidSql("Quoted identifiers are not allowed");
+    }
+    if (character === ";" || character === "\0") invalidSql("Multi-statement or invalid SQL is not allowed");
+    if (character === "-" && sql[index + 1] === "-") invalidSql("Comments are not allowed");
+    if (character === "/" && (sql[index + 1] === "*" || sql[index + 1] === "/")) invalidSql("Comments are not allowed");
+    if (character === "*" && sql[index + 1] === "/") invalidSql("Comments are not allowed");
+    if (character === "(") tokens.push("(");
+    else if (character === ")") tokens.push(")");
+    else if (/[A-Za-z_]/.test(character)) {
+      let end = index + 1;
+      while (end < sql.length && /[A-Za-z0-9_$]/.test(sql[end])) end += 1;
+      tokens.push(sql.slice(index, end).toLowerCase());
+      index = end;
+      continue;
+    } else {
+      tokens.push(character);
+    }
+    index += 1;
+  }
+  return tokens;
+}
+
+function rejectForbiddenIdentifiers(sql: string): void {
+  const lower = sql.toLowerCase();
+  for (const identifier of FORBIDDEN_IDENTIFIERS) {
+    if (lower.includes(identifier)) invalidSql("Access to control or metadata tables is not allowed");
+  }
+}
+
+function validateReadSql(sql: string): void {
+  if (!sql.trim()) invalidSql("Empty SQL statement is not allowed");
+  rejectForbiddenIdentifiers(sql);
+  const tokens = tokenizeSql(sql);
+  if (tokens[0] !== "select") invalidSql("Only SELECT statements are allowed in read-mode");
+  if (tokens.includes("(") || tokens.includes(")")) invalidSql("Subqueries and expression calls are not allowed in read-mode");
+  if (tokens.some((token) => FORBIDDEN_SQL_WORDS.has(token) && token !== "select" && token !== "from" && token !== "join")) invalidSql("Unsupported read SQL construct");
+
+  let inTableList = false;
+  let expectTable = false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "from" || token === "join") {
+      inTableList = true;
+      expectTable = true;
+      continue;
+    }
+    if (["where", "group", "order", "limit", "offset", "having"].includes(token)) {
+      inTableList = false;
+      expectTable = false;
+      continue;
+    }
+    if (expectTable) {
+      if (!BUSINESS_TABLE_ALLOWLIST.has(token)) invalidSql("Read access is limited to business tables");
+      expectTable = false;
+      continue;
+    }
+    if (inTableList && token === ",") expectTable = true;
+  }
+  if (expectTable) invalidSql("Read access is limited to business tables");
+}
+
+function validateWriteSql(sql: string): void {
+  if (!sql.trim()) invalidSql("Empty SQL statement is not allowed");
+  rejectForbiddenIdentifiers(sql);
+  const tokens = tokenizeSql(sql);
+  const operation = tokens[0];
+  if (operation !== "insert" && operation !== "update" && operation !== "delete") {
+    invalidSql("Only INSERT/UPDATE/DELETE statements are allowed in write-mode");
+  }
+  if (tokens.some((token) => FORBIDDEN_SQL_WORDS.has(token) && ![operation, operation === "delete" ? "from" : ""].includes(token))) {
+    invalidSql("Unsupported write SQL construct");
+  }
+
+  const targetIndex = operation === "insert" ? 2 : 1;
+  if (operation === "insert" && tokens[1] !== "into") invalidSql("INSERT must specify INTO");
+  if (operation === "delete" && tokens[1] !== "from") invalidSql("DELETE must specify FROM");
+  const target = tokens[targetIndex];
+  if (!target || !BUSINESS_TABLE_ALLOWLIST.has(target)) invalidSql("Write access is limited to business tables");
+}
+
+function createBusinessSession(db: BunDatabase, mode: BusinessSessionMode): { session: BusinessSession; deactivate: () => void } {
+  let active = true;
+  let dbRef: BunDatabase | null = db;
+  const statements = new Map<string, ReturnType<BunDatabase["prepare"]>>();
+
+  const checkActive = (): void => {
+    if (!active || !dbRef) throw new DomainError("BUSINESS_SESSION_INACTIVE", "BusinessSession has been finalized and is no longer active");
+  };
+  const checkWriteMode = (): void => {
+    if (mode === "read") throw new DomainError("BUSINESS_SESSION_READ_ONLY", "Mutation is not allowed in read-mode session");
+  };
+  const prepare = (sql: string) => {
+    checkActive();
+    if (!statements.has(sql)) statements.set(sql, dbRef!.prepare(sql));
+    return statements.get(sql)!;
+  };
+  const run = (sql: string, params: unknown[] | undefined, operation: string): QueryResult => {
+    try {
+      const results = prepare(sql).all(...((params ?? []) as any)) as Record<string, unknown>[];
+      return { rows: results, rowCount: results.length };
+    } catch (error) {
+      throw toDomainError(classifySqliteError(error, operation));
+    }
+  };
+  const get = (sql: string, params: unknown[] | undefined, operation: string): Record<string, unknown> | undefined => {
+    try {
+      return prepare(sql).get(...((params ?? []) as any)) as Record<string, unknown> | undefined;
+    } catch (error) {
+      throw toDomainError(classifySqliteError(error, operation));
+    }
+  };
+
+  const session: BusinessSession = {
+    async query(sql, params) {
+      checkActive();
+      validateReadSql(sql);
+      return run(sql, params, "business session query");
+    },
+    async querySingle(sql, params) {
+      checkActive();
+      validateReadSql(sql);
+      return get(sql, params, "business session querySingle");
+    },
+    async execute(sql, params) {
+      checkActive();
+      checkWriteMode();
+      validateWriteSql(sql);
+      try {
+        prepare(sql).run(...((params ?? []) as any));
+        return { rows: [], rowCount: 0 };
+      } catch (error) {
+        throw toDomainError(classifySqliteError(error, "business session execute"));
+      }
+    },
+    async executeSingle(sql, params) {
+      checkActive();
+      checkWriteMode();
+      validateWriteSql(sql);
+      return get(sql, params, "business session executeSingle");
+    },
+    mode() {
+      checkActive();
+      return mode;
+    },
+    isActive() {
+      return active;
+    },
+  };
+
+  return {
+    session,
+    deactivate: () => {
+      active = false;
+      dbRef = null;
+      statements.clear();
+    },
+  };
+}
+
+function normalizeInteger(value: unknown, label: string): number {
+  if (typeof value === "bigint" && value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(value);
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", `Database compatibility field ${label} is malformed`);
+}
+
+function normalizeDdl(ddl: string): string {
+  return ddl.replace(/\bIF\s+NOT\s+EXISTS\b/gi, "").replace(/;\s*$/, "").replace(/\s+/g, " ").trim();
+}
+
+function nativeTableMetadata(db: BunDatabase, tableName: string): TableMetadata | null {
+  const object = db.prepare("SELECT type, sql FROM sqlite_schema WHERE name = ?").get(tableName) as { type?: string; sql?: string | null } | undefined;
+  if (!object) return null;
+  const kind = object.type === "view" ? "VIEW" : object.type === "table" ? "TABLE" : undefined;
+  if (!kind) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database metadata object kind is unsupported");
+  const columns = db.prepare(`PRAGMA table_xinfo("${tableName}")`).all() as Array<{
+    cid: number | bigint; name: string; type: string; notnull: number | bigint; dflt_value: unknown; pk: number | bigint; hidden: number | bigint;
+  }>;
+  const normalizedColumns: ColumnMetadata[] = columns.map((column) => ({
+    cid: Number(column.cid),
+    name: column.name,
+    type: column.type,
+    nullable: Number(column.notnull) === 0 && Number(column.pk) === 0,
+    default: column.dflt_value === null ? null : String(column.dflt_value),
+    primaryKey: Number(column.pk) > 0,
+    notnull: Number(column.notnull),
+    dflt_value: column.dflt_value,
+    pk: Number(column.pk),
+    hidden: Number(column.hidden),
+  }));
+  const ddl = object.sql == null ? undefined : String(object.sql);
+  const checks = [...(ddl ?? "").matchAll(/CHECK\s*\(((?:[^()]|\([^)]*\))*)\)/gi)].map((match) => match[1].trim());
+  return { name: tableName, kind, columns: normalizedColumns, checks, ddl };
+}
+
+type GateRecord = {
+  readerCompatibilityMin: number;
+  readerCompatibilityMax: number;
+  requiredWriterProtocol: number;
+};
+
+export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
   constructor(
     private dbPath: string,
     private readerProtocol: number,
@@ -54,125 +292,73 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
     assertSafeSqlitePath(dbPath);
   }
 
-  async withBusinessSession<T>(
-    mode: BusinessSessionMode,
-    callback: (session: BusinessSession) => Promise<T>,
-  ): Promise<T> {
-    // Check for nested session in same async context
+  async withBusinessSession<T>(mode: BusinessSessionMode, callback: (session: BusinessSession) => Promise<T>): Promise<T> {
     if (nestedSessionStore.getStore()) {
-      throw new DomainError(
-        "BUSINESS_SESSION_NESTED",
-        "Nested business session detected in same async context; reentrant calls are not allowed"
-      );
+      throw new DomainError("BUSINESS_SESSION_NESTED", "Nested business session detected in same async context; reentrant calls are not allowed");
     }
 
     return nestedSessionStore.run(true, async () => {
       let connection: BunDatabase | null = null;
-      let session: SqliteBusinessSession | null = null;
-      let primaryError: Error | null = null;
-
+      let deactivate: (() => void) | null = null;
+      let primaryError: unknown = null;
       try {
-        // Step 1: Open fresh connection
-        try {
-          connection = this.openConnection();
-        } catch (error) {
-          throw error;
-        }
-
-        // Step 2: BEGIN IMMEDIATE (serializes all business sessions and migrations)
+        connection = this.openConnection();
         try {
           connection.exec("BEGIN IMMEDIATE");
         } catch (error) {
-          const classified = classifySqliteError(error, "BEGIN IMMEDIATE");
-          const domainError = toDomainError(classified);
-
-          // Map lock contention to truthful generic error (don't claim migration ownership)
-          if (
-            domainError.code === "SQLITE_CONTENTION_BUSY" ||
-            domainError.code === "SQLITE_CONTENTION_LOCKED"
-          ) {
-            throw new BusinessSessionBusyError(
-              "Cannot acquire database lock; database is busy"
-            );
+          const classified = toDomainError(classifySqliteError(error, "BEGIN IMMEDIATE"));
+          if (classified.code === "SQLITE_CONTENTION_BUSY" || classified.code === "SQLITE_CONTENTION_LOCKED") {
+            throw new BusinessSessionBusyError();
           }
-
-          throw domainError;
+          throw classified;
         }
 
-        // Step 3: Validate database_control and schema on the same fresh connection
-        const record = await this.validateDatabaseControl(connection);
-
-        // Step 4: Validate protocol compatibility based on mode
+        const record = this.validateDatabaseControl(connection);
         if (mode === "read") {
-          if (
-            this.readerProtocol < record.readerCompatibilityMin ||
-            this.readerProtocol > record.readerCompatibilityMax
-          ) {
-            throw new DomainError(
-              "DATABASE_READER_INCOMPATIBLE",
-              `Reader protocol ${this.readerProtocol} is outside valid range [${record.readerCompatibilityMin}, ${record.readerCompatibilityMax}]`
-            );
+          if (this.readerProtocol < record.readerCompatibilityMin || this.readerProtocol > record.readerCompatibilityMax) {
+            throw new DomainError("DATABASE_READER_INCOMPATIBLE", "Reader protocol is incompatible");
           }
-        } else if (mode === "write") {
-          if (this.writerProtocol !== record.requiredWriterProtocol) {
-            throw new DomainError(
-              "DATABASE_WRITER_INCOMPATIBLE",
-              `Writer protocol ${this.writerProtocol} does not match required protocol ${record.requiredWriterProtocol}`
-            );
+          try {
+            connection.exec("PRAGMA query_only = ON");
+          } catch {
+            throw new DomainError("DATABASE_QUERY_ONLY_UNAVAILABLE", "Read-only SQLite session could not be enabled");
           }
+        } else if (mode === "write" && this.writerProtocol !== record.requiredWriterProtocol) {
+          throw new DomainError("DATABASE_WRITER_INCOMPATIBLE", "Writer protocol is incompatible");
         }
 
-        // Step 5: Create session and invoke callback
-        session = new SqliteBusinessSession(connection, mode);
-
+        const created = createBusinessSession(connection, mode);
+        deactivate = created.deactivate;
         try {
-          const result = await callback(session);
-
-          // Step 6: Commit on success
+          const result = await callback(created.session);
           try {
             connection.exec("COMMIT");
           } catch (error) {
-            primaryError = error instanceof Error ? error : new Error(String(error));
-            const classified = classifySqliteError(error, "COMMIT");
-            throw toDomainError(classified);
+            primaryError = error;
+            throw toDomainError(classifySqliteError(error, "COMMIT"));
           }
-
           return result;
         } catch (error) {
-          primaryError = error instanceof Error ? error : new Error(String(error));
+          primaryError = error;
           throw error;
         }
       } catch (error) {
-        // Step 6b: Rollback on error
         if (connection) {
           try {
             connection.exec("ROLLBACK");
           } catch (rollbackError) {
-            // Preserve rollback error but don't mask the primary
-            if (!primaryError) {
-              primaryError = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
-            }
+            if (!primaryError) primaryError = rollbackError;
           }
         }
-
         throw error;
       } finally {
-        // Step 7: Mark session inactive and close connection
-        if (session) {
-          session.markInactive();
-          session = null;
-        }
-
+        deactivate?.();
         if (connection) {
           try {
             connection.close();
           } catch (error) {
-            // Preserve close error but don't mask primary error
-            if (!primaryError) {
-              throw error instanceof Error ? error : new Error(String(error));
-            }
+            if (!primaryError) throw new DomainError("DATABASE_CONNECTION_CLOSE_FAILED", "SQLite connection close failed");
           }
-          connection = null;
         }
       }
     });
@@ -181,84 +367,61 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
   private openConnection(): BunDatabase {
     try {
       const connection = new BunDatabase(this.dbPath);
-      // Enable foreign key constraints for business operations
       connection.exec("PRAGMA foreign_keys = ON");
       return connection;
     } catch (error) {
-      const classified = classifySqliteError(error, "open connection");
-      throw toDomainError(classified);
+      throw toDomainError(classifySqliteError(error, "open connection"));
     }
   }
 
-  private async validateDatabaseControl(connection: BunDatabase): Promise<{
-    readerCompatibilityMin: number;
-    readerCompatibilityMax: number;
-    requiredWriterProtocol: number;
-  }> {
-    // Validate database_control exists and has exact schema
-    const controlTable = connection.prepare(
-      "SELECT type, sql FROM sqlite_schema WHERE name = 'database_control' AND type = 'table'"
-    ).get() as { type: string; sql: string } | undefined;
+  private validateDatabaseControl(connection: BunDatabase): GateRecord {
+    try {
+      const controlMetadata = nativeTableMetadata(connection, "database_control");
+      if (!controlMetadata || DatabaseControlService.validateDatabaseControlTableSchema(controlMetadata)) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control schema is unavailable");
+      }
+      const migrationMetadata = nativeTableMetadata(connection, "schema_migrations");
+      if (!migrationMetadata || !MigrationService.isCurrentMigrationSchema(migrationMetadata)) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration schema is unavailable");
+      }
+      if (normalizeDdl(migrationMetadata.ddl ?? "") !== normalizeDdl(MIGRATION_SCHEMA_SQLITE)) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration schema signature is not canonical");
+      }
 
-    if (!controlTable) {
-      throw new DomainError(
-        "DATABASE_CONTROL_UNAVAILABLE",
-        "database_control table not found"
-      );
+      const controlRows = connection.prepare("SELECT * FROM database_control").all() as Array<Record<string, unknown>>;
+      if (controlRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control row cardinality is invalid");
+      const control = controlRows[0];
+      if (normalizeInteger(control.id, "id") !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control identity is invalid");
+      if (normalizeInteger(control.schema_version, "schema_version") !== CURRENT_SCHEMA_VERSION || normalizeInteger(control.data_format_version, "data_format_version") !== CURRENT_DATA_FORMAT_VERSION) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database schema version is incompatible");
+      }
+      if (String(control.state) !== "READY") throw new DomainError("DATABASE_CONTROL_NOT_READY", "Database control is not READY");
+      if (normalizeInteger(control.generation, "generation") !== CURRENT_DATABASE_GENERATION || normalizeInteger(control.revision, "revision") !== CURRENT_DATABASE_REVISION) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database generation is incompatible");
+      }
+      if (String(control.last_migration_id) !== CURRENT_SQLITE_MIGRATIONS.at(-1)!.id || String(control.last_migration_checksum) !== CURRENT_SQLITE_MIGRATIONS.at(-1)!.checksum) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database migration identity is incompatible");
+      }
+
+      const migrationRows = connection.prepare("SELECT rowid, id, dialect, checksum, status FROM schema_migrations ORDER BY rowid").all() as Array<Record<string, unknown>>;
+      if (migrationRows.length !== CURRENT_SQLITE_MIGRATIONS.length) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration history cardinality is invalid");
+      migrationRows.forEach((row, index) => {
+        const expected = CURRENT_SQLITE_MIGRATIONS[index];
+        if (String(row.id) !== expected.id || String(row.dialect) !== "sqlite" || String(row.checksum) !== expected.checksum || String(row.status) !== "APPLIED") {
+          throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration history is not canonical");
+        }
+      });
+
+      const readerMin = normalizeInteger(control.reader_compatibility_min, "reader_compatibility_min");
+      const readerMax = normalizeInteger(control.reader_compatibility_max, "reader_compatibility_max");
+      const writer = normalizeInteger(control.required_writer_protocol, "required_writer_protocol");
+      if (readerMin !== CURRENT_READER_PROTOCOL_MIN || readerMax !== CURRENT_READER_PROTOCOL_MAX || writer !== CURRENT_WRITER_PROTOCOL) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database protocol metadata is incompatible");
+      }
+      return { readerCompatibilityMin: readerMin, readerCompatibilityMax: readerMax, requiredWriterProtocol: writer };
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database compatibility validation failed");
     }
-
-    // Validate database_control has exactly one row and READY state
-    const controlRow = connection.prepare(
-      "SELECT reader_compatibility_min, reader_compatibility_max, required_writer_protocol, state FROM database_control WHERE id = 1"
-    ).get() as {
-      reader_compatibility_min: number;
-      reader_compatibility_max: number;
-      required_writer_protocol: number;
-      state: string;
-    } | undefined;
-
-    if (!controlRow) {
-      throw new DomainError(
-        "DATABASE_CONTROL_UNAVAILABLE",
-        "database_control table has no rows"
-      );
-    }
-
-    if (controlRow.state !== "READY") {
-      throw new DomainError(
-        "DATABASE_CONTROL_NOT_READY",
-        `Database control state is ${controlRow.state}; only READY is allowed`
-      );
-    }
-
-    // Validate schema_migrations exists and has canonical rows
-    const migrationsTable = connection.prepare(
-      "SELECT type FROM sqlite_schema WHERE name = 'schema_migrations' AND type = 'table'"
-    ).get() as { type: string } | undefined;
-
-    if (!migrationsTable) {
-      throw new DomainError(
-        "DATABASE_CONTROL_UNAVAILABLE",
-        "schema_migrations table not found"
-      );
-    }
-
-    // Verify at least 0002-database-control migration is applied
-    const dbControlMig = connection.prepare(
-      "SELECT id, status FROM schema_migrations WHERE id = '0002-database-control'"
-    ).get() as { id: string; status: string } | undefined;
-
-    if (!dbControlMig || dbControlMig.status !== "APPLIED") {
-      throw new DomainError(
-        "DATABASE_CONTROL_UNAVAILABLE",
-        "Required 0002-database-control migration is not applied"
-      );
-    }
-
-    return {
-      readerCompatibilityMin: controlRow.reader_compatibility_min,
-      readerCompatibilityMax: controlRow.reader_compatibility_max,
-      requiredWriterProtocol: controlRow.required_writer_protocol,
-    };
   }
 }

@@ -118,7 +118,7 @@ export class DatabaseControlService {
       // empty object is unavailable; emptiness is not an escape hatch.
       const tableMetadata = await this.readDatabaseControlMetadata();
       if (!tableMetadata) return { status: "UNINITIALIZED", reason: "TABLE_MISSING" };
-      const schemaError = this.validateTableSchema(tableMetadata);
+      const schemaError = DatabaseControlService.validateDatabaseControlTableSchema(tableMetadata);
       if (schemaError) return { status: "UNAVAILABLE", reason: schemaError };
 
       const migrationHistory = await this.db.query(
@@ -225,7 +225,7 @@ export class DatabaseControlService {
     }
 
     // Validate table schema structure
-    const schemaError = this.validateTableSchema(tableMetadata);
+    const schemaError = DatabaseControlService.validateDatabaseControlTableSchema(tableMetadata);
     if (schemaError) {
       throw new DomainError("DATABASE_CONTROL_MALFORMED", "database_control schema is not canonical");
     }
@@ -432,7 +432,7 @@ export class DatabaseControlService {
    * Also validates stored DDL against expected canonical SQL (exact match, no formatting tolerance).
    * Returns safe error code (not raw schema values) if invalid, undefined if valid.
    */
-  private validateTableSchema(metadata: TableMetadata): DatabaseControlInspectionReason | undefined {
+  static validateDatabaseControlTableSchema(metadata: TableMetadata): DatabaseControlInspectionReason | undefined {
     // Must be a TABLE, not a VIEW
     if (metadata.kind !== "TABLE") {
       return "TABLE_KIND_MISMATCH";

@@ -6,12 +6,11 @@ import {
   brandBookSetId,
   TenantNotFoundError,
   currentTimestamp,
-  IdempotencyConflictError,
-  DomainError,
 } from "../../core/types.ts";
 import type { Tenant, BookSet } from "../ports/repositories.ts";
 import { SqliteTenantRepository } from "../../infrastructure/repositories/tenant-repository.ts";
 import { createHash } from "crypto";
+import { withTenantCreationIdempotency } from "../idempotency.ts";
 
 /**
  * Application service for tenant operations.
@@ -61,97 +60,33 @@ export class TenantService {
   ): Promise<{ tenant: Tenant; defaultBookSet: BookSet }> {
     const requestHash = this.computeRequestHash(tenantKind, tenantName, baseCurrency);
 
-    return this.sessionRunner.withBusinessSession("write", async (session) => {
-      // Check if request already processed
-      const existingRequest = await session.querySingle(
-        "SELECT tenant_id, request_hash, result_json FROM tenant_creation_requests WHERE request_id = ?",
-        [requestId],
-      );
+    return this.sessionRunner.withBusinessSession("write", async (session) =>
+      withTenantCreationIdempotency(session, requestId, requestHash, async () => {
+        const tenantId = brandTenantId(randomUUID());
+        const bookSetId = brandBookSetId(randomUUID());
+        const now = currentTimestamp();
+        const bookSetKind = tenantKind === "COMPANY" ? "COMPANY" : "PERSONAL";
 
-      if (existingRequest) {
-        if ((existingRequest.request_hash as string) !== requestHash) {
-          throw new IdempotencyConflictError(
-            `Request ${requestId} already exists with different parameters`,
-          );
-        }
-
-        if (existingRequest.result_json) {
-          return JSON.parse(existingRequest.result_json as string);
-        }
-
-        // Partial: idempotency row reserved but result not finalized
-        throw new DomainError(
-          "IDEMPOTENCY_PARTIAL",
-          `Request ${requestId} is partially applied; retry may succeed`,
+        await session.execute(
+          `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [tenantId, tenantKind, "CREATING", tenantName, baseCurrency, null, now, now],
         );
-      }
+        await session.execute(
+          `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [bookSetId, tenantId, bookSetKind, "ACTIVE", now, now],
+        );
+        await session.execute(
+          "UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?",
+          [bookSetId, now, tenantId],
+        );
 
-      // Reserve idempotency row FIRST (tenant_id=NULL, result=NULL)
-      const requestRecordId = randomUUID();
-      const tenantId = brandTenantId(randomUUID());
-      const bookSetId = brandBookSetId(randomUUID());
-      const now = currentTimestamp();
-      const bookSetKind = tenantKind === "COMPANY" ? "COMPANY" : "PERSONAL";
-
-      await session.execute(
-        `INSERT INTO tenant_creation_requests (id, request_id, request_hash, tenant_id, result_json, result_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [requestRecordId, requestId, requestHash, null, null, null, now],
-      );
-
-      // Insert tenant with default_book_set_id=NULL (FK will be added later)
-      await session.execute(
-        `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tenantId, tenantKind, "CREATING", tenantName, baseCurrency, null, now, now],
-      );
-
-      // Insert BookSet (FK to tenant satisfied)
-      await session.execute(
-        `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [bookSetId, tenantId, bookSetKind, "ACTIVE", now, now],
-      );
-
-      // Update tenant default_book_set_id (trigger validates same-tenant row exists)
-      await session.execute(
-        `UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?`,
-        [bookSetId, now, tenantId],
-      );
-
-      // Construct result and finalize idempotency row
-      const tenant: Tenant = {
-        id: tenantId,
-        kind: tenantKind,
-        lifecycle: "CREATING",
-        name: tenantName,
-        baseCurrency,
-        defaultBookSetId: bookSetId,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      const defaultBookSet: BookSet = {
-        id: bookSetId,
-        tenantId,
-        kind: bookSetKind,
-        lifecycle: "ACTIVE",
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      const result = { tenant, defaultBookSet };
-      const resultJson = JSON.stringify(result);
-      const resultHash = this.computeRequestHash(JSON.stringify(result));
-
-      // Update idempotency row with final result
-      await session.execute(
-        `UPDATE tenant_creation_requests SET tenant_id = ?, result_json = ?, result_hash = ? WHERE request_id = ?`,
-        [tenantId, resultJson, resultHash, requestId],
-      );
-
-      return result;
-    });
+        const tenant: Tenant = { id: tenantId, kind: tenantKind, lifecycle: "CREATING", name: tenantName, baseCurrency, defaultBookSetId: bookSetId, createdAt: now, updatedAt: now };
+        const defaultBookSet: BookSet = { id: bookSetId, tenantId, kind: bookSetKind, lifecycle: "ACTIVE", createdAt: now, updatedAt: now };
+        return { result: { tenant, defaultBookSet }, tenantId };
+      }),
+    );
   }
 
   private computeRequestHash(
