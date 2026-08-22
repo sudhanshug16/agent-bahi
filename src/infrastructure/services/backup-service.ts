@@ -23,6 +23,7 @@ import { CORE_SCHEMA_SQLITE } from "../schema/core-schema.ts";
 import { DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
 import { BOOKSET_V3_MIGRATION } from "../schema/bookset-v3-migration.ts";
+import { BOOKSET_V4_MIGRATION } from "../schema/bookset-v4-migration.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 
 type CatalogRow = {
@@ -421,14 +422,17 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
   if (cached) return cached;
   const db = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
+    db.exec("PRAGMA foreign_keys = ON");
     db.exec(MIGRATION_SCHEMA_SQLITE);
     db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
     db.exec(CORE_SCHEMA_SQLITE);
     db.exec(DATABASE_CONTROL_TABLE_DDL);
-    // The expected catalog is the actual current production schema, not the
-    // v2 source catalog. Apply the immutable sequence through 0003 so backup
-    // verification cannot accept a v3 history with a v2 shape.
+    // The expected catalog is the actual production schema for the requested
+    // history, not the v2 source catalog. Apply the immutable sequence through
+    // the requested target so a v4 history cannot pass with missing 0004
+    // objects or triggers.
     if (expectedManifest.schemaVersion >= 3) db.exec(BOOKSET_V3_MIGRATION.sqlite);
+    if (expectedManifest.schemaVersion >= 4) db.exec(BOOKSET_V4_MIGRATION.sqlite);
     const catalog = queryRows<CatalogRow>(db, `
       SELECT type, name, tbl_name, sql
       FROM sqlite_schema

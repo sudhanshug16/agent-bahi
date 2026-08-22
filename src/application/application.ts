@@ -17,7 +17,6 @@ import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN } from "../infrastruct
 import { CORE_MIGRATIONS } from "../infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../infrastructure/schema/database-control-schema.ts";
 import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
-import { BOOKSET_V4_MIGRATION } from "../infrastructure/schema/bookset-v4-migration.ts";
 
 export type ApplicationFacade = {
   tenant: TenantService;
@@ -32,6 +31,17 @@ export interface SqliteBootstrapOptions {
   cliVersion?: string;
   buildId?: string;
   now?: Date;
+}
+
+/**
+ * Each upgrade hop gets its own deterministic, no-replace artifact. The
+ * coordinator owns collision handling, so an existing path is never replaced
+ * or silently reused for a different hop.
+ */
+function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4"): string {
+  return basePath.endsWith(".sqlite")
+    ? `${basePath.slice(0, -".sqlite".length)}.${hop}.sqlite`
+    : `${basePath}.${hop}.sqlite`;
 }
 
 /**
@@ -80,40 +90,32 @@ export async function bootstrapSqliteApplication(
       throw new Error("Database control did not converge to a known foundation state");
     }
 
-    // Upgrade v2->v3 if starting from v2
+    // Every versioned upgrade, including the v3->v4 hop, uses the coordinator
+    // and its verified pre-DDL backup boundary.
     if (inspection.record.schemaVersion === V2_SCHEMA_MANIFEST.schemaVersion) {
       await new UpgradeCoordinator(db, new BackupService({
         sourcePath: dbPath,
         expectedSourceManifest: V2_SCHEMA_MANIFEST,
       })).upgrade({
         plan: BOOKSET_V3_UPGRADE_PLAN,
-        backupDestinationPath: options.backupDestinationPath,
+        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v2-to-v3"),
         cliVersion: options.cliVersion ?? "agent-bahi",
         buildId: options.buildId ?? "bootstrap",
         now,
       });
     }
 
-    // Upgrade v3->v4: apply directly for bootstrap (no backup needed for fresh databases)
-    // In production, v3->v4 must go through UpgradeCoordinator for existing databases
     const postV3Inspection = await new DatabaseControlService(db, "sqlite", V3_SCHEMA_MANIFEST).inspect();
     if (postV3Inspection.status === "AVAILABLE" && postV3Inspection.record?.schemaVersion === V3_SCHEMA_MANIFEST.schemaVersion) {
-      const v4MigrationService = new MigrationService(db, "sqlite");
-      await v4MigrationService.migrate([
-        {
-          id: BOOKSET_V4_MIGRATION.id,
-          sql: BOOKSET_V4_MIGRATION.sqlite,
-          manifest: BOOKSET_V4_MIGRATION.manifest,
-        },
-      ]);
-
-      // Update database_control to v4
-      await db.withMigrationLease(async (session) => {
-        const lastMigration = (await session.execute("SELECT id, checksum FROM schema_migrations WHERE status = 'APPLIED' ORDER BY rowid DESC LIMIT 1")).rows[0];
-        await session.execute(
-          `UPDATE database_control SET schema_version = ?, revision = ?, last_migration_id = ?, last_migration_checksum = ?, updated_at = ? WHERE id = 1`,
-          [4, 3, lastMigration?.id, lastMigration?.checksum, now.toISOString()]
-        );
+      await new UpgradeCoordinator(db, new BackupService({
+        sourcePath: dbPath,
+        expectedSourceManifest: V3_SCHEMA_MANIFEST,
+      })).upgrade({
+        plan: BOOKSET_V4_UPGRADE_PLAN,
+        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v3-to-v4"),
+        cliVersion: options.cliVersion ?? "agent-bahi",
+        buildId: options.buildId ?? "bootstrap",
+        now,
       });
     }
   } finally {
