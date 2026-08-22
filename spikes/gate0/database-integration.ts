@@ -632,31 +632,23 @@ function extractLockErrorCode(error: unknown, dialect: DatabaseType): { isLockEr
   if (!error) return { isLockError: false, code: "" };
 
   const err = error as unknown as Record<string, unknown>;
-  const errStr = String(error);
 
   if (dialect === "postgres") {
-    // PostgreSQL: check structured sqlState field or SQLSTATE in message
-    const sqlState = err.sqlState || err.code;
+    // PostgreSQL: ONLY structured sqlState field (no message substring fallback)
+    const sqlState = String(err.sqlState ?? "");
     if (sqlState === "55P03" || sqlState === "40P01") {
-      return { isLockError: true, code: String(sqlState) };
-    }
-    // Fallback to message parsing only if no structured field
-    if (errStr.includes("55P03") || errStr.includes("40P01")) {
-      return { isLockError: true, code: "SQLSTATE_in_message" };
+      return { isLockError: true, code: sqlState };
     }
   } else {
-    // MySQL: check structured errno or sqlState field
-    const errno = err.errno || err.code;
-    const sqlState = err.sqlState;
-    if (errno === 1205 || errno === "1205" || sqlState === "40001") {
-      return { isLockError: true, code: String(errno || sqlState) };
-    }
-    // Fallback to message parsing only if no structured field
-    if (errStr.includes("1205") || errStr.includes("40001")) {
-      return { isLockError: true, code: "errno_in_message" };
+    // MySQL: ONLY structured errno or sqlState field (no message substring fallback)
+    const errno = String(err.errno ?? "");
+    const sqlState = String(err.sqlState ?? "");
+    if (errno === "1205" || sqlState === "40001") {
+      return { isLockError: true, code: errno || sqlState };
     }
   }
 
+  // Structured code not found = NOT a lock error (rejects message-lookalike errors)
   return { isLockError: false, code: "" };
 }
 
@@ -1480,18 +1472,43 @@ async function runSemanticMatrix(ctx: SemanticProofContext): Promise<Integration
       }
     }
 
-    // CON-001 negative: unrelated error must NOT be classified as lock conflict
+    // CON-001 negative: error classification must reject message-lookalike and unrelated errors
     try {
-      const unrelatedError = Object.assign(new Error("connection reset by peer"), { code: "ECONNRESET" });
+      let allNegativesRejected = true;
 
-      const { isLockError: isUnrelatedLock } = extractLockErrorCode(unrelatedError, ctx.dbConfig.type);
-      if (isUnrelatedLock) {
-        recordProofFail(results, "CON-001-NEG", prefix, "Unrelated error incorrectly classified as lock conflict");
+      // Test 1: unrelated error with different code
+      const unrelatedError = Object.assign(new Error("connection reset by peer"), { code: "ECONNRESET" });
+      if (extractLockErrorCode(unrelatedError, ctx.dbConfig.type).isLockError) {
+        allNegativesRejected = false;
+      }
+
+      // Test 2: error message containing lock keywords but wrong/missing structured code
+      const messageLookalike = Object.assign(
+        new Error("lock wait timeout exceeded - lock_not_available"),
+        { sqlState: ctx.dbConfig.type === "postgres" ? "22P02" : "12345" } // wrong SQLSTATE
+      );
+      if (extractLockErrorCode(messageLookalike, ctx.dbConfig.type).isLockError) {
+        allNegativesRejected = false;
+      }
+
+      // Test 3: error with message containing numbers but wrong structured code
+      const numberLookalike = Object.assign(
+        new Error("error code 1205 or 40001 reported"),
+        { errno: 2003, sqlState: ctx.dbConfig.type === "postgres" ? "00000" : "08000" } // wrong code
+      );
+      if (extractLockErrorCode(numberLookalike, ctx.dbConfig.type).isLockError) {
+        allNegativesRejected = false;
+      }
+
+      if (!allNegativesRejected) {
+        recordProofFail(results, "CON-001-NEG", prefix, "Message-lookalike or unrelated error incorrectly classified");
       } else {
         recordProofPass(results, "CON-001-NEG", prefix, [
-          "unrelated error (ECONNRESET) correctly rejected",
-          "not misclassified as lock/timeout conflict",
-          "error classification strict and accurate",
+          "unrelated error (ECONNRESET) rejected",
+          "message-lookalike with wrong structured code rejected",
+          "number-lookalike errors rejected",
+          "classification requires ONLY structured sqlState/errno codes",
+          "message substrings cannot bypass classification",
         ]);
       }
     } catch (error) {
