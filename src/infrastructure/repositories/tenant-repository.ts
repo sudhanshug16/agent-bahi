@@ -1,66 +1,58 @@
-import type { Database } from "../../application/ports/persistence.ts";
+import type { BusinessSession } from "../../application/ports/persistence.ts";
 import type { TenantRepository, Tenant, BookSet } from "../../application/ports/repositories.ts";
 import type { TenantId, BookSetId } from "../../core/types.ts";
-import { brandTenantId, brandBookSetId, TenantNotFoundError, CrossTenantViolationError } from "../../core/types.ts";
+import { brandTenantId, brandBookSetId, TenantNotFoundError, CrossTenantViolationError, DomainError } from "../../core/types.ts";
 
 /**
- * SQL-based tenant repository implementation.
+ * SQL-based tenant repository implementation (session-bound).
+ * All operations use the passed BusinessSession; no independent transactions.
  * Enforces invariants:
  * - One COMPANY BookSet per COMPANY tenant
  * - One PERSONAL BookSet per INDIVIDUAL tenant
  * - Cannot archive if default BookSet is active
  */
 export class SqliteTenantRepository implements TenantRepository {
-  constructor(private db: Database) {}
+  constructor(private session: BusinessSession) {}
 
   async create(tenant: Tenant, defaultBookSet: BookSet): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Insert tenant (initially CREATING, no default yet)
+    await this.session.execute(
+      `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenant.id,
+        tenant.kind,
+        "CREATING",
+        tenant.name,
+        tenant.baseCurrency,
+        tenant.createdAt,
+        tenant.updatedAt,
+      ],
+    );
 
-    try {
-      // Insert tenant (initially CREATING, no default yet)
-      await tx.execute(
-        `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          tenant.id,
-          tenant.kind,
-          "CREATING",
-          tenant.name,
-          tenant.baseCurrency,
-          tenant.createdAt,
-          tenant.updatedAt,
-        ],
-      );
+    // Insert default BookSet
+    await this.session.execute(
+      `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        defaultBookSet.id,
+        tenant.id,
+        defaultBookSet.kind,
+        "ACTIVE",
+        defaultBookSet.createdAt,
+        defaultBookSet.updatedAt,
+      ],
+    );
 
-      // Insert default BookSet
-      await tx.execute(
-        `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          defaultBookSet.id,
-          tenant.id,
-          defaultBookSet.kind,
-          "ACTIVE",
-          defaultBookSet.createdAt,
-          defaultBookSet.updatedAt,
-        ],
-      );
-
-      // Set tenant default_book_set_id
-      await tx.execute(
-        `UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?`,
-        [defaultBookSet.id, tenant.updatedAt, tenant.id],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
-    }
+    // Set tenant default_book_set_id
+    await this.session.execute(
+      `UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?`,
+      [defaultBookSet.id, tenant.updatedAt, tenant.id],
+    );
   }
 
   async getById(tenantId: TenantId): Promise<Tenant> {
-    const result = await this.db.querySingle(
+    const result = await this.session.querySingle(
       `SELECT id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at
        FROM tenants WHERE id = ?`,
       [tenantId],
@@ -83,7 +75,7 @@ export class SqliteTenantRepository implements TenantRepository {
   }
 
   async listActive(): Promise<Tenant[]> {
-    const results = await this.db.query(
+    const results = await this.session.query(
       `SELECT id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at
        FROM tenants WHERE lifecycle = 'ACTIVE' ORDER BY id`,
     );
@@ -101,7 +93,7 @@ export class SqliteTenantRepository implements TenantRepository {
   }
 
   async update(tenant: Tenant): Promise<void> {
-    await this.db.execute(
+    await this.session.execute(
       `UPDATE tenants SET kind = ?, lifecycle = ?, name = ?, base_currency = ?, default_book_set_id = ?, updated_at = ?
        WHERE id = ?`,
       [
@@ -117,72 +109,54 @@ export class SqliteTenantRepository implements TenantRepository {
   }
 
   async activate(tenantId: TenantId): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Verify tenant exists and is in CREATING state
+    const tenant = await this.session.querySingle(
+      `SELECT id, lifecycle FROM tenants WHERE id = ?`,
+      [tenantId],
+    );
 
-    try {
-      // Verify tenant exists and is in CREATING state
-      const tenant = await tx.executeSingle(
-        `SELECT id, lifecycle FROM tenants WHERE id = ?`,
-        [tenantId],
-      );
-
-      if (!tenant) {
-        throw new TenantNotFoundError(tenantId);
-      }
-
-      if (tenant.lifecycle !== "CREATING") {
-        throw new Error(`Cannot activate tenant in ${tenant.lifecycle} state`);
-      }
-
-      // Transition to ACTIVE
-      await tx.execute(
-        `UPDATE tenants SET lifecycle = ?, updated_at = ? WHERE id = ?`,
-        ["ACTIVE", new Date().toISOString(), tenantId],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
+    if (!tenant) {
+      throw new TenantNotFoundError(tenantId);
     }
+
+    if (tenant.lifecycle !== "CREATING") {
+      throw new Error(`Cannot activate tenant in ${tenant.lifecycle} state`);
+    }
+
+    // Transition to ACTIVE
+    await this.session.execute(
+      `UPDATE tenants SET lifecycle = ?, updated_at = ? WHERE id = ?`,
+      ["ACTIVE", new Date().toISOString(), tenantId],
+    );
   }
 
   async archive(tenantId: TenantId): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Verify tenant exists
+    const tenant = await this.session.querySingle(
+      `SELECT id, default_book_set_id FROM tenants WHERE id = ?`,
+      [tenantId],
+    );
 
-    try {
-      // Verify tenant exists
-      const tenant = await tx.executeSingle(
-        `SELECT id, default_book_set_id FROM tenants WHERE id = ?`,
-        [tenantId],
-      );
-
-      if (!tenant) {
-        throw new TenantNotFoundError(tenantId);
-      }
-
-      // Verify default BookSet is not active (or doesn't exist)
-      if (tenant.default_book_set_id) {
-        const bookSet = await tx.executeSingle(
-          `SELECT id, lifecycle FROM book_sets WHERE id = ?`,
-          [tenant.default_book_set_id],
-        );
-
-        if (bookSet && bookSet.lifecycle === "ACTIVE") {
-          throw new Error(`Cannot archive tenant with active default BookSet ${bookSet.id}`);
-        }
-      }
-
-      // Transition to ARCHIVED
-      await tx.execute(
-        `UPDATE tenants SET lifecycle = ?, updated_at = ? WHERE id = ?`,
-        ["ARCHIVED", new Date().toISOString(), tenantId],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
+    if (!tenant) {
+      throw new TenantNotFoundError(tenantId);
     }
+
+    // Verify default BookSet is not active (or doesn't exist)
+    if (tenant.default_book_set_id) {
+      const bookSet = await this.session.querySingle(
+        `SELECT id, lifecycle FROM book_sets WHERE id = ?`,
+        [tenant.default_book_set_id],
+      );
+
+      if (bookSet && bookSet.lifecycle === "ACTIVE") {
+        throw new Error(`Cannot archive tenant with active default BookSet ${bookSet.id}`);
+      }
+    }
+
+    // Transition to ARCHIVED
+    await this.session.execute(
+      `UPDATE tenants SET lifecycle = ?, updated_at = ? WHERE id = ?`,
+      ["ARCHIVED", new Date().toISOString(), tenantId],
+    );
   }
 }

@@ -1,55 +1,50 @@
-import type { Database } from "../../application/ports/persistence.ts";
+import type { BusinessSession } from "../../application/ports/persistence.ts";
 import type { AccountRepository, Account } from "../../application/ports/repositories.ts";
 import type { TenantId, BookSetId, AccountId } from "../../core/types.ts";
 import { brandAccountId, brandTenantId, brandBookSetId, DomainError, CrossTenantViolationError } from "../../core/types.ts";
 
+/**
+ * SQL-based Account repository implementation (session-bound).
+ * All operations use the passed BusinessSession; no independent transactions.
+ */
 export class SqliteAccountRepository implements AccountRepository {
-  constructor(private db: Database) {}
+  constructor(private session: BusinessSession) {}
 
   async create(account: Account): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Verify no reuse of account code in same scope (including archived accounts)
+    // Archived accounts keep their code reserved to prevent reuse
+    const existing = await this.session.querySingle(
+      `SELECT id FROM accounts WHERE tenant_id = ? AND book_set_id = ? AND code = ?`,
+      [account.tenantId, account.bookSetId, account.code],
+    );
 
-    try {
-      // Verify no reuse of account code in same scope (including archived accounts)
-      // Archived accounts keep their code reserved to prevent reuse
-      const existing = await tx.executeSingle(
-        `SELECT id FROM accounts WHERE tenant_id = ? AND book_set_id = ? AND code = ?`,
-        [account.tenantId, account.bookSetId, account.code],
+    if (existing) {
+      throw new DomainError(
+        "ACCOUNT_CODE_ALREADY_EXISTS",
+        `Account code already exists in this scope (may be archived): ${account.code}`,
+        { tenantId: account.tenantId, bookSetId: account.bookSetId, code: account.code },
       );
-
-      if (existing) {
-        throw new DomainError(
-          "ACCOUNT_CODE_ALREADY_EXISTS",
-          `Account code already exists in this scope (may be archived): ${account.code}`,
-          { tenantId: account.tenantId, bookSetId: account.bookSetId, code: account.code },
-        );
-      }
-
-      await tx.execute(
-        `INSERT INTO accounts (id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          account.id,
-          account.tenantId,
-          account.bookSetId,
-          account.code,
-          account.name,
-          account.accountType,
-          account.parentAccountId,
-          account.createdAt,
-          account.updatedAt,
-        ],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
     }
+
+    await this.session.execute(
+      `INSERT INTO accounts (id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        account.id,
+        account.tenantId,
+        account.bookSetId,
+        account.code,
+        account.name,
+        account.accountType,
+        account.parentAccountId,
+        account.createdAt,
+        account.updatedAt,
+      ],
+    );
   }
 
   async getById(accountId: AccountId, tenantId: TenantId, bookSetId: BookSetId): Promise<Account> {
-    const result = await this.db.querySingle(
+    const result = await this.session.querySingle(
       `SELECT id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at
        FROM accounts WHERE id = ? AND tenant_id = ? AND book_set_id = ?`,
       [accountId, tenantId, bookSetId],
@@ -77,7 +72,7 @@ export class SqliteAccountRepository implements AccountRepository {
   }
 
   async getByCode(code: string, tenantId: TenantId, bookSetId: BookSetId): Promise<Account | null> {
-    const result = await this.db.querySingle(
+    const result = await this.session.querySingle(
       `SELECT id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at
        FROM accounts WHERE tenant_id = ? AND book_set_id = ? AND code = ?`,
       [tenantId, bookSetId, code],
@@ -99,7 +94,7 @@ export class SqliteAccountRepository implements AccountRepository {
   }
 
   async listByBookSet(tenantId: TenantId, bookSetId: BookSetId): Promise<Account[]> {
-    const results = await this.db.query(
+    const results = await this.session.query(
       `SELECT id, tenant_id, book_set_id, code, name, account_type, parent_account_id, created_at, updated_at
        FROM accounts WHERE tenant_id = ? AND book_set_id = ? ORDER BY code`,
       [tenantId, bookSetId],
@@ -119,7 +114,7 @@ export class SqliteAccountRepository implements AccountRepository {
   }
 
   async update(account: Account): Promise<void> {
-    await this.db.execute(
+    await this.session.execute(
       `UPDATE accounts SET name = ?, account_type = ?, updated_at = ?
        WHERE id = ? AND tenant_id = ? AND book_set_id = ?`,
       [
@@ -134,33 +129,24 @@ export class SqliteAccountRepository implements AccountRepository {
   }
 
   async archive(accountId: AccountId, tenantId: TenantId, bookSetId: BookSetId): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Verify ownership
+    const account = await this.session.querySingle(
+      `SELECT id, tenant_id, book_set_id FROM accounts WHERE id = ? AND tenant_id = ? AND book_set_id = ?`,
+      [accountId, tenantId, bookSetId],
+    );
 
-    try {
-      // Verify ownership
-      const account = await tx.executeSingle(
-        `SELECT id, tenant_id, book_set_id FROM accounts WHERE id = ? AND tenant_id = ? AND book_set_id = ?`,
-        [accountId, tenantId, bookSetId],
-      );
-
-      if (!account) {
-        throw new DomainError("ACCOUNT_NOT_FOUND", `Account not found: ${accountId}`);
-      }
-
-      if ((account.tenant_id as string) !== tenantId || (account.book_set_id as string) !== bookSetId) {
-        throw new CrossTenantViolationError("archiveAccount", tenantId, brandTenantId(account.tenant_id as string));
-      }
-
-      // Mark as archived (code remains reserved)
-      await tx.execute(
-        `UPDATE accounts SET archived_at = ?, updated_at = ? WHERE id = ?`,
-        [new Date().toISOString(), new Date().toISOString(), accountId],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
+    if (!account) {
+      throw new DomainError("ACCOUNT_NOT_FOUND", `Account not found: ${accountId}`);
     }
+
+    if ((account.tenant_id as string) !== tenantId || (account.book_set_id as string) !== bookSetId) {
+      throw new CrossTenantViolationError("archiveAccount", tenantId, brandTenantId(account.tenant_id as string));
+    }
+
+    // Mark as archived (code remains reserved)
+    await this.session.execute(
+      `UPDATE accounts SET archived_at = ?, updated_at = ? WHERE id = ?`,
+      [new Date().toISOString(), new Date().toISOString(), accountId],
+    );
   }
 }

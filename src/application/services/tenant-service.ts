@@ -1,6 +1,5 @@
 import { randomUUID } from "crypto";
-import type { Database } from "../ports/persistence.ts";
-import type { TenantRepository, BookSetRepository } from "../ports/repositories.ts";
+import type { BusinessSessionRunner, BusinessSession } from "../ports/persistence.ts";
 import type { TenantId, BookSetId } from "../../core/types.ts";
 import {
   brandTenantId,
@@ -11,6 +10,8 @@ import {
   DomainError,
 } from "../../core/types.ts";
 import type { Tenant, BookSet } from "../ports/repositories.ts";
+import { SqliteTenantRepository } from "../../infrastructure/repositories/tenant-repository.ts";
+import { createHash } from "crypto";
 
 /**
  * Application service for tenant operations.
@@ -18,14 +19,14 @@ import type { Tenant, BookSet } from "../ports/repositories.ts";
  * - Atomic tenant+BookSet creation
  * - Idempotent tenant bootstrapping with request deduplication
  * - Tenant activation
+ *
+ * All operations run within a single BusinessSession.
+ * Repositories are constructed session-bound inside the callback.
+ * Session/repositories escape the callback scope and subsequent use fails.
  */
-import { createHash } from "crypto";
-
 export class TenantService {
   constructor(
-    private db: Database,
-    private tenantRepo: TenantRepository,
-    private bookSetRepo: BookSetRepository,
+    private sessionRunner: BusinessSessionRunner,
   ) {}
 
   /**
@@ -47,7 +48,10 @@ export class TenantService {
    * 2. Insert default BookSet (COMPANY for COMPANY tenant, PERSONAL for INDIVIDUAL)
    * 3. Update tenant to set default_book_set_id
    * 4. Record tenant_creation_request atomically
-   * 5. Commit
+   * 5. Commit (auto within BusinessSession)
+   *
+   * All operations run within a single write-mode BusinessSession.
+   * Session becomes inactive after callback; subsequent use throws.
    */
   async createTenantWithDefaultBookSet(
     tenantKind: "COMPANY" | "INDIVIDUAL",
@@ -57,9 +61,9 @@ export class TenantService {
   ): Promise<{ tenant: Tenant; defaultBookSet: BookSet }> {
     const requestHash = this.computeRequestHash(tenantKind, tenantName, baseCurrency);
 
-    return this.db.unitOfWork().execute(async (tx) => {
+    return this.sessionRunner.withBusinessSession("write", async (session) => {
       // Check if request already processed
-      const existingRequest = await tx.executeSingle(
+      const existingRequest = await session.querySingle(
         "SELECT tenant_id, request_hash, result_json FROM tenant_creation_requests WHERE request_id = ?",
         [requestId],
       );
@@ -89,28 +93,28 @@ export class TenantService {
       const now = currentTimestamp();
       const bookSetKind = tenantKind === "COMPANY" ? "COMPANY" : "PERSONAL";
 
-      await tx.execute(
+      await session.execute(
         `INSERT INTO tenant_creation_requests (id, request_id, request_hash, tenant_id, result_json, result_hash, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [requestRecordId, requestId, requestHash, null, null, null, now],
       );
 
       // Insert tenant with default_book_set_id=NULL (FK will be added later)
-      await tx.execute(
+      await session.execute(
         `INSERT INTO tenants (id, kind, lifecycle, name, base_currency, default_book_set_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [tenantId, tenantKind, "CREATING", tenantName, baseCurrency, null, now, now],
       );
 
       // Insert BookSet (FK to tenant satisfied)
-      await tx.execute(
+      await session.execute(
         `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [bookSetId, tenantId, bookSetKind, "ACTIVE", now, now],
       );
 
       // Update tenant default_book_set_id (trigger validates same-tenant row exists)
-      await tx.execute(
+      await session.execute(
         `UPDATE tenants SET default_book_set_id = ?, updated_at = ? WHERE id = ?`,
         [bookSetId, now, tenantId],
       );
@@ -141,7 +145,7 @@ export class TenantService {
       const resultHash = this.computeRequestHash(JSON.stringify(result));
 
       // Update idempotency row with final result
-      await tx.execute(
+      await session.execute(
         `UPDATE tenant_creation_requests SET tenant_id = ?, result_json = ?, result_hash = ? WHERE request_id = ?`,
         [tenantId, resultJson, resultHash, requestId],
       );
@@ -162,23 +166,35 @@ export class TenantService {
   /**
    * Activate a tenant (transition from CREATING to ACTIVE).
    * Only valid for tenants in CREATING state.
+   * Runs in write-mode session.
    */
   async activateTenant(tenantId: TenantId): Promise<Tenant> {
-    await this.tenantRepo.activate(tenantId);
-    return this.tenantRepo.getById(tenantId);
+    return this.sessionRunner.withBusinessSession("write", async (session) => {
+      const repo = new SqliteTenantRepository(session);
+      await repo.activate(tenantId);
+      return repo.getById(tenantId);
+    });
   }
 
   /**
-   * Get tenant by ID.
+   * Get tenant by ID (read-only).
+   * Runs in read-mode session.
    */
   async getTenant(tenantId: TenantId): Promise<Tenant> {
-    return this.tenantRepo.getById(tenantId);
+    return this.sessionRunner.withBusinessSession("read", async (session) => {
+      const repo = new SqliteTenantRepository(session);
+      return repo.getById(tenantId);
+    });
   }
 
   /**
-   * List all active tenants.
+   * List all active tenants (read-only).
+   * Runs in read-mode session.
    */
   async listActiveTenants(): Promise<Tenant[]> {
-    return this.tenantRepo.listActive();
+    return this.sessionRunner.withBusinessSession("read", async (session) => {
+      const repo = new SqliteTenantRepository(session);
+      return repo.listActive();
+    });
   }
 }

@@ -255,3 +255,92 @@ export interface BackupService {
    */
   verifyBackup(backupPath: string): Promise<boolean>;
 }
+
+/**
+ * BusinessSession: narrow, lifetime-bound session for application business logic.
+ * Exposes only parameter-bound query/querySingle and minimal execute methods.
+ * No raw Database, native bun:sqlite, executeRaw, DDL, transactions, migration lease, or metadata probe.
+ * Read-mode sessions reject all mutations deterministically.
+ * Active flag is checked on every method and invalidated after callback; use after callback fails.
+ *
+ * V1 Serialization: all sessions execute under BEGIN IMMEDIATE, pinned to one connection
+ * for their callback lifetime. This serializes all concurrent business operations and
+ * aligns with migration locking authority. Concurrent read optimization is out of scope for V1.
+ */
+export type BusinessSessionMode = "read" | "write";
+
+export interface BusinessSession {
+  /**
+   * Parameter-bound query: read-only, returns all matching rows.
+   * Fails in read-mode or if session is inactive.
+   */
+  query(sql: string, params?: unknown[]): Promise<QueryResult>;
+
+  /**
+   * Parameter-bound single-row query: read-only.
+   * Fails in read-mode or if session is inactive.
+   */
+  querySingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined>;
+
+  /**
+   * Execute: parameter-bound mutation (INSERT/UPDATE/DELETE).
+   * Only allowed in write mode. Fails in read-mode or if session is inactive.
+   */
+  execute(sql: string, params?: unknown[]): Promise<QueryResult>;
+
+  /**
+   * Execute single: parameter-bound mutation returning affected rows.
+   * Only allowed in write mode. Fails in read-mode or if session is inactive.
+   */
+  executeSingle(sql: string, params?: unknown[]): Promise<Record<string, unknown> | undefined>;
+
+  /**
+   * Get the current session mode (read or write).
+   */
+  mode(): BusinessSessionMode;
+
+  /**
+   * Check if session is still active.
+   * Sessions become inactive after callback returns and cleanup completes.
+   */
+  isActive(): boolean;
+}
+
+/**
+ * BusinessSessionRunner: application entrypoint for business operations.
+ * withBusinessSession acquires a fresh canonical-path SQLite connection, validates
+ * database_control and compatibility gate, then invokes callback within BEGIN IMMEDIATE.
+ * Callback-scoped sessions escape validation and cause failures on any use outside callback.
+ *
+ * V1 Semantics:
+ * - Fresh connection per callback (not shared with migrations or other sessions).
+ * - BEGIN IMMEDIATE before gate validation, serializing all concurrent sessions.
+ * - Session-scoped gate validates exact database_control DDL/row/history and READY state
+ *   with exact reader/writer protocol match.
+ * - Callback invoked only if gate passes; committed on success, rolled back on error.
+ * - Migration vs business session exclusion is real: active sessions prevent lease acquisition.
+ * - Nested/reentrant session attempt rejects without native nested-transaction text.
+ */
+export interface BusinessSessionRunner {
+  /**
+   * Execute business logic within a lifetime-bound session.
+   * Fresh connection per callback, with automatic transaction management.
+   * Callback may construct session-bound repositories inside and should not escape session/repositories.
+   *
+   * Transaction guarantees:
+   * - All work runs within BEGIN IMMEDIATE on a single pinned connection.
+   * - database_control validation happens inside the transaction, before callback.
+   * - Callback is invoked only if gate passes.
+   * - Commit on success; rollback on throw or error.
+   * - Session becomes inactive after callback returns; further use throws.
+   *
+   * @param mode Session mode: read or write (write mode requires write protocol compatibility)
+   * @param callback Business logic; may throw to rollback transaction
+   * @throws Stable domain error if database_control invalid/incompatible/not READY
+   * @throws Redacted domain error if callback throws or commit/close fails
+   */
+  withBusinessSession<T>(
+    mode: BusinessSessionMode,
+    callback: (session: BusinessSession) => Promise<T>,
+  ): Promise<T>;
+}

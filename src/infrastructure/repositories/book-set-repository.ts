@@ -1,67 +1,62 @@
-import type { Database } from "../../application/ports/persistence.ts";
+import type { BusinessSession } from "../../application/ports/persistence.ts";
 import type { BookSetRepository, BookSet } from "../../application/ports/repositories.ts";
 import type { TenantId, BookSetId } from "../../core/types.ts";
 import { brandBookSetId, brandTenantId, DomainError, CrossTenantViolationError } from "../../core/types.ts";
 
+/**
+ * SQL-based BookSet repository implementation (session-bound).
+ * All operations use the passed BusinessSession; no independent transactions.
+ */
 export class SqliteBookSetRepository implements BookSetRepository {
-  constructor(private db: Database) {}
+  constructor(private session: BusinessSession) {}
 
   async create(bookSet: BookSet): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Verify tenant exists and get its kind
+    const tenant = await this.session.querySingle(
+      "SELECT id, kind FROM tenants WHERE id = ?",
+      [bookSet.tenantId],
+    );
 
-    try {
-      // Verify tenant exists and get its kind
-      const tenant = await tx.executeSingle(
-        "SELECT id, kind FROM tenants WHERE id = ?",
-        [bookSet.tenantId],
-      );
-
-      if (!tenant) {
-        throw new DomainError("TENANT_NOT_FOUND", `Tenant not found: ${bookSet.tenantId}`);
-      }
-
-      const tenantKind = tenant.kind as string;
-
-      // Enforce BookSet kind cardinality based on tenant kind
-      if (tenantKind === "COMPANY" && bookSet.kind !== "COMPANY") {
-        throw new DomainError(
-          "INVALID_BOOK_SET_KIND",
-          `COMPANY tenant can only have COMPANY BookSet, not ${bookSet.kind}`,
-          { tenantKind, bookSetKind: bookSet.kind },
-        );
-      }
-
-      if (tenantKind === "INDIVIDUAL" && bookSet.kind === "COMPANY") {
-        throw new DomainError(
-          "INVALID_BOOK_SET_KIND",
-          `INDIVIDUAL tenant cannot have COMPANY BookSet`,
-          { tenantKind, bookSetKind: bookSet.kind },
-        );
-      }
-
-      // Insert the BookSet
-      await tx.execute(
-        `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          bookSet.id,
-          bookSet.tenantId,
-          bookSet.kind,
-          bookSet.lifecycle,
-          bookSet.createdAt,
-          bookSet.updatedAt,
-        ],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
+    if (!tenant) {
+      throw new DomainError("TENANT_NOT_FOUND", `Tenant not found: ${bookSet.tenantId}`);
     }
+
+    const tenantKind = tenant.kind as string;
+
+    // Enforce BookSet kind cardinality based on tenant kind
+    if (tenantKind === "COMPANY" && bookSet.kind !== "COMPANY") {
+      throw new DomainError(
+        "INVALID_BOOK_SET_KIND",
+        `COMPANY tenant can only have COMPANY BookSet, not ${bookSet.kind}`,
+        { tenantKind, bookSetKind: bookSet.kind },
+      );
+    }
+
+    if (tenantKind === "INDIVIDUAL" && bookSet.kind === "COMPANY") {
+      throw new DomainError(
+        "INVALID_BOOK_SET_KIND",
+        `INDIVIDUAL tenant cannot have COMPANY BookSet`,
+        { tenantKind, bookSetKind: bookSet.kind },
+      );
+    }
+
+    // Insert the BookSet
+    await this.session.execute(
+      `INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        bookSet.id,
+        bookSet.tenantId,
+        bookSet.kind,
+        bookSet.lifecycle,
+        bookSet.createdAt,
+        bookSet.updatedAt,
+      ],
+    );
   }
 
   async getById(bookSetId: BookSetId, tenantId: TenantId): Promise<BookSet> {
-    const result = await this.db.querySingle(
+    const result = await this.session.querySingle(
       `SELECT id, tenant_id, kind, lifecycle, created_at, updated_at
        FROM book_sets WHERE id = ? AND tenant_id = ?`,
       [bookSetId, tenantId],
@@ -86,7 +81,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
   }
 
   async getDefault(tenantId: TenantId): Promise<BookSet> {
-    const result = await this.db.querySingle(
+    const result = await this.session.querySingle(
       `SELECT bs.id, bs.tenant_id, bs.kind, bs.lifecycle, bs.created_at, bs.updated_at
        FROM book_sets bs
        JOIN tenants t ON bs.id = t.default_book_set_id
@@ -112,7 +107,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
     tenantId: TenantId,
     kind: "COMPANY" | "PERSONAL" | "PROPRIETORSHIP",
   ): Promise<BookSet | null> {
-    const result = await this.db.querySingle(
+    const result = await this.session.querySingle(
       `SELECT id, tenant_id, kind, lifecycle, created_at, updated_at
        FROM book_sets WHERE tenant_id = ? AND kind = ?`,
       [tenantId, kind],
@@ -131,7 +126,7 @@ export class SqliteBookSetRepository implements BookSetRepository {
   }
 
   async listByTenant(tenantId: TenantId): Promise<BookSet[]> {
-    const results = await this.db.query(
+    const results = await this.session.query(
       `SELECT id, tenant_id, kind, lifecycle, created_at, updated_at
        FROM book_sets WHERE tenant_id = ? ORDER BY id`,
       [tenantId],
@@ -148,43 +143,34 @@ export class SqliteBookSetRepository implements BookSetRepository {
   }
 
   async archive(bookSetId: BookSetId, tenantId: TenantId): Promise<void> {
-    const tx = await this.db.beginTransaction();
+    // Verify ownership and not default
+    const bookSet = await this.session.querySingle(
+      `SELECT bs.id, bs.tenant_id, t.default_book_set_id
+       FROM book_sets bs
+       LEFT JOIN tenants t ON bs.tenant_id = t.id
+       WHERE bs.id = ?`,
+      [bookSetId],
+    );
 
-    try {
-      // Verify ownership and not default
-      const bookSet = await tx.executeSingle(
-        `SELECT bs.id, bs.tenant_id, t.default_book_set_id
-         FROM book_sets bs
-         LEFT JOIN tenants t ON bs.tenant_id = t.id
-         WHERE bs.id = ?`,
-        [bookSetId],
-      );
-
-      if (!bookSet) {
-        throw new DomainError("BOOK_SET_NOT_FOUND", `BookSet not found: ${bookSetId}`);
-      }
-
-      if ((bookSet.tenant_id as string) !== tenantId) {
-        throw new CrossTenantViolationError("archiveBookSet", tenantId, brandTenantId(bookSet.tenant_id as string));
-      }
-
-      if ((bookSet.default_book_set_id as string) === bookSetId) {
-        throw new DomainError(
-          "CANNOT_ARCHIVE_DEFAULT_BOOK_SET",
-          "Cannot archive the default BookSet for tenant",
-        );
-      }
-
-      // Archive
-      await tx.execute(
-        `UPDATE book_sets SET lifecycle = ?, updated_at = ? WHERE id = ?`,
-        ["ARCHIVED", new Date().toISOString(), bookSetId],
-      );
-
-      await tx.commit();
-    } catch (error) {
-      await tx.rollback();
-      throw error;
+    if (!bookSet) {
+      throw new DomainError("BOOK_SET_NOT_FOUND", `BookSet not found: ${bookSetId}`);
     }
+
+    if ((bookSet.tenant_id as string) !== tenantId) {
+      throw new CrossTenantViolationError("archiveBookSet", tenantId, brandTenantId(bookSet.tenant_id as string));
+    }
+
+    if ((bookSet.default_book_set_id as string) === bookSetId) {
+      throw new DomainError(
+        "CANNOT_ARCHIVE_DEFAULT_BOOK_SET",
+        "Cannot archive the default BookSet for tenant",
+      );
+    }
+
+    // Archive
+    await this.session.execute(
+      `UPDATE book_sets SET lifecycle = ?, updated_at = ? WHERE id = ?`,
+      ["ARCHIVED", new Date().toISOString(), bookSetId],
+    );
   }
 }
