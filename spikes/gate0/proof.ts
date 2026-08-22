@@ -23,6 +23,8 @@ export const REQUIRED_PROOFS = [
   "append-only/audit guard",
   "migration logical ID/checksum mismatch refusal",
   "integer minor-unit BigInt round trip",
+  "cross-BookSet posting rejection",
+  "audit_log tenant FK rejection",
 ] as const;
 
 const MIGRATION_ID = "gate0-001-core-sqlite";
@@ -100,13 +102,13 @@ function count(db: Database, table: string): number {
   return Number(row?.count ?? 0);
 }
 
-function insertBalancedEntry(db: Database, id: string, key: string): void {
-  db.query("INSERT INTO journal_entries (tenant_id, id, idempotency_key) VALUES (?, ?, ?)")
-    .run("tenant-a", id, key);
+function insertBalancedEntry(db: Database, id: string, key: string, bookSetId: string = "book-a"): void {
+  db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)")
+    .run("tenant-a", bookSetId, id, key);
   db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)")
-    .run("tenant-a", "book-a", id, 1, 100n);
+    .run("tenant-a", bookSetId, id, 1, 100n);
   db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units) VALUES (?, ?, ?, ?, ?)")
-    .run("tenant-a", "book-a", id, 2, 100n);
+    .run("tenant-a", bookSetId, id, 2, 100n);
 }
 
 async function withTemporaryDatabase<T>(fn: (db: Database, path: string) => Promise<T> | T): Promise<T> {
@@ -154,8 +156,8 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     expectThrow(() => applyMigration(db, `${sql}\n-- tampered`), "migration checksum mismatch");
     pass("STK-004b", "migration mismatch refusal", "same logical ID with a changed checksum refused");
 
-    expectThrow(() => db.query("INSERT INTO journal_entries (tenant_id, id, idempotency_key) VALUES (?, ?, ?)").run("tenant-b", "wrong-book", "wrong-book"), "FOREIGN KEY");
-    db.query("INSERT INTO journal_entries (tenant_id, id, idempotency_key) VALUES (?, ?, ?)").run("tenant-a", "entry-fk", "key-fk");
+    expectThrow(() => db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-b", "book-a", "wrong-book", "wrong-book"), "FOREIGN KEY");
+    db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-a", "entry-fk", "key-fk");
     expectThrow(() => db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "missing-book", "entry-fk", 1, 1n), "FOREIGN KEY");
     pass("STK-003d", "composite tenant/BookSet FK", "wrong tenant and missing BookSet rejected with foreign keys enabled");
 
@@ -176,7 +178,7 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     const beforeImbalance = count(db, "journal_entries");
     beginImmediate(db);
     try {
-      db.query("INSERT INTO journal_entries (tenant_id, id, idempotency_key) VALUES (?, ?, ?)").run("tenant-a", "entry-imbalanced", "key-imbalanced");
+      db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-a", "entry-imbalanced", "key-imbalanced");
       db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "entry-imbalanced", 1, 99n);
       db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, credit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "entry-imbalanced", 2, 98n);
       const lines = db.query<{ debit: number | bigint; credit: number | bigint }, []>("SELECT SUM(debit_minor_units) AS debit, SUM(credit_minor_units) AS credit FROM postings WHERE journal_entry_id = 'entry-imbalanced'").get();
@@ -218,6 +220,23 @@ export async function runLocalSqliteProof(): Promise<ProofResult[]> {
     } finally {
       busyDb.close(false);
     }
+
+    db.query("INSERT INTO book_sets (tenant_id, id, kind) VALUES (?, ?, ?)").run("tenant-a", "book-b", "proprietorship");
+    db.query("INSERT INTO journal_entries (tenant_id, book_set_id, id, idempotency_key) VALUES (?, ?, ?, ?)").run("tenant-a", "book-b", "cross-entry", "cross-key");
+    expectThrow(
+      () => {
+        db.query("INSERT INTO postings (tenant_id, book_set_id, journal_entry_id, line_no, debit_minor_units) VALUES (?, ?, ?, ?, ?)").run("tenant-a", "book-a", "cross-entry", 1, 100n);
+      },
+      "FOREIGN KEY",
+    );
+    pass("STK-003l", "cross-BookSet posting rejection", "posting with wrong book_set_id FK to journal rejected");
+
+    insertBalancedEntry(db, "entry-same-book", "key-same-book", "book-a");
+    pass("STK-003m", "same-BookSet balanced posting success", "balanced posting within same book_set_id commits");
+
+    expectThrow(() => db.query("INSERT INTO audit_log (tenant_id, event_id, entity_type, entity_id, action, payload) VALUES (?, ?, ?, ?, ?, ?)").run("tenant-b", "audit-orphan", "journal_entry", "entry", "post", "{}"), "FOREIGN KEY");
+    pass("STK-003n", "audit_log tenant FK rejection", "audit insert with non-existent tenant rejected");
+
     if (pragmas.length === 0) throw new Error("pragma query unexpectedly empty");
     return results;
   });

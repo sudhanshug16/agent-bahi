@@ -19,11 +19,12 @@ CREATE TABLE IF NOT EXISTS book_sets (
 
 CREATE TABLE IF NOT EXISTS journal_entries (
   tenant_id TEXT NOT NULL,
+  book_set_id TEXT NOT NULL,
   id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
-  PRIMARY KEY (tenant_id, id),
+  PRIMARY KEY (tenant_id, book_set_id, id),
   UNIQUE (tenant_id, idempotency_key),
-  FOREIGN KEY (tenant_id) REFERENCES tenants (id)
+  FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets (tenant_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS postings (
@@ -40,8 +41,8 @@ CREATE TABLE IF NOT EXISTS postings (
   ),
   FOREIGN KEY (tenant_id, book_set_id)
     REFERENCES book_sets (tenant_id, id),
-  FOREIGN KEY (tenant_id, journal_entry_id)
-    REFERENCES journal_entries (tenant_id, id)
+  FOREIGN KEY (tenant_id, book_set_id, journal_entry_id)
+    REFERENCES journal_entries (tenant_id, book_set_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -50,7 +51,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   entity_type TEXT NOT NULL,
   entity_id TEXT NOT NULL,
   action TEXT NOT NULL,
-  payload TEXT NOT NULL
+  payload TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
 
 CREATE TRIGGER IF NOT EXISTS postings_no_update
