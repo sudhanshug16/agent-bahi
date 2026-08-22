@@ -169,6 +169,36 @@ describe("SQLite BackupService", () => {
     expect((await readdir(directory)).some((name) => name.includes(".staging-"))).toBe(false);
   });
 
+  it("rejects staging mutations that add extra schema objects and cleans up staging", async () => {
+    const destination = join(directory, "mutated.sqlite");
+    const service = new BackupService({
+      sourcePath,
+      afterVacuum: (stagingPath) => {
+        const staging = new BunDatabase(stagingPath, { safeIntegers: true });
+        staging.exec("CREATE TABLE extra_table (id INTEGER PRIMARY KEY)");
+        staging.close();
+      },
+    });
+    await expect(service.createBackup(destination)).rejects.toMatchObject({ code: "BACKUP_SCHEMA_MISMATCH" });
+    expect(await Bun.file(destination).exists()).toBe(false);
+    const stagingFiles = (await readdir(directory)).filter((name) => name.includes(".staging-"));
+    expect(stagingFiles).toHaveLength(0);
+  });
+
+  it("preserves and accepts a legitimate extra application table already in the source", async () => {
+    const destination = join(directory, "with-extra-table.sqlite");
+    await db.execute("CREATE TABLE app_custom_data (id TEXT PRIMARY KEY, data TEXT)");
+    const result = await new BackupService(sourcePath).createBackup(destination);
+    expect(result.status).toBe("SUCCESS");
+    const snapshot = new BunDatabase(destination, { readonly: true, safeIntegers: true });
+    const catalogRows = snapshot.query(
+      "SELECT type, name FROM sqlite_schema WHERE type = 'table' AND name = 'app_custom_data' AND name NOT LIKE 'sqlite_%'"
+    ).all() as Array<{ type: string; name: string }>;
+    snapshot.close();
+    expect(catalogRows).toHaveLength(1);
+    expect(catalogRows[0]).toEqual({ type: "table", name: "app_custom_data" });
+  });
+
   it("captures committed rows and excludes another connection's uncommitted row", async () => {
     await db.execute(
       "INSERT INTO tenants (id, kind, lifecycle, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",

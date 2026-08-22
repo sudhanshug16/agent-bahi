@@ -51,12 +51,13 @@ interface SourceExpectation {
   control: DatabaseControlRecord;
   history: string;
   catalog: string;
+  catalogRows: CatalogRow[];
 }
 
 export interface BackupServiceOptions {
   sourcePath: string;
   /** Deterministic failure seams used by behavioral tests. */
-  afterVacuum?: () => void | Promise<void>;
+  afterVacuum?: (stagingPath: string) => void | Promise<void>;
   beforePublication?: () => void | Promise<void>;
 }
 
@@ -95,7 +96,7 @@ const EXPECTED_MIGRATION_CHECKSUM = createHash("sha256")
 export class BackupService implements BackupServicePort {
   private readonly sourcePath: string;
   private readonly sourceIdentity: InodeIdentity;
-  private readonly afterVacuum?: () => void;
+  private readonly afterVacuum?: (stagingPath: string) => void | Promise<void>;
   private readonly beforePublication?: () => void;
 
   constructor(sourcePath: string | BackupServiceOptions) {
@@ -122,7 +123,7 @@ export class BackupService implements BackupServicePort {
     try {
       const initial = await this.captureSourceExpectation();
       await this.vacuumInto(stagingPath);
-      await this.afterVacuum?.();
+      await this.afterVacuum?.(stagingPath);
       stagingIdentity = regularIdentity(stagingPath, "BACKUP_FAILED");
 
       const after = await this.captureSourceExpectation();
@@ -261,8 +262,11 @@ export class BackupService implements BackupServicePort {
       }
 
       const actual = await captureExpectation(db);
-      if (expected && (actual.history !== expected.history || actual.catalog !== expected.catalog || !sameControl(actual.control, expected.control))) {
-        throw new DomainError("BACKUP_VERIFICATION_FAILED", "SQLite snapshot metadata does not match the source");
+      if (expected) {
+        validateExactCatalogMatch(actual.catalogRows, expected.catalogRows);
+        if (actual.history !== expected.history || actual.catalog !== expected.catalog || !sameControl(actual.control, expected.control)) {
+          throw new DomainError("BACKUP_VERIFICATION_FAILED", "SQLite snapshot metadata does not match the source");
+        }
       }
     } catch (error) {
       throw normalizeBackupError(error, "BACKUP_VERIFICATION_FAILED");
@@ -293,18 +297,19 @@ async function captureExpectation(db: BunDatabase): Promise<SourceExpectation> {
   `);
   validateMigrationHistory(historyRows);
 
-  const catalog = queryRows<CatalogRow>(db, `
+  const catalogRows = queryRows<CatalogRow>(db, `
     SELECT type, name, tbl_name, sql
     FROM sqlite_schema
     WHERE name NOT LIKE 'sqlite_%'
     ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
   `);
-  validateCanonicalSchema(catalog);
+  validateCanonicalSchema(catalogRows);
 
   return {
     control: control.record,
     history: canonicalHash(historyRows),
-    catalog: canonicalHash(catalog),
+    catalog: canonicalHash(catalogRows),
+    catalogRows,
   };
 }
 
@@ -332,6 +337,19 @@ function validateCanonicalSchema(catalog: CatalogRow[]): void {
   for (const expectedRow of expected) {
     const actual = actualByName.get(`${expectedRow.type}:${expectedRow.name}`);
     if (!actual || canonicalJson(actual) !== canonicalJson(expectedRow)) {
+      throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
+    }
+  }
+}
+
+function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[]): void {
+  if (actual.length !== expected.length) {
+    throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
+  }
+  const expectedCanonical = expected.map(canonicalJson);
+  const actualCanonical = actual.map(canonicalJson);
+  for (let i = 0; i < expectedCanonical.length; i++) {
+    if (expectedCanonical[i] !== actualCanonical[i]) {
       throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
     }
   }
