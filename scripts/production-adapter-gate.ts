@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, readdir, rmdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseFactory } from "../src/infrastructure/adapters/database-factory.ts";
 import type { DatabaseConfig } from "../src/infrastructure/config/database.ts";
@@ -44,6 +44,7 @@ interface CanonicalSqliteResource {
   readonly databasePath: string;
   readonly sentinelPath: string;
   readonly sentinel: string;
+  readonly directoryIdentity: DirectoryIdentity;
   readonly capability: GateCapability;
   readonly lifecycle: ResourceLifecycle;
   readonly dispose: () => Promise<string | null>;
@@ -62,6 +63,12 @@ interface CanonicalDatabaseResource {
 }
 
 type CanonicalResource = CanonicalSqliteResource | CanonicalDatabaseResource;
+
+interface DirectoryIdentity {
+  readonly realpath: string;
+  readonly dev: number;
+  readonly ino: number;
+}
 
 // These are module-private by design. Nothing outside this module can create,
 // replace, inspect, or clean a registered resource.
@@ -132,11 +139,24 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function verifyOwnedSqliteDirectory(resource: CanonicalSqliteResource): Promise<boolean> {
+function sameDirectoryIdentity(stat: { dev: number; ino: number }, identity: DirectoryIdentity): boolean {
+  return stat.dev === identity.dev && stat.ino === identity.ino;
+}
+
+async function readDirectoryIdentity(path: string): Promise<DirectoryIdentity> {
+  const canonicalPath = await realpath(path);
+  const stat = await lstat(canonicalPath);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new GateLifecycleError();
+  return { realpath: canonicalPath, dev: stat.dev, ino: stat.ino };
+}
+
+async function verifyOwnedSqliteDirectory(resource: CanonicalSqliteResource, requireSentinel = true): Promise<boolean> {
   try {
     const directoryStat = await lstat(resource.directory);
-    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) return false;
-    if (await realpath(resource.directory) !== resource.directory) return false;
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || !sameDirectoryIdentity(directoryStat, resource.directoryIdentity)) return false;
+    if (await realpath(resource.directory) !== resource.directoryIdentity.realpath) return false;
+
+    if (!requireSentinel) return true;
 
     const sentinelStat = await lstat(resource.sentinelPath);
     if (!sentinelStat.isFile() || sentinelStat.isSymbolicLink()) return false;
@@ -144,6 +164,41 @@ async function verifyOwnedSqliteDirectory(resource: CanonicalSqliteResource): Pr
     return sentinel === resource.sentinel;
   } catch {
     return false;
+  }
+}
+
+async function removeFreshSqliteDirectory(
+  path: string,
+  identity: DirectoryIdentity | null,
+  createdStat?: { dev: number; ino: number },
+): Promise<void> {
+  try {
+    if (!identity && !createdStat) return;
+    const current = await readDirectoryIdentity(path);
+    if (identity && (current.realpath !== identity.realpath || current.dev !== identity.dev || current.ino !== identity.ino)) return;
+    if (createdStat && (current.dev !== createdStat.dev || current.ino !== createdStat.ino)) return;
+    const entries = await readdir(current.realpath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name !== "ownership.sentinel" || !entry.isFile() || entry.isSymbolicLink()) return;
+      await unlink(join(current.realpath, entry.name));
+    }
+    await rmdir(current.realpath);
+  } catch {
+    // Constructor failure must never broaden cleanup beyond the exact fresh
+    // directory. If identity, contents, or emptiness cannot be proven, leave
+    // the path in place for inspection.
+  }
+}
+
+async function unlinkOwnedSqliteFile(resource: CanonicalSqliteResource, path: string): Promise<string | null> {
+  if (!(await verifyOwnedSqliteDirectory(resource))) return REASONS.ownershipFailure;
+  try {
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) return REASONS.ownershipFailure;
+    await unlink(path);
+    return null;
+  } catch {
+    return REASONS.cleanupFailure;
   }
 }
 
@@ -164,15 +219,27 @@ async function cleanupOwnedSqlite(resource: CanonicalSqliteResource): Promise<st
         resource.sentinelPath,
       ];
       for (const path of exactPaths) {
-        if (await pathExists(path)) await rm(path, { force: true });
+        if (await pathExists(path)) {
+          failure = await unlinkOwnedSqliteFile(resource, path);
+          if (failure) break;
+        }
       }
-      // Recursive removal is restricted to the realpath of this invocation's
-      // mkdtemp directory, rechecked immediately before the operation.
-      if (await realpath(resource.directory) !== resource.directory) {
-        failure = REASONS.ownershipFailure;
-      } else {
-        await rm(resource.directory, { recursive: true, force: true });
-        if (await pathExists(resource.directory)) failure = REASONS.cleanupFailure;
+      if (!failure) {
+        if (!(await verifyOwnedSqliteDirectory(resource, false))) {
+          failure = REASONS.ownershipFailure;
+        } else {
+          const entries = await readdir(resource.directory, { withFileTypes: true });
+          if (entries.length !== 0) {
+            failure = REASONS.cleanupFailure;
+          } else {
+            try {
+              await rmdir(resource.directory);
+              if (await pathExists(resource.directory)) failure = REASONS.cleanupFailure;
+            } catch {
+              failure = REASONS.cleanupFailure;
+            }
+          }
+        }
       }
     }
   } catch {
@@ -186,28 +253,39 @@ async function cleanupOwnedSqlite(resource: CanonicalSqliteResource): Promise<st
 
 async function createOwnedSqlite(): Promise<CanonicalSqliteResource> {
   const directory = await mkdtemp(join(Bun.env.TMPDIR ?? "/tmp", "agent-bahi-production-gate-"));
-  const canonicalDirectory = await realpath(directory);
-  const databasePath = join(canonicalDirectory, "database.sqlite");
-  const sentinelPath = join(canonicalDirectory, "ownership.sentinel");
-  const sentinel = `agent-bahi-production-gate:${randomUUID()}`;
-  await Bun.write(sentinelPath, sentinel);
+  let identity: DirectoryIdentity | null = null;
+  let createdStat: { dev: number; ino: number } | undefined;
+  try {
+    const initialStat = await lstat(directory);
+    if (!initialStat.isDirectory() || initialStat.isSymbolicLink()) throw new GateLifecycleError();
+    createdStat = { dev: initialStat.dev, ino: initialStat.ino };
+    identity = await readDirectoryIdentity(directory);
+    const databasePath = join(identity.realpath, "database.sqlite");
+    const sentinelPath = join(identity.realpath, "ownership.sentinel");
+    const sentinel = `agent-bahi-production-gate:${randomUUID()}`;
+    await Bun.write(sentinelPath, sentinel);
 
-  const capability = createCapability("sqlite", databasePath);
-  let resource!: CanonicalSqliteResource;
-  resource = Object.freeze({
-    kind: "sqlite",
-    dialect: "sqlite",
-    config: freezeConfig({ dialect: "sqlite", sqlite: { path: databasePath } }),
-    directory: canonicalDirectory,
-    databasePath,
-    sentinelPath,
-    sentinel,
-    capability,
-    lifecycle: { state: "NEW" as ResourceState },
-    dispose: () => cleanupOwnedSqlite(resource),
-  });
-  ownedResources.set(capability.token, resource);
-  return resource;
+    const capability = createCapability("sqlite", databasePath);
+    let resource!: CanonicalSqliteResource;
+    resource = Object.freeze({
+      kind: "sqlite",
+      dialect: "sqlite",
+      config: freezeConfig({ dialect: "sqlite", sqlite: { path: databasePath } }),
+      directory: identity.realpath,
+      databasePath,
+      sentinelPath,
+      sentinel,
+      directoryIdentity: identity,
+      capability,
+      lifecycle: { state: "NEW" as ResourceState },
+      dispose: () => cleanupOwnedSqlite(resource),
+    });
+    ownedResources.set(capability.token, resource);
+    return resource;
+  } catch (error) {
+    await removeFreshSqliteDirectory(directory, identity, createdStat);
+    throw error;
+  }
 }
 
 async function createOwnedDatabase(dialect: "postgresql" | "mysql"): Promise<CanonicalDatabaseResource> {
