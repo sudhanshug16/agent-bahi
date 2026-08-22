@@ -160,6 +160,11 @@ export interface ColumnMetadata {
   nullable: boolean;
   default?: string | null;
   primaryKey: boolean;
+  // Exact PRAGMA table_xinfo fields for strict validation (SQLite only)
+  notnull?: number;
+  dflt_value?: unknown;
+  pk?: number;
+  hidden?: number;
 }
 
 export interface TableMetadata {
@@ -168,6 +173,8 @@ export interface TableMetadata {
   columns: ColumnMetadata[];
   /** Raw CHECK constraint definitions, in catalog order. */
   checks: string[];
+  /** Exact CREATE TABLE DDL from sqlite_schema.sql (SQLite only, no leading comment or terminal semicolon). */
+  ddl?: string;
 }
 
 /**

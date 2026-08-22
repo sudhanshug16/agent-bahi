@@ -128,32 +128,45 @@ class SqliteMigrationSession implements MigrationSession {
 
       const kind = tableExists.type === "view" ? "VIEW" : "TABLE";
 
-      // Get column metadata via PRAGMA
-      // Note: with safeIntegers=true, notnull and pk are returned as bigint
-      const columns = this.db.prepare(`PRAGMA table_info(${quotedTableName})`).all() as Array<{
+      // Get full column metadata via PRAGMA table_xinfo (includes hidden columns)
+      // Note: with safeIntegers=true, numeric fields are returned as bigint—normalize deliberately
+      const xinfoColumns = this.db.prepare(`PRAGMA table_xinfo(${quotedTableName})`).all() as Array<{
         cid: number | bigint;
         name: string;
         type: string;
         notnull: number | bigint;
         dflt_value: unknown;
         pk: number | bigint;
+        hidden: number | bigint;
       }>;
 
-      const columnMetadata: ColumnMetadata[] = columns.map(col => {
-        const primaryKey = BigInt(col.pk) > BigInt(0);
+      const columnMetadata: ColumnMetadata[] = xinfoColumns.map(col => {
+        const notnullNum = Number(col.notnull);
+        const pkNum = Number(col.pk);
+        const hiddenNum = Number(col.hidden);
+        const primaryKey = pkNum > 0;
         return {
           name: col.name,
           type: col.type,
-          nullable: BigInt(col.notnull) === BigInt(0) && !primaryKey,
+          nullable: notnullNum === 0 && !primaryKey,
           default: col.dflt_value === null ? null : String(col.dflt_value),
           primaryKey,
+          // Include exact xinfo fields for strict validation
+          notnull: notnullNum,
+          dflt_value: col.dflt_value,
+          pk: pkNum,
+          hidden: hiddenNum,
         };
       });
 
+      // Get exact DDL from sqlite_schema.sql
       const tableDefinition = this.db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
       ).get(tableName) as { sql?: string | null } | undefined;
-      const checks = [...(tableDefinition?.sql ?? "").matchAll(/CHECK\s*\(((?:[^()]|\([^)]*\))*)\)/gi)]
+
+      const ddl = tableDefinition?.sql ?? undefined;
+
+      const checks = [...(ddl ?? "").matchAll(/CHECK\s*\(((?:[^()]|\([^)]*\))*)\)/gi)]
         .map((match) => match[1].trim());
 
       return {
@@ -161,6 +174,7 @@ class SqliteMigrationSession implements MigrationSession {
         kind,
         columns: columnMetadata,
         checks,
+        ddl,
       };
     } catch (error) {
       const classified = classifySqliteError(error, "migration getTableMetadata");

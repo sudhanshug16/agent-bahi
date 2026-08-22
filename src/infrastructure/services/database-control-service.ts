@@ -2,6 +2,7 @@ import type { Database, MigrationSession } from "../../application/ports/persist
 import type { Dialect } from "../../core/types.ts";
 import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
+import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 
 /**
  * Database control inspection status.
@@ -164,7 +165,7 @@ export class DatabaseControlService {
     // Validate table schema structure
     const schemaError = this.validateTableSchema(tableMetadata);
     if (schemaError) {
-      throw new DomainError("DATABASE_CONTROL_MALFORMED", schemaError);
+      throw new DomainError("DATABASE_CONTROL_MALFORMED", `Table schema validation failed: ${schemaError}`);
     }
 
     // Fetch 0002 migration from schema_migrations
@@ -191,19 +192,28 @@ export class DatabaseControlService {
     if (!this.isValidHexChecksum(migrationChecksum)) {
       throw new DomainError(
         "DATABASE_CONTROL_INVALID_CHECKSUM",
-        `Invalid migration checksum format: ${migrationChecksum}`,
+        "Migration checksum is not valid hex format",
+      );
+    }
+
+    // Validate migration checksum matches corrected 0002
+    if (migrationChecksum !== DATABASE_CONTROL_CHECKSUM) {
+      throw new DomainError(
+        "DATABASE_CONTROL_CHECKSUM_MISMATCH",
+        "Migration 0002-database-control checksum does not match corrected baseline",
       );
     }
 
     // Check for existing row
     const existingRow = await session.executeSingle(
-      `SELECT id, last_migration_checksum, last_writer_cli_version, last_writer_build_id
+      `SELECT id, last_migration_checksum
        FROM database_control WHERE id = 1`,
     );
 
     if (existingRow) {
       // Row exists; validate it matches exactly
-      if (String(existingRow.last_migration_checksum) !== migrationChecksum) {
+      const existingChecksum = String(existingRow.last_migration_checksum);
+      if (existingChecksum !== DATABASE_CONTROL_CHECKSUM) {
         throw new DomainError(
           "DATABASE_CONTROL_CHECKSUM_MISMATCH",
           "Existing database_control row has different migration checksum",
@@ -245,7 +255,7 @@ export class DatabaseControlService {
       1, // revision
       1, // generation
       "0002-database-control", // last_migration_id
-      migrationChecksum, // last_migration_checksum
+      DATABASE_CONTROL_CHECKSUM, // last_migration_checksum
       params.cliVersion, // last_writer_cli_version
       params.buildId, // last_writer_build_id
       now, // last_writer_at
@@ -352,45 +362,96 @@ export class DatabaseControlService {
 
   /**
    * Validate table schema structure against expected database_control schema.
-   * Returns error message if invalid, undefined if valid.
+   * Validates exact column count, order, names, types, nullability, and all xinfo fields.
+   * Also validates stored DDL against expected canonical SQL (exact match, no formatting tolerance).
+   * Returns safe error code (not raw schema values) if invalid, undefined if valid.
    */
   private validateTableSchema(metadata: any): string | undefined {
     // Must be a TABLE, not a VIEW
     if (metadata.kind !== "TABLE") {
-      return `database_control must be a TABLE, not ${metadata.kind}`;
+      return "TABLE_KIND_MISMATCH";
     }
 
-    // Check for required columns
-    const expectedColumns = [
-      "id",
-      "schema_version",
-      "data_format_version",
-      "reader_compatibility_min",
-      "reader_compatibility_max",
-      "required_writer_protocol",
-      "state",
-      "revision",
-      "generation",
-      "last_migration_id",
-      "last_migration_checksum",
-      "last_writer_cli_version",
-      "last_writer_build_id",
-      "last_writer_at",
-      "created_at",
-      "updated_at",
-      "recovery_reason",
+    // Exact column count: 17 columns
+    const actualColumns = metadata.columns || [];
+    const EXPECTED_COLUMN_COUNT = 17;
+
+    if (actualColumns.length !== EXPECTED_COLUMN_COUNT) {
+      return "TABLE_COLUMN_COUNT_MISMATCH";
+    }
+
+    // Validate each column's exact specification
+    // Using ColumnMetadata structure with exact xinfo fields
+    const expectedSpecs = [
+      { name: "id", type: "INTEGER", nullable: false, primaryKey: true, notnull: 0, pk: 1, hidden: 0, dflt_value: null },
+      { name: "schema_version", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "data_format_version", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "reader_compatibility_min", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "reader_compatibility_max", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "required_writer_protocol", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "state", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "revision", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "generation", type: "INTEGER", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "last_migration_id", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "last_migration_checksum", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "last_writer_cli_version", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "last_writer_build_id", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "last_writer_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "created_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "updated_at", type: "TEXT", nullable: false, primaryKey: false, notnull: 1, pk: 0, hidden: 0, dflt_value: null },
+      { name: "recovery_reason", type: "TEXT", nullable: true, primaryKey: false, notnull: 0, pk: 0, hidden: 0, dflt_value: null },
     ];
 
-    const actualColumnNames = metadata.columns.map((c: any) => c.name);
+    for (let i = 0; i < expectedSpecs.length; i++) {
+      const expected = expectedSpecs[i];
+      const actual = actualColumns[i];
 
-    if (actualColumnNames.length !== expectedColumns.length) {
-      return `Expected ${expectedColumns.length} columns, found ${actualColumnNames.length}`;
+      if (!actual) {
+        return "TABLE_COLUMN_MISSING";
+      }
+
+      if (actual.name !== expected.name) {
+        return "TABLE_COLUMN_NAME_MISMATCH";
+      }
+
+      const actualType = (actual.type || "").toUpperCase();
+      const expectedType = expected.type.toUpperCase();
+      if (actualType !== expectedType) {
+        return "TABLE_COLUMN_TYPE_MISMATCH";
+      }
+
+      if (actual.nullable !== expected.nullable) {
+        return "TABLE_COLUMN_NOTNULL_MISMATCH";
+      }
+
+      if (actual.primaryKey !== expected.primaryKey) {
+        return "TABLE_COLUMN_PRIMARY_KEY_MISMATCH";
+      }
+
+      // Validate exact xinfo fields (no formatting tolerance)
+      if (actual.notnull !== expected.notnull) {
+        return "TABLE_COLUMN_NOTNULL_FIELD_MISMATCH";
+      }
+
+      if ((actual.pk ?? 0) !== expected.pk) {
+        return "TABLE_COLUMN_PK_FIELD_MISMATCH";
+      }
+
+      if ((actual.hidden ?? 0) !== expected.hidden) {
+        return "TABLE_COLUMN_HIDDEN_FIELD_MISMATCH";
+      }
+
+      // Exact dflt_value equality check (null === null)
+      if (actual.dflt_value !== expected.dflt_value) {
+        return "TABLE_COLUMN_DEFAULT_MISMATCH";
+      }
     }
 
-    for (let i = 0; i < expectedColumns.length; i++) {
-      if (actualColumnNames[i] !== expectedColumns[i]) {
-        return `Column ${i}: expected ${expectedColumns[i]}, got ${actualColumnNames[i]}`;
-      }
+    // Validate exact DDL from sqlite_schema.sql
+    // No formatting tolerance: must match canonical DDL exactly
+    const storedDdl = metadata.ddl || "";
+    if (storedDdl !== DATABASE_CONTROL_TABLE_DDL) {
+      return "TABLE_DDL_MISMATCH";
     }
 
     return undefined;

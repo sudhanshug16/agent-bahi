@@ -33,7 +33,7 @@ multi-instance same-directory safety, upgrade dump/restore, Bun single-binary
 assets, and the MySQL branch remain unresolved. This decision does not cite
 PGlite GitHub issue #704 as an advisory-lock bug; that claim is not established.
 
-## Database control metadata authority — TENTATIVE - NOT OWNER-APPROVED
+## Database control metadata authority — TENTATIVE - NOT OWNER-APPROVED (n104 - corrected 0002)
 
 Singleton `database_control` table holds schema versions, compatibility, and database state.
 - Schema versions (schema_version, data_format_version) and protocol integers (reader min/max/writer)
@@ -53,13 +53,24 @@ Singleton `database_control` table holds schema versions, compatibility, and dat
 - Pre-barrier Gate0 binaries cannot be retroactively forced; unsupported before production baseline.
   Backup must precede automatic migration.
 - No implicit transitions, auto-migration logic, or universal BusinessSession enforcement in this slice.
+- **Rejected 2c0e399 experimental baseline**: Databases created with the rejected 0002 migration in commit 2c0e399
+  are unsupported and fail closed on checksum mismatch. All new databases must use the corrected 0002
+  with exact checksum `665e93b1f489f1c7e8826fb5c58f32be071de34c6d3a088f0fe1098e7a0bf9f2`.
+- **Corrected 0002 immutability**: The corrected 0002-database-control migration is now immutable as part
+  of the production baseline. All table schema validation includes exact column types, defaults, nullability,
+  and named CHECK constraints. Malformed/partial schemas fail UNAVAILABLE; no repair or coercion.
 
 ## MCP HTTP binding — OWNER-APPROVED n95
 
-Hosted MCP endpoint supports http:// and https://. HTTPS is optional. Default bind is loopback
-(127.0.0.1:port). Explicit non-loopback binding (0.0.0.0, hostname) requires operator override.
-TLS is not a hard gate; auth and origin checking are separate concerns. MCP is not assumed to exist
-in this phase; stdio remains valid for local deployments.
+Hosted MCP endpoint supports http:// and https://. Both protocols are valid.
+- **http://** and **https://** are equally valid transport options
+- Default bind is **loopback only** (127.0.0.1:port)
+- **Non-loopback binding** (0.0.0.0, hostnames) is explicit and requires operator override
+- **TLS is not a hard gate**: https:// is supported but not mandatory
+- **Authentication, Origin validation, and audit controls** are separate concerns, not gated on TLS
+- **Warning/status messages** and audit logging are configurable independently
+- **MCP is not assumed to exist** in this phase; stdio remains valid for local deployments
+- **No MCP implementation claim** is made for non-local scenarios in this slice
 
 ## Superseded by OWNER-APPROVED n94/n95
 
