@@ -6,12 +6,14 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   logical_id VARCHAR(255) PRIMARY KEY,
   checksum VARCHAR(255) NOT NULL,
   applied_at VARCHAR(255) NOT NULL
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS tenants (
   id VARCHAR(255) PRIMARY KEY,
   name VARCHAR(255) NOT NULL
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS book_sets (
   tenant_id VARCHAR(255) NOT NULL,
@@ -19,7 +21,8 @@ CREATE TABLE IF NOT EXISTS book_sets (
   kind VARCHAR(255) NOT NULL CHECK (kind IN ('personal', 'proprietorship')),
   PRIMARY KEY (tenant_id, id),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS journal_entries (
   tenant_id VARCHAR(255) NOT NULL,
@@ -30,7 +33,8 @@ CREATE TABLE IF NOT EXISTS journal_entries (
   PRIMARY KEY (tenant_id, book_set_id, id),
   UNIQUE (tenant_id, idempotency_key),
   FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets (tenant_id, id)
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS postings (
   tenant_id VARCHAR(255) NOT NULL,
@@ -48,7 +52,8 @@ CREATE TABLE IF NOT EXISTS postings (
     REFERENCES book_sets (tenant_id, id),
   FOREIGN KEY (tenant_id, book_set_id, journal_entry_id)
     REFERENCES journal_entries (tenant_id, book_set_id, id)
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS audit_log (
   tenant_id VARCHAR(255) NOT NULL,
@@ -58,7 +63,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   action VARCHAR(255) NOT NULL,
   payload TEXT NOT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS idempotency_records (
   tenant_id VARCHAR(255) NOT NULL,
@@ -68,7 +74,8 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
   result_hash VARCHAR(255) NOT NULL,
   PRIMARY KEY (tenant_id, request_id),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
-);
+) ENGINE=InnoDB;
+-- statement-breakpoint
 
 -- MySQL trigger for balance validation before posting
 CREATE TRIGGER journal_entries_validate_balance_on_post
@@ -100,6 +107,7 @@ BEGIN
     END IF;
   END IF;
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent inserts to posted entries
 CREATE TRIGGER postings_no_insert_when_posted
@@ -115,6 +123,7 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'cannot insert postings for posted journal entry';
   END IF;
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent updates to postings
 CREATE TRIGGER postings_no_update
@@ -123,6 +132,7 @@ FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'postings are append-only';
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent deletes from postings
 CREATE TRIGGER postings_no_delete
@@ -131,6 +141,7 @@ FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'postings are append-only';
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent audit log updates
 CREATE TRIGGER audit_log_no_update
@@ -139,6 +150,7 @@ FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit log is append-only';
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent audit log deletes
 CREATE TRIGGER audit_log_no_delete
@@ -147,6 +159,7 @@ FOR EACH ROW
 BEGIN
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit log is append-only';
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent reverting from POSTED to DRAFT
 CREATE TRIGGER journal_entries_no_revert_from_posted
@@ -157,6 +170,7 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'posted journal entry cannot revert to draft';
   END IF;
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent changes to posted entries
 CREATE TRIGGER journal_entries_no_change_when_posted
@@ -178,6 +192,7 @@ BEGIN
     END IF;
   END IF;
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to prevent deletes of posted entries
 CREATE TRIGGER journal_entries_no_delete_when_posted
@@ -188,6 +203,7 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'posted journal entry cannot be deleted';
   END IF;
 END;
+-- statement-breakpoint
 
 -- MySQL trigger to enforce draft status on creation
 CREATE TRIGGER journal_entries_must_start_as_draft
@@ -198,3 +214,4 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'new journal entry must start with status=DRAFT';
   END IF;
 END;
+-- statement-breakpoint

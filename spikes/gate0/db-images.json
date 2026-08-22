@@ -1,16 +1,10 @@
 {
   "postgres": {
-    "version": "17.11",
-    "registry": "docker.io",
-    "repository": "library/postgres",
-    "digest": null,
-    "notes": "PostgreSQL 17.11 official image manifest-list digest; recorded after successful integration test execution"
+    "image": "docker.io/library/postgres@sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449",
+    "digest": "sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449"
   },
   "mysql": {
-    "version": "8.4",
-    "registry": "docker.io",
-    "repository": "library/mysql",
-    "digest": null,
-    "notes": "MySQL 8.4 official image manifest-list digest; recorded after successful integration test execution"
+    "image": "docker.io/library/mysql@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+    "digest": "sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
   }
 }

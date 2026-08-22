@@ -7,11 +7,13 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   checksum TEXT NOT NULL,
   applied_at TEXT NOT NULL
 );
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL
 );
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS book_sets (
   tenant_id TEXT NOT NULL,
@@ -20,6 +22,7 @@ CREATE TABLE IF NOT EXISTS book_sets (
   PRIMARY KEY (tenant_id, id),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS journal_entries (
   tenant_id TEXT NOT NULL,
@@ -31,6 +34,7 @@ CREATE TABLE IF NOT EXISTS journal_entries (
   UNIQUE (tenant_id, idempotency_key),
   FOREIGN KEY (tenant_id, book_set_id) REFERENCES book_sets (tenant_id, id)
 );
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS postings (
   tenant_id TEXT NOT NULL,
@@ -49,6 +53,7 @@ CREATE TABLE IF NOT EXISTS postings (
   FOREIGN KEY (tenant_id, book_set_id, journal_entry_id)
     REFERENCES journal_entries (tenant_id, book_set_id, id)
 );
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS audit_log (
   tenant_id TEXT NOT NULL,
@@ -59,6 +64,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   payload TEXT NOT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
+-- statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS idempotency_records (
   tenant_id TEXT NOT NULL,
@@ -69,6 +75,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
   PRIMARY KEY (tenant_id, request_id),
   FOREIGN KEY (tenant_id) REFERENCES tenants (id)
 );
+-- statement-breakpoint
 
 -- PostgreSQL function for balance validation before posting
 CREATE OR REPLACE FUNCTION validate_journal_balance() RETURNS TRIGGER AS $$
@@ -100,11 +107,13 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER journal_entries_validate_balance_on_post
 BEFORE UPDATE OF status ON journal_entries
 FOR EACH ROW
 EXECUTE FUNCTION validate_journal_balance();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent inserts to posted entries
 CREATE OR REPLACE FUNCTION prevent_posting_insert() RETURNS TRIGGER AS $$
@@ -120,11 +129,13 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER postings_no_insert_when_posted
 BEFORE INSERT ON postings
 FOR EACH ROW
 EXECUTE FUNCTION prevent_posting_insert();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent updates to postings
 CREATE OR REPLACE FUNCTION prevent_posting_update() RETURNS TRIGGER AS $$
@@ -132,11 +143,13 @@ BEGIN
   RAISE EXCEPTION 'postings are append-only';
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER postings_no_update
 BEFORE UPDATE ON postings
 FOR EACH ROW
 EXECUTE FUNCTION prevent_posting_update();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent deletes from postings
 CREATE OR REPLACE FUNCTION prevent_posting_delete() RETURNS TRIGGER AS $$
@@ -144,11 +157,13 @@ BEGIN
   RAISE EXCEPTION 'postings are append-only';
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER postings_no_delete
 BEFORE DELETE ON postings
 FOR EACH ROW
 EXECUTE FUNCTION prevent_posting_delete();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent audit log updates
 CREATE OR REPLACE FUNCTION prevent_audit_update() RETURNS TRIGGER AS $$
@@ -156,11 +171,13 @@ BEGIN
   RAISE EXCEPTION 'audit log is append-only';
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER audit_log_no_update
 BEFORE UPDATE ON audit_log
 FOR EACH ROW
 EXECUTE FUNCTION prevent_audit_update();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent audit log deletes
 CREATE OR REPLACE FUNCTION prevent_audit_delete() RETURNS TRIGGER AS $$
@@ -168,11 +185,13 @@ BEGIN
   RAISE EXCEPTION 'audit log is append-only';
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER audit_log_no_delete
 BEFORE DELETE ON audit_log
 FOR EACH ROW
 EXECUTE FUNCTION prevent_audit_delete();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent reverting from POSTED to DRAFT
 CREATE OR REPLACE FUNCTION prevent_journal_revert() RETURNS TRIGGER AS $$
@@ -183,11 +202,13 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER journal_entries_no_revert_from_posted
 BEFORE UPDATE OF status ON journal_entries
 FOR EACH ROW
 EXECUTE FUNCTION prevent_journal_revert();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent changes to posted entries
 CREATE OR REPLACE FUNCTION prevent_journal_change_when_posted() RETURNS TRIGGER AS $$
@@ -209,11 +230,13 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER journal_entries_no_change_when_posted
 BEFORE UPDATE ON journal_entries
 FOR EACH ROW
 EXECUTE FUNCTION prevent_journal_change_when_posted();
+-- statement-breakpoint
 
 -- PostgreSQL function to prevent deletes of posted entries
 CREATE OR REPLACE FUNCTION prevent_journal_delete_when_posted() RETURNS TRIGGER AS $$
@@ -224,11 +247,13 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER journal_entries_no_delete_when_posted
 BEFORE DELETE ON journal_entries
 FOR EACH ROW
 EXECUTE FUNCTION prevent_journal_delete_when_posted();
+-- statement-breakpoint
 
 -- PostgreSQL function to enforce draft status on creation
 CREATE OR REPLACE FUNCTION enforce_draft_status_on_insert() RETURNS TRIGGER AS $$
@@ -239,8 +264,10 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- statement-breakpoint
 
 CREATE TRIGGER journal_entries_must_start_as_draft
 BEFORE INSERT ON journal_entries
 FOR EACH ROW
 EXECUTE FUNCTION enforce_draft_status_on_insert();
+-- statement-breakpoint
