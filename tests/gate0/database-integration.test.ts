@@ -10,31 +10,29 @@ import {
   type IntegrationTestResult,
 } from "../../spikes/gate0/database-integration.ts";
 
-function assertIntegrationCannotPass(
+function validateIntegrationResults(
   dialectName: string,
   prefix: "PG" | "MY",
   results: IntegrationTestResult[],
 ): void {
   const substrateResults = results.filter((result) => result.id.startsWith(`${prefix}-SUBSTRATE`));
   expect(substrateResults.length).toBeGreaterThan(0);
-  if (!substrateResults.every((result) => result.status === "PASS")) {
-    throw new Error(
-      `${dialectName} substrate BLOCKED/FAIL: ${substrateResults
-        .filter((result) => result.status !== "PASS")
-        .map((result) => `${result.id}=${result.status}:${result.error ?? result.evidence.join("|")}`)
-        .join("; ")}`,
-    );
-  }
+  expect(substrateResults.every((result) => result.status === "PASS")).toBe(true);
 
   const expectedIds = REQUIRED_SEMANTIC_PROOF_IDS.map((id) => `${prefix}-${id}`);
   const resultsById = new Map(results.map((result) => [result.id, result]));
   expect(expectedIds.every((id) => resultsById.has(id))).toBe(true);
   const semanticResults = expectedIds.map((id) => resultsById.get(id)!);
-  expect(semanticResults.every((result) => result.status === "BLOCKED")).toBe(true);
-  expect(
-    semanticResults.every((result) => result.evidence.some((evidence) => evidence.includes("NOT YET IMPLEMENTED"))),
-  ).toBe(true);
-  throw new Error(`${dialectName} semantic matrix is NOT YET IMPLEMENTED; integration must remain nonzero`);
+
+  // All semantic proofs should pass
+  const failedSemantics = semanticResults.filter((result) => result.status !== "PASS");
+  if (failedSemantics.length > 0) {
+    throw new Error(
+      `${dialectName} semantic proofs failed: ${failedSemantics
+        .map((result) => `${result.id}=${result.status}:${result.error ?? result.evidence.join("|")}`)
+        .join("; ")}`,
+    );
+  }
 }
 
 describe("Gate0 PostgreSQL integration contract", () => {
@@ -58,12 +56,12 @@ describe("Gate0 PostgreSQL integration contract", () => {
     }
   });
 
-  test("starts once, runs once, cleans once, and cannot report a partial PASS", async () => {
+  test("runs the full semantic matrix and all proofs must pass", async () => {
     if (results.length === 0) {
       if (!config) throw new Error("PostgreSQL startup produced neither config nor structured BLOCKED result");
       results = await runDatabaseIntegrationTests(config);
     }
-    assertIntegrationCannotPass("PostgreSQL", "PG", results);
+    validateIntegrationResults("PostgreSQL", "PG", results);
   });
 });
 
@@ -88,11 +86,11 @@ describe("Gate0 MySQL integration contract", () => {
     }
   });
 
-  test("starts once, runs once, cleans once, and cannot report a partial PASS", async () => {
+  test("runs the full semantic matrix and all proofs must pass", async () => {
     if (results.length === 0) {
       if (!config) throw new Error("MySQL startup produced neither config nor structured BLOCKED result");
       results = await runDatabaseIntegrationTests(config);
     }
-    assertIntegrationCannotPass("MySQL", "MY", results);
+    validateIntegrationResults("MySQL", "MY", results);
   });
 });

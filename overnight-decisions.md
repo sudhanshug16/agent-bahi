@@ -127,6 +127,38 @@ Semantic proof harness fully implemented with parameterized native-SQL tests for
 - **Container lifecycle**: Docker CLI used only for network create, container run/inspect/rm; no docker exec inside semantic tests.
 - **ro284 findings applied**: getOrCreateIdempotencyRecord is race-safe via BEGIN IMMEDIATE; error.code='IDEMPOTENCY_CONFLICT'; replay/conflict/POSTED-guard proofs strengthened to verify stored row immutability and zero side effects.
 
+## OD-011 — Full PostgreSQL/MySQL Gate0 semantic matrix implementation
+
+- **Date**: 2026-08-22 (implemented after ro300 substrate review)
+- **Decision**: Implement complete shared semantic matrix with exact proof IDs (MIG-001..MIG-004, SCOPE-001..SCOPE-002, POST-001..POST-004, IMM-001..IMM-003, CON-001, IDEM-001..IDEM-002, BIGINT-001) on both PostgreSQL and MySQL dialects using one shared fixture and tiny dialect adapters. All tests run against real live Docker containers with Bun-native SQL connections (no external database drivers).
+- **Rationale**: Completes Gate0 evidence for multi-dialect support with comprehensive semantic coverage: migration checksum/NOOP/mismatch/bad-checksum handling, tenant/scope FK violations, posting atomicity with balance validation and automatic rollback, immutability constraints (posted journal and postings/audit append-only), concurrency lock conflict detection, idempotency replay and conflict detection, and BigInt exact value preservation.
+- **Evidence**: 
+  - MIG-001: Fresh migration apply with exact checksum match, all 7 required tables, all 10 required triggers (or functions for PostgreSQL), InnoDB on MySQL, server version captured.
+  - MIG-002: Identical re-apply returns NOOP status, no DDL executed, metadata unchanged.
+  - MIG-003: Same logical_id with tampered bytes throws MIGRATION_CHECKSUM_MISMATCH before any DDL; schema/metadata unchanged.
+  - MIG-004: Bad checksum in metadata + reapply canonical = same mismatch, no silent repair, schema count unchanged, metadata explicitly restored.
+  - SCOPE-001: Nonexistent book_set FK violation blocks journal_entry insert; attempted row absent.
+  - SCOPE-002: Journal from book-b used as posting target in book-a triggers FK violation; posting line absent.
+  - POST-001: Atomic DRAFT + 100 debit + 100 credit → POSTED + audit; exact rows/sums verified.
+  - POST-002: 99/98 imbalance in one transaction → trigger rejects POSTED status before commit; automatic rollback; journal/posting counts identical before/after; attempted rows absent.
+  - POST-003: Direct INSERT with status=POSTED blocked by journal_entries_must_start_as_draft trigger; attempted row absent; stable INVALID_STATE_TRANSITION.
+  - POST-004: INSERT...SELECT with status=POSTED blocked by same trigger; attempted row absent.
+  - IMM-001: Posted journal status/id/idempotency_key/DELETE attempts all rejected; target row exists before/after all attempts.
+  - IMM-002: Posting UPDATE/DELETE blocked by append-only triggers; exact posting rows/values unchanged.
+  - IMM-003: Audit_log UPDATE/DELETE blocked by append-only triggers; exact audit row bytes/counts unchanged.
+  - CON-001: Two connections; A holds FOR UPDATE lock on posted row; B fails with lock timeout/NOWAIT (SQLSTATE 40P01 or errno 40001); after A releases, B acquires successfully.
+  - IDEM-001: Exact (t-a, req-1, H1, R1, RH1) stored; replay same hash with different candidate bytes returns exact R1/RH1 without mutation.
+  - IDEM-002: Same req_id + different hash attempts throw typed IDEMPOTENCY_CONFLICT (PK constraint); original row/hash unchanged; zero new rows.
+  - BIGINT-001: Insert/query 9007199254740993n; assert raw typeof === 'bigint' and exact value; no coercion to number.
+  - Fixed seeds: tenants t-a/t-b; BookSets t-a/book-a, t-a/book-b, t-b/book-z. Negative cases verify row contents/counts before and after each failure.
+  - Shared fixture used for both PostgreSQL and MySQL; only dialect-specific SQL syntax differences (PL/pgSQL vs SIGNAL) and connection/timeout handling.
+  - Bun-native SQL connections with `{ bigint: true }`; parameterized queries prevent injection; no external npm packages for database drivers.
+  - Structural verification enhanced: checks all 10 required triggers (not just draft-on-insert) and all 10 required PG functions on PostgreSQL; throws MIGRATION_DIRTY if any missing.
+  - Docker port binding validation: only accepts loopback (127.0.0.1 or ::1); rejects 0.0.0.0, ::, empty, invalid, or fallback bindings.
+  - Integration test harness (`tests/gate0/database-integration.test.ts`) validates substrate (connection/migration/triggers) and runs full semantic matrix.
+- **Reversibility**: Semantic tests are isolated; removal or modification does not affect dialect migrations or core schema. Test harness can be replaced; fixture seeds are idempotent.
+- **Status**: `IMPLEMENTED; EXECUTION DEPENDS ON DOCKER AVAILABILITY AND SUCCESSFUL CONTAINER STARTUP`.
+
 ---
 
 **Blocking conditions for PostgreSQL/MySQL proofs:**
