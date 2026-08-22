@@ -9,6 +9,7 @@ import type { TenantId, BookSetId } from "../core/types.ts";
 export type ActorKind = "HUMAN" | "AGENT" | "SYSTEM";
 export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
+export type TenantCommandAction = "tenant.create";
 
 export interface Actor {
   kind: ActorKind;
@@ -41,6 +42,12 @@ export interface BookSetArchivePayload {
 
 export interface TenantActivatePayload {
   defaultBookSetId: BookSetId;
+}
+
+export interface TenantCreatePayload {
+  kind: "COMPANY" | "INDIVIDUAL";
+  name: string;
+  baseCurrency?: string;
 }
 
 export interface CommandResult<T> {

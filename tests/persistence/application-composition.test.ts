@@ -15,14 +15,24 @@ test("production composition exposes typed services without raw persistence hand
       cliVersion: "0.0.0-test",
       buildId: "composition",
     });
-    expect(Object.keys(application).sort()).toEqual(["account", "bookSet", "bookSetScope", "idempotency", "tenant"]);
+    expect(Object.keys(application).sort()).toEqual(["account", "bookSet", "bookSetScope", "tenant"]);
     expect((application as Record<string, unknown>).runner).toBeUndefined();
     expect((application as Record<string, unknown>).db).toBeUndefined();
 
     const requestId = randomUUID();
-    const first = await application.tenant.createTenantWithDefaultBookSet("COMPANY", "Composition Corp", "INR", requestId);
-    const replay = await application.tenant.createTenantWithDefaultBookSet("COMPANY", "Composition Corp", "INR", requestId);
-    expect(replay).toEqual(first);
+    const createEnvelope = {
+      schemaVersion: 1 as const,
+      tenantId: "temp" as any, // temp value, ignored for bootstrap
+      requestId,
+      actor: { kind: "SYSTEM" as const, id: "bootstrap" },
+      source: "INTERNAL" as const,
+      reason: "Bootstrap test",
+      payload: { kind: "COMPANY" as const, name: "Composition Corp", baseCurrency: "INR" },
+    };
+    const first = await application.tenant.create(createEnvelope);
+    const replay = await application.tenant.create(createEnvelope);
+    expect(replay.resultJson).toEqual(first.resultJson);
+    expect(replay.replayed).toBe(true);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -42,20 +52,70 @@ test("bootstrap applies 0003-0004 before business sessions and scope resolution 
     expect(native.query("SELECT id, status FROM schema_migrations ORDER BY rowid").all()).toHaveLength(4);
     native.close();
 
-    const created = await application.tenant.createTenantWithDefaultBookSet("INDIVIDUAL", "Scope Tenant", "INR", randomUUID());
-    const tenantId = created.tenant.id;
-    await application.tenant.activateTenant(tenantId);
-    await expect(application.bookSetScope.resolve(tenantId)).resolves.toMatchObject({ id: created.defaultBookSet.id, lifecycle: "ACTIVE" });
+    const createRequestId = randomUUID();
+    const createEnvelope = {
+      schemaVersion: 1 as const,
+      tenantId: "temp" as any,
+      requestId: createRequestId,
+      actor: { kind: "SYSTEM" as const, id: "bootstrap" },
+      source: "INTERNAL" as const,
+      reason: "Scope tenant creation",
+      payload: { kind: "INDIVIDUAL" as const, name: "Scope Tenant", baseCurrency: "INR" },
+    };
+    const createResult = await application.tenant.create(createEnvelope);
+    const tenantId = JSON.parse(createResult.resultJson).tenantId;
+    const defaultBookSetId = JSON.parse(createResult.resultJson).defaultBookSetId;
 
-    const now = new Date().toISOString();
-    const prop1 = { id: brandBookSetId(randomUUID()), tenantId, kind: "PROPRIETORSHIP" as const, displayName: "  Prop One  ", lifecycle: "ACTIVE" as const, createdAt: now, updatedAt: now };
-    const prop2 = { ...prop1, id: brandBookSetId(randomUUID()), displayName: "Prop Two" };
-    await application.bookSet.create(prop1);
-    await application.bookSet.create(prop2);
+    const activateEnvelope = {
+      schemaVersion: 1 as const,
+      tenantId,
+      requestId: randomUUID(),
+      actor: { kind: "SYSTEM" as const, id: "bootstrap" },
+      source: "INTERNAL" as const,
+      reason: "Activate tenant",
+      payload: { defaultBookSetId },
+    };
+    await application.tenant.activate(activateEnvelope);
+    await expect(application.bookSetScope.resolve(tenantId)).resolves.toMatchObject({ id: defaultBookSetId, lifecycle: "ACTIVE" });
+
+    const prop1Envelope = {
+      schemaVersion: 1 as const,
+      tenantId,
+      requestId: randomUUID(),
+      actor: { kind: "SYSTEM" as const, id: "bootstrap" },
+      source: "INTERNAL" as const,
+      reason: "Create prop1",
+      payload: { kind: "PROPRIETORSHIP" as const, displayName: "  Prop One  " },
+    };
+    const prop2Envelope = {
+      schemaVersion: 1 as const,
+      tenantId,
+      requestId: randomUUID(),
+      actor: { kind: "SYSTEM" as const, id: "bootstrap" },
+      source: "INTERNAL" as const,
+      reason: "Create prop2",
+      payload: { kind: "PROPRIETORSHIP" as const, displayName: "Prop Two" },
+    };
+
+    const prop1CreateResult = await application.bookSet.create(prop1Envelope);
+    const prop1Result = JSON.parse(prop1CreateResult.resultJson);
+    const prop2CreateResult = await application.bookSet.create(prop2Envelope);
+    const prop2Result = JSON.parse(prop2CreateResult.resultJson);
+
     await expect(application.bookSetScope.resolve(tenantId)).rejects.toMatchObject({ code: "BOOK_SET_SCOPE_AMBIGUOUS" });
-    await expect(application.bookSetScope.resolve(tenantId, { bookSetId: prop1.id })).resolves.toMatchObject({ displayName: "Prop One" });
-    await application.bookSet.archive(prop2.id, tenantId);
-    await expect(application.bookSetScope.resolve(tenantId, { bookSetId: prop2.id })).rejects.toMatchObject({ code: "BOOK_SET_SCOPE_NOT_FOUND" });
+    await expect(application.bookSetScope.resolve(tenantId, { bookSetId: prop1Result.bookSetId })).resolves.toMatchObject({ displayName: "Prop One" });
+
+    const archiveEnvelope = {
+      schemaVersion: 1 as const,
+      tenantId,
+      requestId: randomUUID(),
+      actor: { kind: "SYSTEM" as const, id: "bootstrap" },
+      source: "INTERNAL" as const,
+      reason: "Archive prop2",
+      payload: { bookSetId: prop2Result.bookSetId },
+    };
+    await application.bookSet.archive(archiveEnvelope);
+    await expect(application.bookSetScope.resolve(tenantId, { bookSetId: prop2Result.bookSetId })).rejects.toMatchObject({ code: "BOOK_SET_SCOPE_NOT_FOUND" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

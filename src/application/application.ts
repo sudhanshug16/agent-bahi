@@ -17,7 +17,12 @@ import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN } from "../infrastruct
 import { CORE_MIGRATIONS } from "../infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../infrastructure/schema/database-control-schema.ts";
 import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
+import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
 
+/**
+ * Internal composition type (all raw services).
+ * Only used within the application module.
+ */
 export type ApplicationFacade = {
   tenant: TenantService;
   bookSet: BookSetService;
@@ -25,6 +30,12 @@ export type ApplicationFacade = {
   idempotency: IdempotencyService;
   bookSetScope: BookSetScopeService;
 };
+
+/**
+ * Public facade type (read-only operations + audited commands).
+ * This is what escapes the application module.
+ */
+export type { PublicApplicationFacade } from "./public-facade.ts";
 
 export interface SqliteBootstrapOptions {
   backupDestinationPath: string;
@@ -45,10 +56,10 @@ function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4")
 }
 
 /**
- * Production SQLite composition root. Only typed application services escape;
- * database adapters, runners, sessions, and native handles remain internal.
+ * Internal SQLite composition root (all raw services).
+ * Only used within this module; does not escape.
  */
-export function createSqliteApplication(
+function createInternalSqliteApplication(
   dbPath: string,
   readerProtocol = 1,
   writerProtocol = 1,
@@ -64,13 +75,40 @@ export function createSqliteApplication(
 }
 
 /**
+ * Public SQLite composition root. Returns public facade with read-only operations
+ * and audited commands only. Raw service mutators and persistence handles remain internal.
+ */
+export function createSqliteApplication(
+  dbPath: string,
+  readerProtocol = 1,
+  writerProtocol = 1,
+): PublicApplicationFacade {
+  const sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", readerProtocol, writerProtocol);
+  const internal = {
+    tenant: new SqliteTenantService(sessionRunner),
+    bookSet: new SqliteBookSetService(sessionRunner),
+    account: new SqliteAccountService(sessionRunner),
+    idempotency: new SqliteIdempotencyService(sessionRunner),
+    bookSetScope: new BookSetScopeService(sessionRunner),
+  };
+  return createPublicFacade(
+    internal.tenant,
+    internal.bookSet,
+    internal.account,
+    internal.bookSetScope,
+    sessionRunner,
+  );
+}
+
+/**
  * Production bootstrap. The v2 foundation is initialized first, then the
  * immutable coordinator applies 0003 (v2->v3) and 0004 (v3->v4) in sequence.
+ * Returns the public facade.
  */
 export async function bootstrapSqliteApplication(
   dbPath: string,
   options: SqliteBootstrapOptions,
-): Promise<ApplicationFacade> {
+): Promise<PublicApplicationFacade> {
   const db = new SqliteAdapter({ path: dbPath });
   const now = options.now ?? new Date();
   try {
