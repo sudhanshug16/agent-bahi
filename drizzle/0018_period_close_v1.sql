@@ -1,0 +1,68 @@
+CREATE TABLE `period_close_events` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`book_set_id` text NOT NULL,
+	`period_start` text NOT NULL,
+	`period_end` text NOT NULL,
+	`event_type` text NOT NULL,
+	`plan_hash` text NOT NULL,
+	`snapshot_json` text NOT NULL,
+	`actor_type` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`source` text NOT NULL,
+	`reason` text NOT NULL,
+	`override_reason` text,
+	`request_id` text NOT NULL,
+	`request_hash` text NOT NULL,
+	`result_json` text NOT NULL,
+	`result_hash` text NOT NULL,
+	`occurred_at` text NOT NULL,
+	FOREIGN KEY (`book_set_id`,`tenant_id`) REFERENCES `book_sets`(`id`,`tenant_id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "chk_period_close_event_dates" CHECK(length("period_close_events"."period_start") = 10 AND length("period_close_events"."period_end") = 10 AND "period_close_events"."period_start" <= "period_close_events"."period_end"),
+	CONSTRAINT "chk_period_close_event_type" CHECK("period_close_events"."event_type" IN ('CLOSED', 'REOPENED')),
+	CONSTRAINT "chk_period_close_event_actor" CHECK("period_close_events"."actor_type" IN ('HUMAN', 'AGENT', 'SYSTEM') AND length(trim("period_close_events"."actor_id")) > 0),
+	CONSTRAINT "chk_period_close_event_hashes" CHECK(length("period_close_events"."plan_hash") = 64 AND length("period_close_events"."request_hash") = 64 AND length("period_close_events"."result_hash") = 64 AND "period_close_events"."plan_hash" NOT GLOB '*[^0-9a-f]*' AND "period_close_events"."request_hash" NOT GLOB '*[^0-9a-f]*' AND "period_close_events"."result_hash" NOT GLOB '*[^0-9a-f]*'),
+	CONSTRAINT "chk_period_close_event_reason" CHECK(length(trim("period_close_events"."reason")) > 0)
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_period_close_event_request` ON `period_close_events` (`tenant_id`,`book_set_id`,`request_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_period_close_event_scope_key` ON `period_close_events` (`id`,`tenant_id`,`book_set_id`);--> statement-breakpoint
+CREATE INDEX `idx_period_close_events_scope_period` ON `period_close_events` (`tenant_id`,`book_set_id`,`period_start`,`period_end`,`occurred_at`,`id`);
+--> statement-breakpoint
+CREATE TRIGGER `period_close_events_no_update` BEFORE UPDATE ON `period_close_events` BEGIN SELECT RAISE(ABORT, 'period close events are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_events_no_delete` BEFORE DELETE ON `period_close_events` BEGIN SELECT RAISE(ABORT, 'period close events are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_journal_date_guard` BEFORE INSERT ON `journal_entries` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.posting_date AND p.period_end >= NEW.posting_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_sales_invoice_guard` BEFORE INSERT ON `sales_invoices` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.issue_date AND p.period_end >= NEW.issue_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_vendor_bill_guard` BEFORE INSERT ON `vendor_bills` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.bill_date AND p.period_end >= NEW.bill_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_bank_statement_guard` BEFORE INSERT ON `bank_statements` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.period_end AND p.period_end >= NEW.period_start AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_bank_line_guard` BEFORE INSERT ON `bank_statement_lines` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p JOIN bank_statements s ON s.id = NEW.statement_id AND s.tenant_id = NEW.tenant_id AND s.book_set_id = NEW.book_set_id WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.transaction_date AND p.period_end >= NEW.transaction_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_receipt_guard` BEFORE INSERT ON `bank_receipts` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.receipt_date AND p.period_end >= NEW.receipt_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_payment_guard` BEFORE INSERT ON `vendor_payments` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.payment_date AND p.period_end >= NEW.payment_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_bank_match_guard` BEFORE INSERT ON `bank_matches` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p JOIN bank_statement_lines l ON l.id = NEW.statement_line_id AND l.tenant_id = NEW.tenant_id AND l.book_set_id = NEW.book_set_id WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= l.transaction_date AND p.period_end >= l.transaction_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_bank_match_update_guard` BEFORE UPDATE ON `bank_matches` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p JOIN bank_statement_lines l ON l.id = OLD.statement_line_id AND l.tenant_id = OLD.tenant_id AND l.book_set_id = OLD.book_set_id WHERE p.tenant_id = OLD.tenant_id AND p.book_set_id = OLD.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= l.transaction_date AND p.period_end >= l.transaction_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_depreciation_guard` BEFORE INSERT ON `asset_depreciation_runs` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.period_end AND p.period_end >= NEW.period_start AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_fx_revaluation_guard` BEFORE INSERT ON `fx_revaluation_runs` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.as_of_date AND p.period_end >= NEW.as_of_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_payrun_guard` BEFORE INSERT ON `payroll_pay_runs` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.period_end AND p.period_end >= NEW.period_start AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_payroll_payment_guard` BEFORE INSERT ON `payroll_payment_batches` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.payment_date AND p.period_end >= NEW.payment_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_withholding_deposit_guard` BEFORE INSERT ON `withholding_deposits` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.deposit_date AND p.period_end >= NEW.deposit_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_asset_disposal_guard` BEFORE INSERT ON `asset_disposals` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.disposal_date AND p.period_end >= NEW.disposal_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_claim_guard` BEFORE INSERT ON `expense_claims` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.claim_date AND p.period_end >= NEW.claim_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;
+--> statement-breakpoint
+CREATE TRIGGER `period_close_advance_guard` BEFORE INSERT ON `expense_advances` BEGIN SELECT RAISE(ABORT, 'period is closed') WHERE EXISTS (SELECT 1 FROM period_close_events p WHERE p.tenant_id = NEW.tenant_id AND p.book_set_id = NEW.book_set_id AND p.event_type = 'CLOSED' AND p.period_start <= NEW.issue_date AND p.period_end >= NEW.issue_date AND NOT EXISTS (SELECT 1 FROM period_close_events r WHERE r.tenant_id = p.tenant_id AND r.book_set_id = p.book_set_id AND r.period_start = p.period_start AND r.period_end = p.period_end AND r.event_type = 'REOPENED' AND r.occurred_at > p.occurred_at)); END;

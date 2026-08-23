@@ -31,6 +31,7 @@ import { registerCurrency, createFxRateSnapshot, registerFxPolicy, postFxRevalua
 import { createEmployee, getEmployee, listEmployees, createEmployeeProfile, createSalaryStructure, createSalaryVersion, createRuleSnapshot, createClaim, reviewClaim, preparePayRun, approvePayRun, postPayRun, listPayslips, createPaymentBatch, exportBankCsv, createRemittance, updateRemittance, payrollRegister, type EmployeeCreatePayload, type EmployeeProfilePayload, type SalaryStructurePayload, type SalaryVersionPayload, type SalaryComponentInput, type RuleSnapshotPayload, type ClaimPayload, type ClaimReviewPayload, type PayRunPreparePayload, type PayRunActionPayload, type PayrollBankBatchPayload, type BankExportPayload, type RemittancePayload, type RemittanceActionPayload, type EmployeeResult } from "./services/payroll-service.ts";
 import { createClaimant, getClaimant, listClaimants, createClaim as createExpenseClaim, submitClaim, reviewClaim as reviewExpenseClaim, postClaim, getClaim as getExpenseClaim, listClaims as listExpenseClaims, issueAdvance, getAdvance, listAdvances, repayAdvance, recordReimbursement, expenseRegister, expenseOpenItems, evidenceExceptions, type ClaimantCreatePayload, type ClaimantView, type ExpenseClaimCreatePayload, type ExpenseClaimSubmitPayload, type ExpenseClaimReviewPayload, type ExpenseClaimPostPayload, type ExpenseClaimView, type ExpenseAdvanceIssuePayload, type ExpenseAdvanceRepayPayload, type ExpenseAdvanceView, type ExpenseReimbursementPayload, type ExpenseRegisterRow, type ExpenseOpenItems, type ExpenseEvidenceException } from "./services/expense-claims-service.ts";
 import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot as createComplianceRuleSnapshot, getRuleSnapshot, listRuleSnapshots, createDeadlineSnapshot, getDeadlineSnapshot, listDeadlineSnapshots, createRulePredecessor, evaluateApplicability, getApplicabilityDecision, listApplicabilityDecisions, generateObligation, getObligation, listObligations, calendar, attachArtifact, recordObligationEvent, complianceStatus, type ComplianceEnvelope, type ComplianceFactProfileCreatePayload, type ComplianceRuleCreatePayload, type ComplianceDeadlineCreatePayload, type CompliancePredecessorCreatePayload, type ComplianceApplicabilityPayload, type ComplianceGeneratePayload, type ComplianceArtifactAttachPayload, type ComplianceEventPayload, type ObligationStatus } from "./services/compliance-obligations-service.ts";
+import { PeriodCloseService, type PeriodClosePayload, type PeriodReopenPayload, type PeriodPlan, type PeriodEventResult } from "./services/period-close-service.ts";
 
 /**
  * Read-only tenant operations
@@ -193,6 +194,14 @@ export interface ComplianceOperations {
   status(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<Record<string, unknown>>;
 }
 
+export interface PeriodCloseOperations {
+  preview(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<PeriodPlan>;
+  close(envelope: CommandEnvelope<PeriodClosePayload> & { bookSetId: BookSetId }): Promise<CommandResult<PeriodEventResult>>;
+  reopenPreview(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<PeriodPlan>;
+  reopen(envelope: CommandEnvelope<PeriodReopenPayload> & { bookSetId: BookSetId }): Promise<CommandResult<PeriodEventResult>>;
+  status(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<Record<string, unknown>>>;
+}
+
 /**
  * Public application facade: typed read and command interfaces.
  * No raw service mutators or persistence handles escape.
@@ -220,6 +229,7 @@ export type PublicApplicationFacade = {
   payroll: PayrollOperations;
   expense: ExpenseOperations;
   compliance: ComplianceOperations;
+  periodClose: PeriodCloseOperations;
 };
 
 /**
@@ -235,6 +245,7 @@ export function createPublicFacade(
   ledgerReportService: LedgerReportService,
   companyStatusService: CompanyStatusService,
 ): PublicApplicationFacade {
+  const periodCloseService = new PeriodCloseService(sessionRunner);
   const facade: PublicApplicationFacade = {
     tenant: {
       getTenant: (tenantId: TenantId) => tenantService.getTenant(tenantId),
@@ -347,6 +358,13 @@ export function createPublicFacade(
       artifact: { attach: (envelope) => attachArtifact(sessionRunner, envelope) },
       status: (tenantId, bookSetId, asOfDate) => complianceStatus(sessionRunner, tenantId, bookSetId, asOfDate),
     },
+    periodClose: {
+      preview: (tenantId, bookSetId, periodStart, periodEnd) => periodCloseService.preview(tenantId, bookSetId, periodStart, periodEnd),
+      close: (envelope) => periodCloseService.close(envelope),
+      reopenPreview: (tenantId, bookSetId, periodStart, periodEnd) => periodCloseService.reopenPreview(tenantId, bookSetId, periodStart, periodEnd),
+      reopen: (envelope) => periodCloseService.reopen(envelope),
+      status: (tenantId, bookSetId) => periodCloseService.status(tenantId, bookSetId),
+    },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },
       rate: { create: (envelope) => createFxRateSnapshot(sessionRunner, envelope) },
@@ -374,5 +392,6 @@ export function createPublicFacade(
   // GST is still a typed public property and is directly accessible.
   Object.defineProperty(facade, "gst", { value: facade.gst, enumerable: false, writable: false, configurable: false });
   Object.defineProperty(facade, "fx", { value: facade.fx, enumerable: false, writable: false, configurable: false });
+  Object.defineProperty(facade, "periodClose", { value: facade.periodClose, enumerable: false, writable: false, configurable: false });
   return facade;
 }

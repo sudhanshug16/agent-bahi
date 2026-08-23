@@ -5,6 +5,7 @@ import { DomainError, IdempotencyConflictError, IdempotencyCorruptError } from "
 import type { CommandEnvelope, CommandResult } from "../commands.ts";
 import { canonicalJson, computeCommandHash, computeResultHash } from "../commands.ts";
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
+import { assertPeriodOpen, assertPeriodRangeOpen } from "./period-close-service.ts";
 
 export interface BankStatementRowPayload {
   lineNumber: number;
@@ -127,7 +128,7 @@ export async function executeBankStatementImport(sessionRunner: BusinessSessionR
   const requestHash = computeCommandHash("bankStatement.import", envelope, envelope.payload); const contentHash = importContentHash(envelope.payload);
   return sessionRunner.withBusinessSession("write", async (session) => {
     const replay = replayOrThrow(await existingCommand(session, envelope.tenantId, envelope.requestId), requestHash); if (replay) return replay as CommandResult<BankStatementImportResult>;
-    await assertBookSet(session, envelope.tenantId, envelope.bookSetId); await assertBankAccount(session, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId);
+    await assertBookSet(session, envelope.tenantId, envelope.bookSetId); await assertPeriodRangeOpen(session, envelope.tenantId, envelope.bookSetId, envelope.payload.periodStart, envelope.payload.periodEnd); await assertBankAccount(session, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId);
     const existing = await session.querySingle("SELECT id, content_hash FROM bank_statements WHERE tenant_id = ? AND book_set_id = ? AND bank_account_id = ? AND external_statement_id = ?", [envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId, envelope.payload.externalStatementId]);
     if (existing) {
       if (String(existing.content_hash) !== contentHash) throw new DomainError("STATEMENT_IDEMPOTENCY_CONFLICT", "external statement already exists with different content");
@@ -160,6 +161,7 @@ export async function executeBankMatchConfirm(sessionRunner: BusinessSessionRunn
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
     const line = await session.querySingle(`SELECT bsl.id, bsl.statement_id, bsl.signed_amount_minor, bs.bank_account_id FROM bank_statement_lines bsl JOIN bank_statements bs ON bs.id = bsl.statement_id AND bs.tenant_id = bsl.tenant_id AND bs.book_set_id = bsl.book_set_id WHERE bsl.id = ? AND bsl.tenant_id = ? AND bsl.book_set_id = ?`, [envelope.payload.statementLineId, envelope.tenantId, envelope.bookSetId]);
     if (!line) throw new DomainError("STATEMENT_LINE_SCOPE_MISMATCH", "statement line does not belong to tenant and BookSet");
+    await assertPeriodOpen(session, envelope.tenantId, envelope.bookSetId, String((await session.querySingle("SELECT transaction_date FROM bank_statement_lines WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [envelope.payload.statementLineId, envelope.tenantId, envelope.bookSetId]))?.transaction_date));
     const activeLine = await session.querySingle("SELECT id FROM bank_matches WHERE statement_line_id = ? AND tenant_id = ? AND book_set_id = ? AND status = 'ACTIVE'", [envelope.payload.statementLineId, envelope.tenantId, envelope.bookSetId]); if (activeLine) throw new DomainError("BANK_LINE_ALREADY_MATCHED", "statement line is already matched");
     const journal = await session.querySingle("SELECT id, posting_date, status FROM journal_entries WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [envelope.payload.journalEntryId, envelope.tenantId, envelope.bookSetId]); if (!journal) throw new DomainError("JOURNAL_SCOPE_MISMATCH", "journal entry does not belong to tenant and BookSet"); if (String(journal.status) !== "POSTED") throw new DomainError("JOURNAL_NOT_POSTED", "only posted journal entries can be matched");
     const aggregateRows = await session.query("SELECT debit_minor, credit_minor FROM journal_lines WHERE tenant_id = ? AND book_set_id = ? AND journal_entry_id = ? AND account_id = ?", [envelope.tenantId, envelope.bookSetId, envelope.payload.journalEntryId, String(line.bank_account_id)]);
@@ -180,6 +182,8 @@ export async function executeBankMatchUndo(sessionRunner: BusinessSessionRunner,
       ? await session.querySingle("SELECT id, statement_line_id, journal_entry_id, status FROM bank_matches WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [target, envelope.tenantId, envelope.bookSetId])
       : await session.querySingle("SELECT id, statement_line_id, journal_entry_id, status FROM bank_matches WHERE statement_line_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY id LIMIT 1", [target, envelope.tenantId, envelope.bookSetId]);
     if (!match) throw new DomainError("BANK_MATCH_NOT_FOUND", "bank match does not belong to tenant and BookSet"); if (String(match.status) !== "ACTIVE") throw new DomainError("BANK_MATCH_NOT_ACTIVE", "bank match is already undone");
+    const matchDate = await session.querySingle("SELECT bsl.transaction_date FROM bank_statement_lines bsl WHERE bsl.id = ? AND bsl.tenant_id = ? AND bsl.book_set_id = ?", [String(match.statement_line_id), envelope.tenantId, envelope.bookSetId]);
+    await assertPeriodOpen(session, envelope.tenantId, envelope.bookSetId, String(matchDate?.transaction_date));
     const now = new Date().toISOString(); await session.execute("UPDATE bank_matches SET status = 'UNDONE', undone_at = ?, undo_reason = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ? AND status = 'ACTIVE'", [now, reason, String(match.id), envelope.tenantId, envelope.bookSetId]);
     return finish(session, envelope, "bankMatch.undo", requestHash, { matchId: String(match.id), statementLineId: String(match.statement_line_id), journalEntryId: String(match.journal_entry_id), status: "UNDONE" }, "bank_match", String(match.id), now);
   });

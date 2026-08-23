@@ -48,6 +48,12 @@ export function classifySqliteError(error: unknown, _operation: string = "databa
   const fields = getErrorFields(error);
   const structuredFieldsPresent = fields.code !== undefined || fields.errno !== undefined;
 
+  // Period-close triggers intentionally expose one stable domain outcome;
+  // native SQLite trigger diagnostics are not part of the public contract.
+  if (typeof fields.message === "string" && fields.message.trim().toLowerCase() === "period is closed") {
+    return makeClassified({ code: "PERIOD_CLOSED", message: "The accounting period is closed for this date" }, error);
+  }
+
   const namedCheck = classifyNamedCheckConstraint(fields);
   if (namedCheck) return makeClassified(namedCheck, error);
 

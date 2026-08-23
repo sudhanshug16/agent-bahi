@@ -103,6 +103,7 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "compliance_obligations",
   "compliance_obligation_artifacts",
   "compliance_obligation_events",
+  "period_close_events",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

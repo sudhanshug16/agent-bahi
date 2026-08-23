@@ -122,6 +122,51 @@ async function applyLines(
   }
 }
 
+/** Build all ledger reports on a caller-owned session for atomic snapshots. */
+export async function ledgerSnapshotInSession(
+  session: BusinessSession,
+  tenantId: TenantId,
+  bookSetId: BookSetId,
+  fromDate: string,
+  toDate: string,
+): Promise<{ trialBalance: TrialBalanceReport; profitAndLoss: ProfitAndLossReport; balanceSheet: BalanceSheetReport }> {
+  await assertBookSet(session, tenantId, bookSetId);
+  const trialAccounts = await loadAccounts(session, tenantId, bookSetId);
+  await applyLines(session, trialAccounts, tenantId, bookSetId, undefined, toDate);
+  const trialRows = [...trialAccounts.values()].map(toReportRow);
+  const trialBalance: TrialBalanceReport = {
+    asOfDate: toDate,
+    rows: trialRows,
+    totalDebitMinor: trialRows.reduce((sum, row) => addMinor(sum, row.debitMinor), 0),
+    totalCreditMinor: trialRows.reduce((sum, row) => addMinor(sum, row.creditMinor), 0),
+    isBalanced: false,
+  };
+  trialBalance.isBalanced = trialBalance.totalDebitMinor === trialBalance.totalCreditMinor;
+
+  const pnlAccounts = await loadAccounts(session, tenantId, bookSetId);
+  await applyLines(session, pnlAccounts, tenantId, bookSetId, fromDate, toDate);
+  const incomeRows = [...pnlAccounts.values()].filter((account) => account.accountType === "INCOME").map(toReportRow);
+  const expenseRows = [...pnlAccounts.values()].filter((account) => account.accountType === "EXPENSE").map(toReportRow);
+  const incomeMinor = incomeRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
+  const expenseMinor = expenseRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
+  const profitAndLoss: ProfitAndLossReport = { fromDate, toDate, incomeMinor, expenseMinor, netProfitLossMinor: subtractMinor(incomeMinor, expenseMinor), incomeRows, expenseRows };
+
+  const bsAccounts = await loadAccounts(session, tenantId, bookSetId);
+  await applyLines(session, bsAccounts, tenantId, bookSetId, undefined, toDate);
+  const assets = [...bsAccounts.values()].filter((account) => account.accountType === "ASSET").map(toReportRow);
+  const liabilities = [...bsAccounts.values()].filter((account) => account.accountType === "LIABILITY").map(toReportRow);
+  const equity = [...bsAccounts.values()].filter((account) => account.accountType === "EQUITY").map(toReportRow);
+  const income = [...bsAccounts.values()].filter((account) => account.accountType === "INCOME").reduce((sum, account) => addMinor(sum, normalBalance(account)), 0);
+  const expense = [...bsAccounts.values()].filter((account) => account.accountType === "EXPENSE").reduce((sum, account) => addMinor(sum, normalBalance(account)), 0);
+  const totalAssetsMinor = assets.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
+  const totalLiabilitiesMinor = liabilities.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
+  const totalEquityMinor = equity.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
+  const currentPeriodResultMinor = subtractMinor(income, expense);
+  const totalLiabilitiesAndEquityMinor = addMinor(addMinor(totalLiabilitiesMinor, totalEquityMinor), currentPeriodResultMinor);
+  const balanceSheet: BalanceSheetReport = { asOfDate: toDate, assets, liabilities, equity, totalAssetsMinor, totalLiabilitiesMinor, totalEquityMinor, currentPeriodResultMinor, totalLiabilitiesAndEquityMinor, isBalanced: totalAssetsMinor === totalLiabilitiesAndEquityMinor };
+  return { trialBalance, profitAndLoss, balanceSheet };
+}
+
 function normalBalance(account: AccountAccumulator): number {
   return ["LIABILITY", "EQUITY", "INCOME"].includes(account.accountType)
     ? subtractMinor(account.creditMinor, account.debitMinor)
@@ -138,13 +183,7 @@ export class LedgerReportService {
   async trialBalance(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<TrialBalanceReport> {
     assertIsoDate(asOfDate, "asOfDate");
     return this.sessionRunner.withBusinessSession("read", async (session) => {
-      const accounts = await loadAccounts(session, tenantId, bookSetId);
-      await assertBookSet(session, tenantId, bookSetId);
-      await applyLines(session, accounts, tenantId, bookSetId, undefined, asOfDate);
-      const rows = [...accounts.values()].map(toReportRow);
-      const totalDebitMinor = rows.reduce((sum, row) => addMinor(sum, row.debitMinor), 0);
-      const totalCreditMinor = rows.reduce((sum, row) => addMinor(sum, row.creditMinor), 0);
-      return { asOfDate, rows, totalDebitMinor, totalCreditMinor, isBalanced: totalDebitMinor === totalCreditMinor };
+      return (await ledgerSnapshotInSession(session, tenantId, bookSetId, asOfDate, asOfDate)).trialBalance;
     });
   }
 
@@ -153,34 +192,14 @@ export class LedgerReportService {
     assertIsoDate(toDate, "toDate");
     if (fromDate > toDate) throw new DomainError("INVALID_REPORT_DATE_RANGE", "fromDate must not be after toDate");
     return this.sessionRunner.withBusinessSession("read", async (session) => {
-      const accounts = await loadAccounts(session, tenantId, bookSetId);
-      await assertBookSet(session, tenantId, bookSetId);
-      await applyLines(session, accounts, tenantId, bookSetId, fromDate, toDate);
-      const incomeRows = [...accounts.values()].filter((account) => account.accountType === "INCOME").map(toReportRow);
-      const expenseRows = [...accounts.values()].filter((account) => account.accountType === "EXPENSE").map(toReportRow);
-      const incomeMinor = incomeRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
-      const expenseMinor = expenseRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
-      return { fromDate, toDate, incomeMinor, expenseMinor, netProfitLossMinor: subtractMinor(incomeMinor, expenseMinor), incomeRows, expenseRows };
+      return (await ledgerSnapshotInSession(session, tenantId, bookSetId, fromDate, toDate)).profitAndLoss;
     });
   }
 
   async balanceSheet(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<BalanceSheetReport> {
     assertIsoDate(asOfDate, "asOfDate");
     return this.sessionRunner.withBusinessSession("read", async (session) => {
-      const accounts = await loadAccounts(session, tenantId, bookSetId);
-      await assertBookSet(session, tenantId, bookSetId);
-      await applyLines(session, accounts, tenantId, bookSetId, undefined, asOfDate);
-      const assetRows = [...accounts.values()].filter((account) => account.accountType === "ASSET").map(toReportRow);
-      const liabilityRows = [...accounts.values()].filter((account) => account.accountType === "LIABILITY").map(toReportRow);
-      const equityRows = [...accounts.values()].filter((account) => account.accountType === "EQUITY").map(toReportRow);
-      const incomeMinor = [...accounts.values()].filter((account) => account.accountType === "INCOME").reduce((sum, account) => addMinor(sum, normalBalance(account)), 0);
-      const expenseMinor = [...accounts.values()].filter((account) => account.accountType === "EXPENSE").reduce((sum, account) => addMinor(sum, normalBalance(account)), 0);
-      const currentPeriodResultMinor = subtractMinor(incomeMinor, expenseMinor);
-      const totalAssetsMinor = assetRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
-      const totalLiabilitiesMinor = liabilityRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
-      const totalEquityMinor = equityRows.reduce((sum, row) => addMinor(sum, row.balanceMinor), 0);
-      const totalLiabilitiesAndEquityMinor = addMinor(addMinor(totalLiabilitiesMinor, totalEquityMinor), currentPeriodResultMinor);
-      return { asOfDate, assets: assetRows, liabilities: liabilityRows, equity: equityRows, totalAssetsMinor, totalLiabilitiesMinor, totalEquityMinor, currentPeriodResultMinor, totalLiabilitiesAndEquityMinor, isBalanced: totalAssetsMinor === totalLiabilitiesAndEquityMinor };
+      return (await ledgerSnapshotInSession(session, tenantId, bookSetId, asOfDate, asOfDate)).balanceSheet;
     });
   }
 }

@@ -106,3 +106,6 @@ export {
   complianceObligationArtifacts,
   complianceObligationEvents,
 } from "./compliance-obligations-schema";
+
+// Period Close V1
+export { periodCloseEvents } from "./period-close-schema";

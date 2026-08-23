@@ -93,7 +93,7 @@ describe("SQLite BackupService", () => {
     const restored = new BunDatabase(restoredPath, { readonly: true });
     try {
       expect(() => restored.query("SELECT COUNT(*) FROM schema_migrations").get()).toThrow();
-      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 9 });
+      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 10 });
     } finally { restored.close(); }
   });
 

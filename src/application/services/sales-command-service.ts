@@ -10,6 +10,7 @@ import { prepareGstPosting, persistGstSnapshot, type GstDocumentBlock, type GstL
 import { prepareWithholding, persistWithholdingEvent, type WithholdingBlock } from "./tds-tcs-service.ts";
 import { convertFxLines, assertNoUnreversedRevaluation, loadRate, type FxAllocationBlock, type FxDocumentBlock } from "./fx-service.ts";
 import { convertForeignMinor, proportionalCarryingBase, safeNumber } from "./fx-math.ts";
+import { assertPeriodOpen } from "./period-close-service.ts";
 
 export type PartyRole = "CUSTOMER" | "VENDOR" | "BOTH";
 export interface PartyCreatePayload { displayName: string; email?: string; phone?: string; role?: PartyRole; partyType?: PartyRole; }
@@ -175,6 +176,7 @@ export async function executeInvoiceCreate(sessionRunner: BusinessSessionRunner,
       return { resultJson: existing.resultJson, resultHash: existing.resultHash, replayed: true };
     }
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
+    await assertPeriodOpen(session, envelope.tenantId, envelope.bookSetId, envelope.payload.issueDate);
     await assertCustomer(session, envelope.tenantId, envelope.bookSetId, customerId);
     for (const line of envelope.payload.lines) await assertAccount(session, envelope.tenantId, envelope.bookSetId, line.revenueAccountId, "INCOME", "revenueAccountId");
     const fxLines = envelope.payload.fx

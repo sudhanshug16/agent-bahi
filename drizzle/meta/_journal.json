@@ -64,6 +64,13 @@
       "when": 1787481311713,
       "tag": "0017_compliance_obligations_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787484703509,
+      "tag": "0018_period_close_v1",
+      "breakpoints": true
     }
   ]
 }

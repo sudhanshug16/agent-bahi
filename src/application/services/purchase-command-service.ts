@@ -10,6 +10,7 @@ import { prepareGstPosting, persistGstSnapshot, type GstDocumentBlock, type GstL
 import { prepareWithholding, persistWithholdingEvent, type WithholdingBlock } from "./tds-tcs-service.ts";
 import { convertFxLines, assertNoUnreversedRevaluation, loadRate, type FxAllocationBlock, type FxDocumentBlock } from "./fx-service.ts";
 import { convertForeignMinor, proportionalCarryingBase, safeNumber } from "./fx-math.ts";
+import { assertPeriodOpen } from "./period-close-service.ts";
 
 export interface BillLinePayload { description: string; expenseAccountId: string; amountMinor: number; foreignAmountMinor?: number; gst?: GstLineFact; }
 export interface BillCreatePayload {
@@ -162,6 +163,7 @@ export async function executeBillCreate(sessionRunner: BusinessSessionRunner, en
     const replay = await replayOrUndefined(session, envelope, requestHash);
     if (replay) return replay as CommandResult<BillCreateResult>;
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
+    await assertPeriodOpen(session, envelope.tenantId, envelope.bookSetId, envelope.payload.billDate);
     await assertVendor(session, envelope.tenantId, envelope.bookSetId, vendorId);
     for (const line of envelope.payload.lines) await assertBillInputAccount(session, envelope.tenantId, envelope.bookSetId, line.expenseAccountId, "expenseAccountId");
     const fxLines = envelope.payload.fx

@@ -5,6 +5,7 @@ import { DomainError, IdempotencyConflictError, IdempotencyCorruptError } from "
 import type { CommandEnvelope, CommandResult } from "../commands.ts";
 import { canonicalJson, computeCommandHash, computeResultHash } from "../commands.ts";
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
+import { assertPeriodOpen } from "./period-close-service.ts";
 
 export interface JournalLinePayload {
   accountId: AccountId;
@@ -121,6 +122,7 @@ async function assertScope(session: BusinessSession, tenantId: TenantId, bookSet
 /** Post a validated journal inside the caller's existing BusinessSession. */
 export async function postJournalInSession(session: BusinessSession, posting: InSessionJournalPost): Promise<string> {
   validatePayload({ postingDate: posting.postingDate, reference: posting.reference, narration: posting.narration, lines: posting.lines });
+  await assertPeriodOpen(session, posting.tenantId, posting.bookSetId, posting.postingDate);
   await assertScope(session, posting.tenantId, posting.bookSetId, posting.lines);
   const journalId = randomUUID();
   const now = new Date().toISOString();

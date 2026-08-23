@@ -25,6 +25,8 @@ import {
   DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID,
   DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID,
   DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID,
+  DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID,
+  DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH,
   DRIZZLE_GST_RETURN_READINESS_V1_HASH,
   DRIZZLE_JOURNAL_DDL,
   DRIZZLE_MIGRATIONS_TABLE,
@@ -93,7 +95,10 @@ const DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID}.sql`),
   "utf8",
 );
-const DRIZZLE_PRIOR_CURRENT_SQL = DRIZZLE_GST_RETURN_READINESS_SQL;
+const DRIZZLE_PERIOD_CLOSE_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID}.sql`),
+  "utf8",
+);
 
 function normalizeDdl(sql: string | null | undefined): string {
   return String(sql ?? "")
@@ -152,6 +157,7 @@ function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, curre
         for (const statement of DRIZZLE_EXPENSE_CLAIMS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_GST_RETURN_READINESS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        for (const statement of DRIZZLE_PERIOD_CLOSE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
       }
     } else {
       memory.exec(MIGRATION_SCHEMA_SQLITE);
@@ -246,13 +252,13 @@ function exactPriorCurrentDrizzle(db: BunDatabase): boolean {
     memory.exec("PRAGMA foreign_keys = ON");
     memory.exec(DRIZZLE_JOURNAL_DDL);
     for (const statement of DRIZZLE_BASELINE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
-    for (const id of [DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID]) {
-      const sql = id === DRIZZLE_GST_V1_MIGRATION_ID ? DRIZZLE_GST_V1_SQL : id === DRIZZLE_TDS_TCS_MIGRATION_ID ? DRIZZLE_TDS_TCS_SQL : id === DRIZZLE_FIXED_ASSETS_MIGRATION_ID ? DRIZZLE_FIXED_ASSETS_SQL : id === DRIZZLE_FX_V1_MIGRATION_ID ? DRIZZLE_FX_SQL : id === DRIZZLE_PAYROLL_V1_MIGRATION_ID ? DRIZZLE_PAYROLL_SQL : id === DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID ? DRIZZLE_EXPENSE_CLAIMS_SQL : DRIZZLE_PRIOR_CURRENT_SQL;
+    for (const id of [DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID]) {
+      const sql = id === DRIZZLE_GST_V1_MIGRATION_ID ? DRIZZLE_GST_V1_SQL : id === DRIZZLE_TDS_TCS_MIGRATION_ID ? DRIZZLE_TDS_TCS_SQL : id === DRIZZLE_FIXED_ASSETS_MIGRATION_ID ? DRIZZLE_FIXED_ASSETS_SQL : id === DRIZZLE_FX_V1_MIGRATION_ID ? DRIZZLE_FX_SQL : id === DRIZZLE_PAYROLL_V1_MIGRATION_ID ? DRIZZLE_PAYROLL_SQL : id === DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID ? DRIZZLE_EXPENSE_CLAIMS_SQL : id === DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID ? DRIZZLE_GST_RETURN_READINESS_SQL : DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL;
       for (const statement of sql.split("--> statement-breakpoint")) memory.exec(statement);
     }
     const expected = catalog(memory);
     const expectedDdl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
-    if (!exactControl(db, manifest, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, expectedDdl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
+    if (!exactControl(db, manifest, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, expectedDdl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
     return sameCatalog(catalog(db), expected);
   } finally { memory.close(); }
 }
