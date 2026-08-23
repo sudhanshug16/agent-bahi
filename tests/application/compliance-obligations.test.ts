@@ -41,6 +41,9 @@ describe("Compliance Obligations & Calendar V1", () => {
     const generatedAgain = await app.compliance.obligation.generate(envelope({ ruleId, periodStart: "2026-01-01", periodEnd: "2026-03-31", factProfileId }, "generate"));
     expect(generatedAgain.resultJson).toBe(generated.resultJson);
     const obligationId = (JSON.parse(generated.resultJson) as { obligationId: string }).obligationId;
+    expect((await app.compliance.obligation.calendar(tenantId, bookSetId, "2026-01-01", "2026-12-31", "2026-04-01"))[0]?.overdue).toBe(false);
+    expect((await app.compliance.obligation.calendar(tenantId, bookSetId, "2026-01-01", "2026-12-31", "2026-04-16"))[0]?.overdue).toBe(true);
+    await expect(app.compliance.obligation.calendar(tenantId, bookSetId, "2026-01-01", "2026-12-31", undefined as any)).rejects.toMatchObject({ code: "INVALID_FIELD", message: "asOfDate must be nonblank and bounded" });
     const artifact = await app.compliance.artifact.attach(envelope({ obligationId, artifactKind: "FICTIONAL_REVIEW_PACK", artifactHash: "c".repeat(64), artifactReference: "fictional://review-pack" }, "artifact"));
     const artifactId = (JSON.parse(artifact.resultJson) as { artifactId: string }).artifactId;
     await app.compliance.obligation.event(envelope({ obligationId, eventType: "READY" }, "ready"));
@@ -55,6 +58,27 @@ describe("Compliance Obligations & Calendar V1", () => {
     const db = new BunDatabase(dbPath);
     expect(() => db.query("UPDATE compliance_obligations SET due_date = '2026-01-01'").run()).toThrow();
     db.close();
+  });
+
+  test("uses append order instead of UUID order for same-timestamp lifecycle events", async () => {
+    const facts = await app.compliance.factProfile.create(envelope({ effectiveFrom: "2026-01-01", effectiveTo: "2026-12-31", facts: { eligible: true }, sourceUrl: "https://fictional.example/facts", evidenceReference: "same-time-facts", verificationStatus: "VERIFIED" }, "same-time-facts"));
+    const factProfileId = (JSON.parse(facts.resultJson) as { factProfileId: string }).factProfileId;
+    const rule = await app.compliance.rule.create(envelope({ code: "FICTIONAL-SAME-TIME", version: "1", jurisdiction: "fictional", authority: "fictional-authority", formLabel: "fictional-form", effectiveFrom: "2026-01-01", effectiveTo: "2026-12-31", officialSourceUrl: "https://fictional.example/rule", lawReference: "fictional-law", sourceVersion: "fictional-v1", sourceHash: "1".repeat(64), evidenceReference: "same-time-rule", verificationStatus: "VERIFIED", requiredFactKeys: ["eligible"], applicabilityPredicate: { all: [{ key: "eligible", op: "EQ", value: true }] } }, "same-time-rule"));
+    const ruleId = (JSON.parse(rule.resultJson) as { ruleId: string }).ruleId;
+    await app.compliance.deadline.create(envelope({ ruleId, periodStart: "2026-01-01", periodEnd: "2026-03-31", dueDate: "2026-04-15", sourceUrl: "https://fictional.example/deadline", evidenceReference: "same-time-deadline", sourceHash: "2".repeat(64) }, "same-time-deadline"));
+    await app.compliance.applicability.evaluate(envelope({ ruleId, factProfileId }, "same-time-evaluate"));
+    const generated = await app.compliance.obligation.generate(envelope({ ruleId, periodStart: "2026-01-01", periodEnd: "2026-03-31", factProfileId }, "same-time-generate"));
+    const obligationId = (JSON.parse(generated.resultJson) as { obligationId: string }).obligationId;
+    const artifact = await app.compliance.artifact.attach(envelope({ obligationId, artifactKind: "FICTIONAL_REVIEW_PACK", artifactHash: "3".repeat(64), artifactReference: "fictional://same-time-review-pack" }, "same-time-artifact"));
+    const artifactId = (JSON.parse(artifact.resultJson) as { artifactId: string }).artifactId;
+    const db = new BunDatabase(dbPath);
+    const openEvent = db.query("SELECT occurred_at FROM compliance_obligation_events WHERE obligation_id = ? ORDER BY rowid DESC LIMIT 1").get(obligationId) as { occurred_at: string };
+    const eventSql = "INSERT INTO compliance_obligation_events (id, tenant_id, book_set_id, obligation_id, event_type, occurred_at, actor_id, reason, source, evidence_reference, artifact_id, result_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    db.query(eventSql).run("ffffffff-ffff-ffff-ffff-ffffffffffff", tenantId, bookSetId, obligationId, "READY", openEvent.occurred_at, "same-time-test", "ready", "CLI", null, null, "a".repeat(64));
+    db.query(eventSql).run("00000000-0000-0000-0000-000000000000", tenantId, bookSetId, obligationId, "EXPORTED", openEvent.occurred_at, "same-time-test", "exported", "CLI", null, artifactId, "b".repeat(64));
+    db.close();
+    const submitted = await app.compliance.obligation.event(envelope({ obligationId, eventType: "USER_MARKED_SUBMITTED", evidenceReference: "same-time-submission" }, "same-time-submit"));
+    expect(JSON.parse(submitted.resultJson)).toMatchObject({ obligationId, status: "USER_MARKED_SUBMITTED" });
   });
 
   test("persists UNKNOWN for missing facts and never generates from it", async () => {

@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findOperation } from "../../src/transport/catalog.ts";
+import { OperationDispatcher } from "../../src/transport/dispatcher.ts";
 
 const root = process.cwd();
 
@@ -141,6 +142,36 @@ describe("shared CLI and stdio MCP transport", () => {
       expect((mcpResult.structuredContent as { ok: boolean; operationId: string; resultHash: string }).ok).toBe(true);
       expect((mcpResult.structuredContent as { operationId: string }).operationId).toBe("company.status");
       expect((mcpResult.structuredContent as { resultHash: string }).resultHash).toBe(String(cliEnvelope.resultHash));
+      await client.close();
+    } finally {
+      await transport?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires asOfDate for the obligation calendar across catalog, CLI, dispatcher, and MCP", async () => {
+    const operation = findOperation("compliance.obligation.calendar");
+    expect(operation?.inputSchema.required).toContain("asOfDate");
+    const missing = await new OperationDispatcher({ databasePath: "/tmp/agent-bahi-calendar-validation.sqlite", source: "CLI" }).dispatch("compliance.obligation.calendar", { tenantId: "tenant-1", bookSetId: "bookset-1", fromDate: "2026-01-01", toDate: "2026-12-31" });
+    expect(missing).toEqual({ ok: false, operationId: "compliance.obligation.calendar", error: { code: "INVALID_INPUT", message: "asOfDate is required", details: { operationId: "compliance.obligation.calendar", field: "asOfDate" } } });
+
+    const dir = mkdtempSync(join(tmpdir(), "agent-bahi-calendar-validation-"));
+    const db = join(dir, "books.sqlite");
+    let transport: StdioClientTransport | undefined;
+    try {
+      const cliResult = await cli(db, ["operations", "run", "compliance.obligation.calendar", "--input", "-", "--json"], { tenantId: "tenant-1", bookSetId: "bookset-1", fromDate: "2026-01-01", toDate: "2026-12-31" });
+      expect(cliResult.code).toBe(3);
+      expect(json(cliResult.stdout)).toEqual(missing as unknown as Record<string, unknown>);
+
+      transport = new StdioClientTransport({ command: process.execPath, args: [join(root, "src/mcp.ts"), "--database", db], cwd: root, stderr: "pipe" });
+      const client = new Client({ name: "agent-bahi-calendar-validation", version: "1" }, { capabilities: {} });
+      await client.connect(transport);
+      const tools = await client.listTools();
+      const calendarTool = tools.tools.find((tool) => tool.name === "compliance.obligation.calendar");
+      expect(calendarTool?.inputSchema.required).toContain("asOfDate");
+      const mcpResult = await client.callTool({ name: "compliance.obligation.calendar", arguments: { tenantId: "tenant-1", bookSetId: "bookset-1", fromDate: "2026-01-01", toDate: "2026-12-31" } });
+      expect(mcpResult.isError).toBe(true);
+      expect(mcpResult.structuredContent).toEqual(missing);
       await client.close();
     } finally {
       await transport?.close();

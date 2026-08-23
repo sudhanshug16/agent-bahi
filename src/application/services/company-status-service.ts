@@ -492,14 +492,14 @@ async function complianceStatus(session: BusinessSession, tenantId: string, book
   const obligations = await session.query("SELECT id, rule_id, gst_registration_id, period_start, period_end, due_date FROM compliance_obligations WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
   let openCount = 0; let overdueCount = 0; let blockedPredecessorCount = 0;
   for (const obligation of obligations.rows) {
-    const event = await session.querySingle("SELECT event_type FROM compliance_obligation_events WHERE obligation_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 1", [obligation.id, tenantId, bookSetId]);
+    const event = await session.querySingle("SELECT event_type FROM compliance_obligation_events WHERE obligation_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT 1", [obligation.id, tenantId, bookSetId]);
     const status = String(event?.event_type ?? "OPEN");
     if (!["CLOSED", "WAIVED", "EXEMPT"].includes(status)) { openCount += 1; if (String(obligation.due_date) < asOfDate) overdueCount += 1; }
     if (status === "OPEN") {
       const predecessors = await session.query("SELECT predecessor_rule_id, required_status FROM compliance_rule_predecessors WHERE rule_id = ? AND tenant_id = ? AND book_set_id = ?", [obligation.rule_id, tenantId, bookSetId]);
       for (const predecessor of predecessors.rows) {
         const predecessorObligation = obligation.gst_registration_id == null ? await session.querySingle("SELECT id FROM compliance_obligations WHERE rule_id = ? AND tenant_id = ? AND book_set_id = ? AND period_start = ? AND period_end = ? AND gst_registration_id IS NULL", [predecessor.predecessor_rule_id, tenantId, bookSetId, obligation.period_start, obligation.period_end]) : await session.querySingle("SELECT id FROM compliance_obligations WHERE rule_id = ? AND tenant_id = ? AND book_set_id = ? AND period_start = ? AND period_end = ? AND gst_registration_id = ?", [predecessor.predecessor_rule_id, tenantId, bookSetId, obligation.period_start, obligation.period_end, obligation.gst_registration_id]);
-        const predecessorStatus = predecessorObligation ? await session.querySingle("SELECT event_type FROM compliance_obligation_events WHERE obligation_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 1", [predecessorObligation.id, tenantId, bookSetId]) : undefined;
+        const predecessorStatus = predecessorObligation ? await session.querySingle("SELECT event_type FROM compliance_obligation_events WHERE obligation_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT 1", [predecessorObligation.id, tenantId, bookSetId]) : undefined;
         if (!predecessorObligation || String(predecessorStatus?.event_type) !== String(predecessor.required_status)) blockedPredecessorCount += 1;
       }
     }
