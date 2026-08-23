@@ -21,6 +21,7 @@ import { executeJournalPost } from "./services/journal-command-service.ts";
 import type { LedgerReportService, TrialBalanceReport, ProfitAndLossReport, BalanceSheetReport } from "./services/ledger-report-service.ts";
 import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeReceiptRecord, getInvoice, listOutstandingInvoices, type PartyCreatePayload, type PartyCreateResult, type InvoiceCreatePayload, type InvoiceCreateResult, type InvoicePostPayload, type InvoicePostResult, type ReceiptRecordPayload, type ReceiptRecordResult, type InvoiceView } from "./services/sales-command-service.ts";
 import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
+import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
 
 /**
  * Read-only tenant operations
@@ -100,6 +101,17 @@ export interface BillCommands {
   outstanding(tenantId: TenantId, bookSetId: BookSetId): Promise<BillView[]>;
 }
 export interface VendorPaymentCommands { record(envelope: SalesCommandEnvelope<VendorPaymentRecordPayload>): Promise<CommandResult<VendorPaymentRecordResult>>; }
+export interface BankStatementCommands {
+  import(envelope: BankStatementEnvelope): Promise<CommandResult<BankStatementImportResult>>;
+  get(tenantId: TenantId, bookSetId: BookSetId, statementId: string): Promise<BankStatementView>;
+  list(tenantId: TenantId, bookSetId: BookSetId, filter?: { statementId?: string }): Promise<BankStatementView[]>;
+}
+export interface BankMatchCommands {
+  confirm(envelope: BankMatchConfirmEnvelope): Promise<CommandResult<BankMatchResult>>;
+  undo(envelope: BankMatchUndoEnvelope): Promise<CommandResult<BankMatchResult>>;
+  candidates(tenantId: TenantId, bookSetId: BookSetId, statementLineId: string): Promise<BankMatchCandidate[]>;
+}
+export interface BankReconciliationOperations { status(tenantId: TenantId, bookSetId: BookSetId, statementId: string): Promise<BankReconciliationStatus>; }
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -117,6 +129,9 @@ export type PublicApplicationFacade = {
   receipt: ReceiptCommands;
   bill: BillCommands;
   vendorPayment: VendorPaymentCommands;
+  bankStatement: BankStatementCommands;
+  bankMatch: BankMatchCommands;
+  bankReconciliation: BankReconciliationOperations;
 };
 
 /**
@@ -177,5 +192,8 @@ export function createPublicFacade(
       outstanding: (tenantId, bookSetId) => listOutstandingBills(sessionRunner, tenantId, bookSetId),
     },
     vendorPayment: { record: (envelope) => executeVendorPaymentRecord(sessionRunner, envelope) },
+    bankStatement: { import: (envelope) => executeBankStatementImport(sessionRunner, envelope), get: (tenantId, bookSetId, statementId) => getBankStatement(sessionRunner, tenantId, bookSetId, statementId), list: (tenantId, bookSetId, filter) => listBankStatements(sessionRunner, tenantId, bookSetId, filter) },
+    bankMatch: { confirm: (envelope) => executeBankMatchConfirm(sessionRunner, envelope), undo: (envelope) => executeBankMatchUndo(sessionRunner, envelope), candidates: (tenantId, bookSetId, statementLineId) => bankMatchCandidates(sessionRunner, tenantId, bookSetId, statementLineId) },
+    bankReconciliation: { status: (tenantId, bookSetId, statementId) => bankReconciliationStatus(sessionRunner, tenantId, bookSetId, statementId) },
   };
 }

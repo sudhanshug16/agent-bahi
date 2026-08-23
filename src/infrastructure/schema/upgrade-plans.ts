@@ -3,6 +3,7 @@ import { BOOKSET_V4_MIGRATION } from "./bookset-v4-migration.ts";
 import { JOURNAL_V5_MIGRATION } from "./journal-v5-migration.ts";
 import { SALES_V6_MIGRATION } from "./sales-v6-migration.ts";
 import { PURCHASE_V7_MIGRATION } from "./purchase-v7-migration.ts";
+import { BANK_RECONCILIATION_V8_MIGRATION } from "./bank-reconciliation-v8-migration.ts";
 import {
   computeSqliteMigrationChecksum,
   V2_SCHEMA_MANIFEST,
@@ -10,6 +11,7 @@ import {
   V4_SCHEMA_MANIFEST,
   CURRENT_SCHEMA_MANIFEST,
   V6_SCHEMA_MANIFEST,
+  V7_SCHEMA_MANIFEST,
   V5_SCHEMA_MANIFEST,
   type SqliteSchemaManifest,
 } from "./current-manifest.ts";
@@ -113,7 +115,7 @@ if (SALES_V6_UPGRADE_PLAN.targetManifest.migrations.at(-1)?.checksum !== compute
 /** Canonical production V6 -> V7 vendor bill and payment plan. */
 export const PURCHASE_V7_UPGRADE_PLAN: UpgradePlan = Object.freeze({
   sourceManifest: V6_SCHEMA_MANIFEST,
-  targetManifest: CURRENT_SCHEMA_MANIFEST,
+  targetManifest: V7_SCHEMA_MANIFEST,
   migration: Object.freeze({ id: PURCHASE_V7_MIGRATION.id, sql: PURCHASE_V7_MIGRATION.sqlite, manifest: PURCHASE_V7_MIGRATION.manifest }),
   preflightProbes: Object.freeze([
     { id: "source-sales-invoices-table", sql: "SELECT CAST(COUNT(*) AS TEXT) AS table_count FROM sqlite_master WHERE type = 'table' AND name = 'sales_invoices' LIMIT 1", expectedRows: [{ table_count: "1" }] },
@@ -127,6 +129,21 @@ if (PURCHASE_V7_UPGRADE_PLAN.targetManifest.migrations.at(-1)?.checksum !== comp
 
 export function createBookSetV4UpgradePlan(): UpgradePlan {
   return BOOKSET_V4_UPGRADE_PLAN;
+}
+
+/** Canonical production V7 -> V8 normalized bank reconciliation plan. */
+export const BANK_RECONCILIATION_V8_UPGRADE_PLAN: UpgradePlan = Object.freeze({
+  sourceManifest: V7_SCHEMA_MANIFEST,
+  targetManifest: CURRENT_SCHEMA_MANIFEST,
+  migration: Object.freeze({ id: BANK_RECONCILIATION_V8_MIGRATION.id, sql: BANK_RECONCILIATION_V8_MIGRATION.sqlite, manifest: BANK_RECONCILIATION_V8_MIGRATION.manifest }),
+  preflightProbes: Object.freeze([
+    { id: "source-vendor-payments-table", sql: "SELECT CAST(COUNT(*) AS TEXT) AS table_count FROM sqlite_master WHERE type = 'table' AND name = 'vendor_payments' LIMIT 1", expectedRows: [{ table_count: "1" }] },
+  ]),
+  targetVerificationProbes: BANK_RECONCILIATION_V8_MIGRATION.manifest.probes,
+});
+
+if (BANK_RECONCILIATION_V8_UPGRADE_PLAN.targetManifest.migrations.at(-1)?.checksum !== computeSqliteMigrationChecksum(BANK_RECONCILIATION_V8_MIGRATION.sqlite)) {
+  throw new Error("Bank reconciliation V8 upgrade plan checksum is not canonical");
 }
 
 export type { SqliteSchemaManifest };

@@ -15,7 +15,7 @@ test("production composition exposes typed services without raw persistence hand
       cliVersion: "0.0.0-test",
       buildId: "composition",
     });
-    expect(Object.keys(application).sort()).toEqual(["account", "bill", "bookSet", "bookSetScope", "invoice", "journal", "ledger", "party", "receipt", "tenant", "vendorPayment"]);
+    expect(Object.keys(application).sort()).toEqual(["account", "bankMatch", "bankReconciliation", "bankStatement", "bill", "bookSet", "bookSetScope", "invoice", "journal", "ledger", "party", "receipt", "tenant", "vendorPayment"]);
     expect((application as Record<string, unknown>).runner).toBeUndefined();
     expect((application as Record<string, unknown>).db).toBeUndefined();
 
@@ -48,8 +48,8 @@ test("bootstrap applies the journal migration and scope resolution is active-onl
       buildId: "bootstrap-test",
     });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 7n, last_migration_id: "0007-purchase-bills-payments" });
-    expect(native.query("SELECT id, status FROM schema_migrations ORDER BY rowid").all()).toHaveLength(7);
+    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0008-bank-reconciliation" });
+    expect(native.query("SELECT id, status FROM schema_migrations ORDER BY rowid").all()).toHaveLength(8);
     native.close();
 
     const createRequestId = randomUUID();
