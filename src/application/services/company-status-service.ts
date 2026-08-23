@@ -117,6 +117,14 @@ export interface CompanyStatusBookSetSummary {
     reviewRuleCount: number;
     postedNetPayableMinor: number;
   };
+  expenses: {
+    submittedClaimCount: number;
+    pendingReviewClaimCount: number;
+    openReimbursementPayableMinor: number;
+    openAdvanceCount: number;
+    openAdvanceMinor: number;
+    evidenceExceptionCount: number;
+  };
   cashBank: {
     status: "UNAVAILABLE";
     reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE";
@@ -452,6 +460,26 @@ async function payrollStatus(session: BusinessSession, tenantId: string, bookSet
   return { employeeCount: employees.rows.length, preparedRunCount: runs.rows.length, pendingClaimCount: claims.rows.length, reviewRuleCount: rules.rows.length, postedNetPayableMinor: payable.rows.reduce((total, row) => total + Number(row.net_minor ?? 0), 0) };
 }
 
+async function expenseStatus(session: BusinessSession, tenantId: string, bookSetId: string): Promise<CompanyStatusBookSetSummary["expenses"]> {
+  const submitted = await session.query("SELECT id FROM expense_claims WHERE tenant_id = ? AND book_set_id = ? AND status = 'SUBMITTED'", [tenantId, bookSetId]);
+  const claims = await session.query("SELECT id, business_total_minor FROM expense_claims WHERE tenant_id = ? AND book_set_id = ? AND status IN ('POSTED','PARTIALLY_SETTLED')", [tenantId, bookSetId]);
+  let openReimbursementPayableMinor = 0;
+  for (const claim of claims.rows) {
+    const allocated = await session.querySingle("SELECT COALESCE(SUM(amount_minor), 0) AS amount FROM expense_advance_allocations WHERE tenant_id = ? AND book_set_id = ? AND claim_id = ?", [tenantId, bookSetId, String(claim.id)]);
+    const reimbursed = await session.querySingle("SELECT COALESCE(SUM(amount_minor), 0) AS amount FROM expense_reimbursements WHERE tenant_id = ? AND book_set_id = ? AND claim_id = ?", [tenantId, bookSetId, String(claim.id)]);
+    openReimbursementPayableMinor = add(openReimbursementPayableMinor, Math.max(0, numeric(claim.business_total_minor) - numeric(allocated?.amount) - numeric(reimbursed?.amount)), "expense reimbursement payable");
+  }
+  const advances = await session.query("SELECT id, amount_minor FROM expense_advances WHERE tenant_id = ? AND book_set_id = ? AND status IN ('OPEN','PARTIALLY_SETTLED')", [tenantId, bookSetId]);
+  let openAdvanceMinor = 0;
+  for (const advance of advances.rows) {
+    const allocated = await session.querySingle("SELECT COALESCE(SUM(amount_minor), 0) AS amount FROM expense_advance_allocations WHERE tenant_id = ? AND book_set_id = ? AND advance_id = ?", [tenantId, bookSetId, String(advance.id)]);
+    const repaid = await session.querySingle("SELECT COALESCE(SUM(amount_minor), 0) AS amount FROM expense_advance_repayments WHERE tenant_id = ? AND book_set_id = ? AND advance_id = ?", [tenantId, bookSetId, String(advance.id)]);
+    openAdvanceMinor = add(openAdvanceMinor, Math.max(0, numeric(advance.amount_minor) - numeric(allocated?.amount) - numeric(repaid?.amount)), "expense advance total");
+  }
+  const exceptions = await session.query("SELECT l.id FROM expense_claim_lines l JOIN expense_claims c ON c.id = l.claim_id AND c.tenant_id = l.tenant_id AND c.book_set_id = l.book_set_id WHERE l.tenant_id = ? AND l.book_set_id = ? AND c.status NOT IN ('REJECTED','CANCELLED') AND l.evidence_status <> 'ATTACHED'", [tenantId, bookSetId]);
+  return { submittedClaimCount: submitted.rows.length, pendingReviewClaimCount: submitted.rows.length, openReimbursementPayableMinor, openAdvanceCount: advances.rows.length, openAdvanceMinor, evidenceExceptionCount: exceptions.rows.length };
+}
+
 function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   const issues: CompanyStatusIssue[] = [];
   if (!summary.ledger.isBalanced) issues.push({ severity: "BLOCKED", code: "LEDGER_UNBALANCED", bookSetId: summary.bookSet.bookSetId, amountMinor: Math.abs(summary.ledger.totalDebitMinor - summary.ledger.totalCreditMinor) });
@@ -471,6 +499,10 @@ function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   if (summary.assets.taxRuleMissingCount > 0) issues.push({ severity: "HIGH", code: "FIXED_ASSET_TAX_RULE_MISSING", bookSetId: summary.bookSet.bookSetId, count: summary.assets.taxRuleMissingCount });
   if (summary.assets.taxUnrunCount > 0) issues.push({ severity: "MEDIUM", code: "FIXED_ASSET_TAX_UNRUN", bookSetId: summary.bookSet.bookSetId, count: summary.assets.taxUnrunCount });
   if (summary.assets.disposedOpenAnomalyCount > 0) issues.push({ severity: "BLOCKED", code: "FIXED_ASSET_DISPOSAL_ANOMALY", bookSetId: summary.bookSet.bookSetId, count: summary.assets.disposedOpenAnomalyCount });
+  if (summary.expenses.pendingReviewClaimCount > 0) issues.push({ severity: "HIGH", code: "EXPENSE_CLAIMS_PENDING_REVIEW", bookSetId: summary.bookSet.bookSetId, count: summary.expenses.pendingReviewClaimCount });
+  if (summary.expenses.evidenceExceptionCount > 0) issues.push({ severity: "MEDIUM", code: "EXPENSE_EVIDENCE_EXCEPTION", bookSetId: summary.bookSet.bookSetId, count: summary.expenses.evidenceExceptionCount });
+  if (summary.expenses.openReimbursementPayableMinor > 0) issues.push({ severity: "INFO", code: "EXPENSE_REIMBURSEMENT_PAYABLE", bookSetId: summary.bookSet.bookSetId, amountMinor: summary.expenses.openReimbursementPayableMinor });
+  if (summary.expenses.openAdvanceMinor > 0) issues.push({ severity: "INFO", code: "EXPENSE_ADVANCES_OPEN", bookSetId: summary.bookSet.bookSetId, count: summary.expenses.openAdvanceCount, amountMinor: summary.expenses.openAdvanceMinor });
   if (summary.fx.missingOrUnverifiedRateCount > 0) issues.push({ severity: "HIGH", code: "FX_RATE_MISSING_OR_UNVERIFIED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.missingOrUnverifiedRateCount });
   if (summary.fx.foreignOpenItemCount > 0) issues.push({ severity: "INFO", code: "FX_FOREIGN_OPEN_ITEMS", bookSetId: summary.bookSet.bookSetId, count: summary.fx.foreignOpenItemCount });
   if (summary.fx.unreversedRevaluationCount > 0) issues.push({ severity: "HIGH", code: "FX_REVALUATION_UNREVERSED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.unreversedRevaluationCount });
@@ -500,6 +532,9 @@ function drillDown(tenantId: string, bookSetId: string, asOfDate: string): Compa
     { operationId: "asset.tax.report", inputTemplate: { tenantId, bookSetId, periodStart: "<YYYY-MM-DD>", periodEnd: asOfDate } },
     { operationId: "payroll.register", inputTemplate: { tenantId, bookSetId } },
     { operationId: "payroll.payslip.list", inputTemplate: { tenantId, bookSetId } },
+    { operationId: "expense.claim.list", inputTemplate: { tenantId, bookSetId } },
+    { operationId: "expense.open-items", inputTemplate: { tenantId, bookSetId } },
+    { operationId: "expense.evidence-exceptions", inputTemplate: { tenantId, bookSetId } },
   ];
 }
 
@@ -538,6 +573,7 @@ export class CompanyStatusService {
           assets: await assetStatus(session, tenantId, bookSetId, asOfDate),
           fx: await fxStatus(session, tenantId, bookSetId),
           payroll: await payrollStatus(session, tenantId, bookSetId),
+          expenses: await expenseStatus(session, tenantId, bookSetId),
           cashBank: { status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" },
         };
         summaries.push(summary);

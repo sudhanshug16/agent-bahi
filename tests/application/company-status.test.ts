@@ -61,7 +61,7 @@ describe("company.status", () => {
     expect(summary.cashBank).toEqual({ status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" });
     expect(result.issues.map((issue) => issue.code)).toEqual(["PAYABLES_OVERDUE", "RECEIVABLES_OVERDUE", "CASH_BANK_UNAVAILABLE"]);
     expect(result.drillDown.map((entry) => entry.operationId)).toEqual([
-      "ledger.trial-balance", "ledger.balance-sheet", "ledger.profit-and-loss", "invoice.outstanding", "bill.outstanding", "bank-statement.list", "gst.registration.list", "asset.register.report", "asset.depreciation.report", "asset.tax.report", "payroll.register", "payroll.payslip.list",
+      "ledger.trial-balance", "ledger.balance-sheet", "ledger.profit-and-loss", "invoice.outstanding", "bill.outstanding", "bank-statement.list", "gst.registration.list", "asset.register.report", "asset.depreciation.report", "asset.tax.report", "payroll.register", "payroll.payslip.list", "expense.claim.list", "expense.open-items", "expense.evidence-exceptions",
     ]);
   });
 

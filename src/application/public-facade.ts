@@ -28,6 +28,7 @@ import { executeDeductorProfileCreate, executePartyTaxProfileCreate, executeTaxR
 import { executeAssetRegister, executeDepreciation, executeAssetTaxRule, executeTaxBlock, executeTaxCompute, executeAssetDispose, listAssetRegister, listBookDepreciation, listTaxSchedule, bookTaxReconciliation, type AssetRegisterPayload, type AssetRegisterResult, type DepreciationPreviewPayload, type DepreciationResult, type AssetTaxRulePayload, type TaxRuleResult, type TaxBlockPayload, type TaxBlockResult, type TaxComputePayload, type TaxRunResult, type AssetDisposePayload, type AssetDisposeResult, type AssetRegisterRow, type DepreciationLineResult, type TaxLineResult } from "./services/fixed-assets-service.ts";
 import { registerCurrency, createFxRateSnapshot, registerFxPolicy, postFxRevaluation, fxOutstanding, type CurrencyRegisterPayload, type FxRateSnapshotPayload, type FxPolicyPayload, type FxRevaluationPayload, type FxReportRow } from "./services/fx-service.ts";
 import { createEmployee, getEmployee, listEmployees, createEmployeeProfile, createSalaryStructure, createSalaryVersion, createRuleSnapshot, createClaim, reviewClaim, preparePayRun, approvePayRun, postPayRun, listPayslips, createPaymentBatch, exportBankCsv, createRemittance, updateRemittance, payrollRegister, type EmployeeCreatePayload, type EmployeeProfilePayload, type SalaryStructurePayload, type SalaryVersionPayload, type SalaryComponentInput, type RuleSnapshotPayload, type ClaimPayload, type ClaimReviewPayload, type PayRunPreparePayload, type PayRunActionPayload, type PayrollBankBatchPayload, type BankExportPayload, type RemittancePayload, type RemittanceActionPayload, type EmployeeResult } from "./services/payroll-service.ts";
+import { createClaimant, getClaimant, listClaimants, createClaim as createExpenseClaim, submitClaim, reviewClaim as reviewExpenseClaim, postClaim, getClaim as getExpenseClaim, listClaims as listExpenseClaims, issueAdvance, getAdvance, listAdvances, repayAdvance, recordReimbursement, expenseRegister, expenseOpenItems, evidenceExceptions, type ClaimantCreatePayload, type ClaimantView, type ExpenseClaimCreatePayload, type ExpenseClaimSubmitPayload, type ExpenseClaimReviewPayload, type ExpenseClaimPostPayload, type ExpenseClaimView, type ExpenseAdvanceIssuePayload, type ExpenseAdvanceRepayPayload, type ExpenseAdvanceView, type ExpenseReimbursementPayload, type ExpenseRegisterRow, type ExpenseOpenItems, type ExpenseEvidenceException } from "./services/expense-claims-service.ts";
 
 /**
  * Read-only tenant operations
@@ -132,6 +133,15 @@ export interface GstRegisterOperations {
   purchases(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
 }
 export interface CompanyStatusOperations { status(input?: CompanyStatusInput): Promise<CompanyStatusResult>; }
+export interface ExpenseOperations {
+  claimant: { create(envelope: CommandEnvelope<ClaimantCreatePayload> & { bookSetId: BookSetId }): Promise<CommandResult<{ claimantId: string; status: "ACTIVE" }>>; get(tenantId: TenantId, bookSetId: BookSetId, claimantId: string): Promise<ClaimantView>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<ClaimantView[]> };
+  claim: { create(envelope: CommandEnvelope<ExpenseClaimCreatePayload> & { bookSetId: BookSetId }): Promise<CommandResult<{ claimId: string; status: "DRAFT" }>>; submit(envelope: CommandEnvelope<ExpenseClaimSubmitPayload> & { bookSetId: BookSetId }): Promise<CommandResult<{ claimId: string; status: "SUBMITTED"; businessTotalMinor: number }>>; review(envelope: CommandEnvelope<ExpenseClaimReviewPayload> & { bookSetId: BookSetId }): Promise<CommandResult<{ claimId: string; status: "APPROVED" | "REJECTED" }>>; post(envelope: CommandEnvelope<ExpenseClaimPostPayload> & { bookSetId: BookSetId }): Promise<CommandResult<Record<string, unknown>>>; get(tenantId: TenantId, bookSetId: BookSetId, claimId: string): Promise<ExpenseClaimView>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<ExpenseClaimView[]> };
+  advance: { issue(envelope: CommandEnvelope<ExpenseAdvanceIssuePayload> & { bookSetId: BookSetId }): Promise<CommandResult<{ advanceId: string; status: "OPEN"; journalId: string }>>; get(tenantId: TenantId, bookSetId: BookSetId, advanceId: string): Promise<ExpenseAdvanceView>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<ExpenseAdvanceView[]>; repay(envelope: CommandEnvelope<ExpenseAdvanceRepayPayload> & { bookSetId: BookSetId }): Promise<CommandResult<Record<string, unknown>>> };
+  reimbursement: { record(envelope: CommandEnvelope<ExpenseReimbursementPayload> & { bookSetId: BookSetId }): Promise<CommandResult<Record<string, unknown>>> };
+  register(tenantId: TenantId, bookSetId: BookSetId): Promise<ExpenseRegisterRow[]>;
+  openItems(tenantId: TenantId, bookSetId: BookSetId): Promise<ExpenseOpenItems>;
+  evidenceExceptions(tenantId: TenantId, bookSetId: BookSetId): Promise<ExpenseEvidenceException[]>;
+}
 export interface FxOperations {
   currency: { register(envelope: CommandEnvelope<CurrencyRegisterPayload>): Promise<CommandResult<unknown>> };
   rate: { create(envelope: SalesCommandEnvelope<FxRateSnapshotPayload>): Promise<CommandResult<unknown>> };
@@ -192,6 +202,7 @@ export type PublicApplicationFacade = {
   fx: FxOperations;
   company: CompanyStatusOperations;
   payroll: PayrollOperations;
+  expense: ExpenseOperations;
 };
 
 /**
@@ -272,6 +283,15 @@ export function createPublicFacade(
       },
     },
     company: { status: (input) => companyStatusService.status(input) },
+    expense: {
+      claimant: { create: (envelope) => createClaimant(sessionRunner, envelope), get: (tenantId, bookSetId, claimantId) => getClaimant(sessionRunner, tenantId, bookSetId, claimantId), list: (tenantId, bookSetId) => listClaimants(sessionRunner, tenantId, bookSetId) },
+      claim: { create: (envelope) => createExpenseClaim(sessionRunner, envelope), submit: (envelope) => submitClaim(sessionRunner, envelope), review: (envelope) => reviewExpenseClaim(sessionRunner, envelope), post: (envelope) => postClaim(sessionRunner, envelope), get: (tenantId, bookSetId, claimId) => getExpenseClaim(sessionRunner, tenantId, bookSetId, claimId), list: (tenantId, bookSetId) => listExpenseClaims(sessionRunner, tenantId, bookSetId) },
+      advance: { issue: (envelope) => issueAdvance(sessionRunner, envelope), get: (tenantId, bookSetId, advanceId) => getAdvance(sessionRunner, tenantId, bookSetId, advanceId), list: (tenantId, bookSetId) => listAdvances(sessionRunner, tenantId, bookSetId), repay: (envelope) => repayAdvance(sessionRunner, envelope) },
+      reimbursement: { record: (envelope) => recordReimbursement(sessionRunner, envelope) },
+      register: (tenantId, bookSetId) => expenseRegister(sessionRunner, tenantId, bookSetId),
+      openItems: (tenantId, bookSetId) => expenseOpenItems(sessionRunner, tenantId, bookSetId),
+      evidenceExceptions: (tenantId, bookSetId) => evidenceExceptions(sessionRunner, tenantId, bookSetId),
+    },
     payroll: {
       employee: { create: (envelope) => createEmployee(sessionRunner, envelope), get: (tenantId, bookSetId, employeeId) => getEmployee(sessionRunner, tenantId, bookSetId, employeeId), list: (tenantId, bookSetId) => listEmployees(sessionRunner, tenantId, bookSetId) },
       employeeProfile: { create: (envelope) => createEmployeeProfile(sessionRunner, envelope) },

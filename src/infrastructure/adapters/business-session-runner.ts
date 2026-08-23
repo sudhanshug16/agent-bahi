@@ -81,6 +81,13 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "payroll_bank_export_artifacts",
   "payroll_remittances",
   "payroll_remittance_allocations",
+  "expense_claimants",
+  "expense_claims",
+  "expense_claim_lines",
+  "expense_advances",
+  "expense_advance_allocations",
+  "expense_advance_repayments",
+  "expense_reimbursements",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([
@@ -166,12 +173,16 @@ function rejectForbiddenIdentifiers(sql: string): void {
   }
 }
 
-function validateReadSql(sql: string): void {
+function validateReadSql(sql: string, allowExpressions = false): void {
   if (!sql.trim()) invalidSql("Empty SQL statement is not allowed");
   rejectForbiddenIdentifiers(sql);
   const tokens = tokenizeSql(sql);
   if (tokens[0] !== "select") invalidSql("Only SELECT statements are allowed in read-mode");
-  if (tokens.includes("(") || tokens.includes(")")) invalidSql("Subqueries and expression calls are not allowed in read-mode");
+  if (!allowExpressions) {
+    const hasSubquery = tokens.some((token, index) => token === "(" && tokens[index + 1] === "select");
+    const hasUnsupportedExpression = tokens.some((token, index) => token === "(" && !["in", "coalesce", "sum"].includes(tokens[index - 1] ?? ""));
+    if (hasSubquery || hasUnsupportedExpression) invalidSql("Subqueries and expression calls are not allowed in read-mode");
+  }
   if (tokens.some((token) => FORBIDDEN_SQL_WORDS.has(token) && token !== "select" && token !== "from" && token !== "join")) invalidSql("Unsupported read SQL construct");
 
   let inTableList = false;
@@ -252,12 +263,12 @@ function createBusinessSession(db: BunDatabase, mode: BusinessSessionMode): { se
   const session: BusinessSession = {
     async query(sql, params) {
       checkActive();
-      validateReadSql(sql);
+      validateReadSql(sql, mode === "write");
       return run(sql, params, "business session query");
     },
     async querySingle(sql, params) {
       checkActive();
-      validateReadSql(sql);
+      validateReadSql(sql, mode === "write");
       return get(sql, params, "business session querySingle");
     },
     async execute(sql, params) {

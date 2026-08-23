@@ -72,3 +72,14 @@ export {
   bankAccountCurrencies,
   bankStatementLineCurrencies,
 } from "./fx-schema";
+
+// Expense Claims V1
+export {
+  expenseClaimants,
+  expenseClaims,
+  expenseClaimLines,
+  expenseAdvances,
+  expenseAdvanceAllocations,
+  expenseAdvanceRepayments,
+  expenseReimbursements,
+} from "./expense-claims-schema";
