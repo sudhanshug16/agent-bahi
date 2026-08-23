@@ -13,7 +13,7 @@ import {
 import { DATABASE_CONTROL_CHECKSUM } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
-import { DRIZZLE_TENANT_PAN_V1_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_TENANT_PAN_V1_HASH, officialDrizzleJournal, validateOfficialDrizzleJournal } from "../../src/infrastructure/services/drizzle-baseline.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import {
@@ -24,6 +24,24 @@ import {
 } from "../../src/application/application.ts";
 
 describe("SQLite migration catalog", () => {
+  it("requires the exact positive, ordered official Drizzle journal row shape", () => {
+    const rows = officialDrizzleJournal().map((row) => ({ id: row.id, hash: row.hash, created_at: row.createdAt }));
+    expect(() => validateOfficialDrizzleJournal(rows)).not.toThrow();
+
+    const malformed = [
+      rows.map(({ hash, created_at }) => ({ hash, created_at })),
+      rows.map((row, index) => index === 0 ? { ...row, id: null } : row),
+      rows.map((row, index) => index === 0 ? { ...row, id: "1" } : row),
+      rows.map((row, index) => index === 1 ? { ...row, id: 1 } : row),
+      rows.map((row, index) => index === 1 ? { ...row, id: 3 } : row),
+      rows.map((row, index) => index === 0 ? { ...row, hash: undefined } : row),
+      rows.map((row, index) => index === 0 ? { ...row, created_at: undefined } : row),
+      [...rows, { id: 13, hash: rows.at(-1)!.hash, created_at: rows.at(-1)!.created_at }],
+      rows.slice(0, -1),
+    ];
+    for (const candidate of malformed) expect(() => validateOfficialDrizzleJournal(candidate)).toThrow();
+  });
+
   it("rejects duplicate, out-of-order, gapped, and invalid one-step registrations", () => {
     const duplicate = MIGRATION_CATALOG.map((entry) => ({ ...entry }));
     duplicate[1] = { ...duplicate[1], id: duplicate[0].id };

@@ -609,7 +609,7 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
     journalMetadata: TableMetadata,
     legacyMetadata: TableMetadata,
   ): GateRecord {
-    if (DatabaseControlService.validateDrizzleDatabaseControlTableSchema(controlMetadata)) {
+    if (DatabaseControlService.validateDatabaseControlTableSchema(controlMetadata)) {
       throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Bridged control schema is not canonical");
     }
     if (journalMetadata.kind !== "TABLE" || journalMetadata.columns.map((column) => column.name).join(",") !== "id,hash,created_at") {

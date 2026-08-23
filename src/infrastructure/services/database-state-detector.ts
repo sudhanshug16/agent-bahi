@@ -9,7 +9,7 @@ import {
   DRIZZLE_BASELINE_HASH,
   DRIZZLE_MIGRATIONS_TABLE,
   officialDrizzleJournal,
-  validateOfficialDrizzleJournal,
+  validateOfficialDrizzleJournalPrefix,
 } from "./drizzle-baseline.ts";
 import {
   DRIZZLE_MIGRATION_IDS,
@@ -108,7 +108,7 @@ function exactLegacy(db: BunDatabase, manifest: SqliteSchemaManifest): boolean {
 function exactOfficialPrefix(db: BunDatabase, journalLength: number, bridged: boolean): boolean {
   const rows = db.prepare(`SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`).all() as Array<Record<string, unknown>>;
   if (rows.length !== journalLength) return false;
-  try { validateOfficialDrizzleJournal(rows); } catch { return false; }
+  try { validateOfficialDrizzleJournalPrefix(rows); } catch { return false; }
   const expectation = { kind: bridged ? "bridged" as const : "drizzle" as const, journalLength };
   const expected = expectedSqliteCatalog(V8_SCHEMA_MANIFEST, expectation);
   const expectedControl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;

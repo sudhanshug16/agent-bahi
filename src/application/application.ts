@@ -143,7 +143,9 @@ export async function initializeSqliteDatabase(
     }
     if (state.state !== "EMPTY") return;
 
-    // The official migrator owns DDL, transaction boundaries, and its journal.
+    // The official migrator owns migration DDL, transaction boundaries, and
+    // journal values; the SQLite-native journal key is pre-created by the
+    // Drizzle adapter so persisted rows have explicit positive IDs.
     db.runFreshDrizzleMigrations();
     // Control metadata is initialized only after the migrator has committed.
     await db.withMigrationLease((session) => initializeDrizzleControl(session, {

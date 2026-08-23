@@ -7,7 +7,7 @@ import { initializeAndUpgradeSqliteApplication } from "../../src/application/app
 import { findOperation } from "../../src/transport/catalog.ts";
 import { OperationDispatcher } from "../../src/transport/dispatcher.ts";
 
-type TenantFixture = { tenantId: string; defaultBookSetId: string; seedAccountIds: { assets: string; cash: string; income: string } };
+type TenantFixture = { tenantId: string; defaultBookSetId: string; seedAccountIds: { assets: string; cash: string; income: string; expenses: string; liabilities: string } };
 
 describe("Neutral CA Close Pack V1", () => {
   let directory: string | undefined;
@@ -160,5 +160,45 @@ describe("Neutral CA Close Pack V1", () => {
 
     const secondBookSet = JSON.parse((await app.bookSet.create({ schemaVersion: 1, tenantId: tenant.tenantId as any, requestId: "close-second-bookset", actor: { kind: "HUMAN", id: "close-pack-fixture" }, source: "INTERNAL", reason: "second BookSet", payload: { kind: "PROPRIETORSHIP", displayName: "Other Books" } })).resultJson) as { bookSetId: string };
     expect(await app.closePack.getManifest(tenant.tenantId as any, secondBookSet.bookSetId as any, firstManifest.manifestId)).toBeNull();
+  });
+
+  it("settles AP aging with withholding and bounds later cash settlement by as-of date", async () => {
+    const { app, tenant } = await fixture();
+    const vendor = JSON.parse((await app.party.create(scoped(tenant, { displayName: "AP Aging Vendor", role: "VENDOR" }))).resultJson) as { partyId: string };
+    const withholdingRule = JSON.parse((await app.tax.ruleSnapshot.create({
+      schemaVersion: 1, tenantId: tenant.tenantId as any, requestId: randomUUID(), actor: { kind: "HUMAN", id: "close-pack-fixture" }, source: "INTERNAL", reason: "AP aging rule", payload: {
+        taxKind: "TDS", sourceUrl: "https://www.incometaxindia.gov.in/w/section-393-5", sourceDocument: "Income-tax Act 2025", sourceVersion: "2026-04-01", sectionReference: "393", categoryCode: "AP-AGING", effectiveFrom: "2026-01-01", eventTiming: "CREDIT", rateBps: 1000, applicabilityFacts: { source: "close-pack" }, tanRequired: true, tanExceptionAllowed: false, statementRoute: "REVIEW_ONLY", statementForm: "NOT_CLAIMED", roundingMode: "HALF_UP", sourceVerified: true,
+      },
+    })).resultJson) as { ruleSnapshotId: string };
+    const fullWithholdingRule = JSON.parse((await app.tax.ruleSnapshot.create({
+      schemaVersion: 1, tenantId: tenant.tenantId as any, requestId: randomUUID(), actor: { kind: "HUMAN", id: "close-pack-fixture" }, source: "INTERNAL", reason: "AP aging full withholding rule", payload: {
+        taxKind: "TDS", sourceUrl: "https://www.incometaxindia.gov.in/w/section-393-5", sourceDocument: "Income-tax Act 2025", sourceVersion: "2026-04-01", sectionReference: "393", categoryCode: "AP-AGING-FULL", effectiveFrom: "2026-01-01", eventTiming: "CREDIT", rateBps: 10000, applicabilityFacts: { source: "close-pack" }, tanRequired: true, tanExceptionAllowed: false, statementRoute: "REVIEW_ONLY", statementForm: "NOT_CLAIMED", roundingMode: "HALF_UP", sourceVerified: true,
+      },
+    })).resultJson) as { ruleSnapshotId: string };
+    const postBill = async (billNumber: string, ruleSnapshotId: string) => {
+      const created = JSON.parse((await app.bill.create(scoped(tenant, { billNumber, vendorId: vendor.partyId, billDate: "2026-01-15", dueDate: "2026-01-31", lines: [{ description: billNumber, expenseAccountId: tenant.seedAccountIds.expenses, amountMinor: 1_000 }] }))).resultJson) as { billId: string };
+      await app.bill.post(scoped(tenant, { billId: created.billId, payableAccountId: tenant.seedAccountIds.liabilities, withholding: { taxKind: "TDS", ruleSnapshotId, taxBaseMinor: 1_000, thresholdApplicabilityEvidenceReferences: [`evidence:${billNumber}`], liabilityAccountId: tenant.seedAccountIds.liabilities, calculationFacts: { roundingMode: "HALF_UP", basis: "credit" } } }));
+      return created.billId;
+    };
+    const fullyWithheldId = await postBill("AP-FULL-WITHHELD", fullWithholdingRule.ruleSnapshotId);
+    const settledByAsOfId = await postBill("AP-PARTIAL-BEFORE-ASOF", withholdingRule.ruleSnapshotId);
+    const settledLaterId = await postBill("AP-PARTIAL-LATER", withholdingRule.ruleSnapshotId);
+    await app.vendorPayment.record(scoped(tenant, { vendorId: vendor.partyId, paymentDate: "2026-03-31", bankAccountId: tenant.seedAccountIds.cash, allocations: [{ billId: settledByAsOfId, amountMinor: 900 }] }));
+    await app.vendorPayment.record(scoped(tenant, { vendorId: vendor.partyId, paymentDate: "2026-04-01", bankAccountId: tenant.seedAccountIds.cash, allocations: [{ billId: settledLaterId, amountMinor: 900 }] }));
+
+    const before = await app.closePack.export({ ...envelope(tenant, "close-ap-aging-before"), payload: { periodStart: "2026-01-01", periodEnd: "2026-03-31", asOfDate: "2026-03-31", basis: "ACCRUAL" } });
+    const beforeId = (JSON.parse(before.resultJson) as { manifestId: string }).manifestId;
+    const beforeAp = await app.closePack.getSection(tenant.tenantId as any, tenant.defaultBookSetId as any, beforeId, "ap_aging");
+    expect(beforeAp).not.toContain(fullyWithheldId);
+    expect(beforeAp).not.toContain(settledByAsOfId);
+    expect(beforeAp).toContain(settledLaterId);
+    expect(beforeAp).toContain(",900,");
+
+    const after = await app.closePack.export({ ...envelope(tenant, "close-ap-aging-after"), payload: { periodStart: "2026-01-01", periodEnd: "2026-03-31", asOfDate: "2026-04-01", basis: "ACCRUAL" } });
+    const afterId = (JSON.parse(after.resultJson) as { manifestId: string }).manifestId;
+    const afterAp = await app.closePack.getSection(tenant.tenantId as any, tenant.defaultBookSetId as any, afterId, "ap_aging");
+    expect(afterAp).not.toContain(fullyWithheldId);
+    expect(afterAp).not.toContain(settledByAsOfId);
+    expect(afterAp).not.toContain(settledLaterId);
   });
 });

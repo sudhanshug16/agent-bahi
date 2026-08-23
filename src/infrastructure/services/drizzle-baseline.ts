@@ -34,7 +34,7 @@ export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID;
 
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
-\t\t\t\tid SERIAL PRIMARY KEY,
+\t\t\t\tid INTEGER PRIMARY KEY,
 \t\t\t\thash text NOT NULL,
 \t\t\t\tcreated_at numeric
 \t\t\t)` as const;
@@ -119,42 +119,60 @@ export interface DrizzleControlInitializationOptions {
 }
 
 export interface DrizzleJournalRecord {
-  readonly id: number | null;
+  readonly id: number;
   readonly hash: string;
   readonly createdAt: number;
 }
 
 export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
-  // Drizzle's SQLite SERIAL declaration yields a NULL id for the first row;
-  // preserve that official result rather than inventing an identifier.
   return [
-    { id: null, hash: DRIZZLE_BASELINE_HASH, createdAt: DRIZZLE_BASELINE_CREATED_AT },
-    { id: null, hash: DRIZZLE_GST_V1_HASH, createdAt: DRIZZLE_GST_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_TDS_TCS_HASH, createdAt: DRIZZLE_TDS_TCS_CREATED_AT },
-    { id: null, hash: DRIZZLE_FIXED_ASSETS_HASH, createdAt: DRIZZLE_FIXED_ASSETS_CREATED_AT },
-    { id: null, hash: DRIZZLE_FX_V1_HASH, createdAt: DRIZZLE_FX_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_PAYROLL_V1_HASH, createdAt: DRIZZLE_PAYROLL_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH, createdAt: DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH, createdAt: DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, createdAt: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH, createdAt: DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_TENANT_PAN_V1_HASH, createdAt: DRIZZLE_TENANT_PAN_V1_CREATED_AT },
-    { id: null, hash: DRIZZLE_CLOSE_PACK_V1_HASH, createdAt: DRIZZLE_CLOSE_PACK_V1_CREATED_AT },
+    { id: 1, hash: DRIZZLE_BASELINE_HASH, createdAt: DRIZZLE_BASELINE_CREATED_AT },
+    { id: 2, hash: DRIZZLE_GST_V1_HASH, createdAt: DRIZZLE_GST_V1_CREATED_AT },
+    { id: 3, hash: DRIZZLE_TDS_TCS_HASH, createdAt: DRIZZLE_TDS_TCS_CREATED_AT },
+    { id: 4, hash: DRIZZLE_FIXED_ASSETS_HASH, createdAt: DRIZZLE_FIXED_ASSETS_CREATED_AT },
+    { id: 5, hash: DRIZZLE_FX_V1_HASH, createdAt: DRIZZLE_FX_V1_CREATED_AT },
+    { id: 6, hash: DRIZZLE_PAYROLL_V1_HASH, createdAt: DRIZZLE_PAYROLL_V1_CREATED_AT },
+    { id: 7, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH, createdAt: DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT },
+    { id: 8, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH, createdAt: DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT },
+    { id: 9, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, createdAt: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_CREATED_AT },
+    { id: 10, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH, createdAt: DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT },
+    { id: 11, hash: DRIZZLE_TENANT_PAN_V1_HASH, createdAt: DRIZZLE_TENANT_PAN_V1_CREATED_AT },
+    { id: 12, hash: DRIZZLE_CLOSE_PACK_V1_HASH, createdAt: DRIZZLE_CLOSE_PACK_V1_CREATED_AT },
   ];
 }
 
-/** Validate the exact official journal prefix without inferring trust from count. */
+function journalMismatch(): never {
+  throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Official Drizzle migration journal is not canonical");
+}
+
+function parseJournalInteger(value: unknown): number {
+  if (typeof value === "bigint") {
+    if (value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER)) journalMismatch();
+    return Number(value);
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) journalMismatch();
+  return value;
+}
+
+/** Validate the exact official journal, including cardinality and row shape. */
 export function validateOfficialDrizzleJournal(rows: readonly Record<string, unknown>[]): void {
   const expected = officialDrizzleJournal();
-  if (rows.length === 0 || rows.length > expected.length) throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Official Drizzle migration journal is not an exact prefix");
+  if (rows.length !== expected.length) journalMismatch();
+  validateOfficialDrizzleJournalPrefix(rows);
+}
+
+/** Validate an official journal prefix for the explicit pending-upgrade path. */
+export function validateOfficialDrizzleJournalPrefix(rows: readonly Record<string, unknown>[]): void {
+  const expected = officialDrizzleJournal();
+  if (rows.length === 0 || rows.length > expected.length) journalMismatch();
   rows.forEach((row, index) => {
     const expectedRow = expected[index]!;
-    const hash = String(row.hash ?? "");
-    const createdAt = typeof row.created_at === "bigint" ? Number(row.created_at) : Number(row.created_at);
-    const id = row.id === null || row.id === undefined ? null : Number(row.id);
-    if (id !== expectedRow.id || hash !== expectedRow.hash || createdAt !== expectedRow.createdAt) {
-      throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Official Drizzle migration journal is not an exact prefix");
-    }
+    const keys = Object.keys(row).sort();
+    if (keys.length !== 3 || keys[0] !== "created_at" || keys[1] !== "hash" || keys[2] !== "id") journalMismatch();
+    if (!Object.prototype.hasOwnProperty.call(row, "id") || !Object.prototype.hasOwnProperty.call(row, "hash") || !Object.prototype.hasOwnProperty.call(row, "created_at")) journalMismatch();
+    const id = parseJournalInteger(row.id);
+    const createdAt = parseJournalInteger(row.created_at);
+    if (id !== index + 1 || id !== expectedRow.id || typeof row.hash !== "string" || row.hash !== expectedRow.hash || createdAt !== expectedRow.createdAt) journalMismatch();
   });
 }
 
@@ -171,7 +189,7 @@ export async function seedOfficialDrizzleBaseline(session: MigrationSession): Pr
     );
     return;
   }
-  validateOfficialDrizzleJournal(rows);
+  validateOfficialDrizzleJournalPrefix(rows);
 }
 
 /**
@@ -180,6 +198,11 @@ export async function seedOfficialDrizzleBaseline(session: MigrationSession): Pr
  */
 export function migrateFreshDrizzleDatabase(db: BunDatabase): void {
   try {
+    // Drizzle's SQLite migrator omits id when inserting into its SERIAL column.
+    // Pre-create the SQLite-native integer key so every official row is explicit,
+    // positive, and deterministically ordered while Drizzle still owns migration
+    // application and journal values.
+    db.exec(DRIZZLE_JOURNAL_DDL);
     const drizzleDb = drizzle(db);
     migrateDrizzle(drizzleDb, { migrationsFolder: DRIZZLE_MIGRATIONS_DIRECTORY });
   } catch (error) {
@@ -205,10 +228,10 @@ export async function readDrizzleJournal(session: MigrationSession): Promise<Dri
     throw new DomainError("DRIZZLE_JOURNAL_MISSING", "Official Drizzle migration journal is empty");
   }
 
-  const id = row.id === null ? null : (typeof row.id === "bigint" ? Number(row.id) : Number(row.id));
+  const id = parseJournalInteger(row.id);
   const hash = String(row.hash ?? "");
   const createdAt = typeof row.created_at === "bigint" ? Number(row.created_at) : Number(row.created_at);
-  if (id !== null && (!Number.isSafeInteger(id) || id < 1) || !/^[0-9a-f]{64}$/.test(hash) || !Number.isSafeInteger(createdAt)) {
+  if (!/^[0-9a-f]{64}$/.test(hash) || !Number.isSafeInteger(createdAt)) {
     throw new DomainError("DRIZZLE_JOURNAL_MALFORMED", "Official Drizzle migration journal is malformed");
   }
 

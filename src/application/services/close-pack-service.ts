@@ -179,15 +179,25 @@ async function generateAPAgingCSV(session: BusinessSession, tenantId: TenantId, 
   lines.push(rowToCSV(["Vendor ID", "Bill ID", "Bill Date", "Due Date", "Amount Outstanding (Minor Units)", "Aging Bucket"]));
   const bills = await session.query(
     `SELECT b.id, b.vendor_id, b.bill_date, b.due_date,
-            b.total_minor - COALESCE(SUM(CASE WHEN vp.payment_date <= ? THEN a.amount_minor ELSE 0 END), 0) as outstanding
+            b.total_minor
+              - COALESCE((SELECT SUM(a.amount_minor)
+                          FROM vendor_payment_allocations a
+                          JOIN vendor_payments vp ON vp.id = a.payment_id
+                            AND vp.tenant_id = a.tenant_id AND vp.book_set_id = a.book_set_id
+                          WHERE a.bill_id = b.id AND a.tenant_id = b.tenant_id AND a.book_set_id = b.book_set_id
+                            AND vp.payment_date <= ?), 0)
+              - CASE WHEN EXISTS (
+                  SELECT 1 FROM withholding_events we
+                  WHERE we.document_type = 'PURCHASE' AND we.document_id = b.id
+                    AND we.tenant_id = b.tenant_id AND we.book_set_id = b.book_set_id
+                    AND we.tax_kind = 'TDS' AND we.status = 'POSTED' AND we.event_date <= ?
+                ) THEN b.withholding_minor ELSE 0 END as outstanding
      FROM vendor_bills b
-     LEFT JOIN vendor_payment_allocations a ON a.bill_id = b.id AND a.tenant_id = b.tenant_id AND a.book_set_id = b.book_set_id
-     LEFT JOIN vendor_payments vp ON a.payment_id = vp.id AND vp.tenant_id = b.tenant_id AND vp.book_set_id = b.book_set_id
      WHERE b.tenant_id = ? AND b.book_set_id = ? AND b.bill_date <= ? AND b.status != 'DRAFT'
-     GROUP BY b.id, b.vendor_id, b.bill_date, b.due_date
+     GROUP BY b.id, b.vendor_id, b.bill_date, b.due_date, b.total_minor, b.withholding_minor
      HAVING outstanding > 0
      ORDER BY b.bill_date, b.id`,
-    [asOfDate, tenantId, bookSetId, asOfDate],
+    [asOfDate, asOfDate, tenantId, bookSetId, asOfDate],
   );
 
   for (const bill of bills.rows as Array<Record<string, unknown>>) {

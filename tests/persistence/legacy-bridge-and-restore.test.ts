@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { initializeAndUpgradeSqliteDatabase, upgradeSqliteDatabase } from "../../src/application/application.ts";
+import { createSqliteApplication, initializeAndUpgradeSqliteDatabase, upgradeSqliteDatabase } from "../../src/application/application.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
@@ -222,6 +222,9 @@ describe("Legacy Bridge and Restore", () => {
     const path = join(tempDir, `custom-v8-${randomUUID()}.sqlite`);
     const backup = join(tempDir, `custom-v8-${randomUUID()}.backup`);
     await createLegacyFixture(path, 8);
+    const source = new BunDatabase(path);
+    source.query("INSERT INTO accounts (id, tenant_id, book_set_id, code, name, account_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("account-fixture", "tenant-fixture", "book-set-fixture", "1000", "Fixture Cash", "ASSET", "2026-01-01", "2026-01-01");
+    source.close();
     const before = new BunDatabase(path, { readonly: true });
     const beforeTenant = before.query("SELECT id, name FROM tenants").all();
     before.close();
@@ -237,23 +240,26 @@ describe("Legacy Bridge and Restore", () => {
     expect(detectDatabaseState(restored).state).toBe("DRIZZLE_BRIDGED");
     expect(restored.query("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 8n });
     restored.close();
+    const restoredApplication = createSqliteApplication(bridgedRestore);
+    await expect(restoredApplication.tenant.listActiveTenants()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: "tenant-fixture", name: "Fixture" })]));
+    await expect(restoredApplication.account.listByBookSet("tenant-fixture" as any, "book-set-fixture" as any)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: "account-fixture", code: "1000", name: "Fixture Cash" })]));
     const db = new BunDatabase(path, { readonly: true, safeIntegers: true });
     try {
       expect(detectDatabaseState(db).state).toBe("DRIZZLE_BRIDGED");
       expect(db.query("SELECT id, name FROM tenants").all()).toEqual(beforeTenant);
       expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([
-        { id: null, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" },
-        { id: null, hash: DRIZZLE_GST_V1_HASH },
-        { id: null, hash: DRIZZLE_TDS_TCS_HASH },
-        { id: null, hash: DRIZZLE_FIXED_ASSETS_HASH },
-        { id: null, hash: DRIZZLE_FX_V1_HASH },
-        { id: null, hash: DRIZZLE_PAYROLL_V1_HASH },
-        { id: null, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH },
-        { id: null, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH },
-        { id: null, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH },
-        { id: null, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH },
-        { id: null, hash: DRIZZLE_TENANT_PAN_V1_HASH },
-        { id: null, hash: DRIZZLE_CLOSE_PACK_V1_HASH },
+        { id: 1n, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" },
+        { id: 2n, hash: DRIZZLE_GST_V1_HASH },
+        { id: 3n, hash: DRIZZLE_TDS_TCS_HASH },
+        { id: 4n, hash: DRIZZLE_FIXED_ASSETS_HASH },
+        { id: 5n, hash: DRIZZLE_FX_V1_HASH },
+        { id: 6n, hash: DRIZZLE_PAYROLL_V1_HASH },
+        { id: 7n, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH },
+        { id: 8n, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH },
+        { id: 9n, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH },
+        { id: 10n, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH },
+        { id: 11n, hash: DRIZZLE_TENANT_PAN_V1_HASH },
+        { id: 12n, hash: DRIZZLE_CLOSE_PACK_V1_HASH },
       ]);
     } finally { db.close(); }
   });
