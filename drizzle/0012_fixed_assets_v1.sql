@@ -41,13 +41,16 @@ CREATE TABLE `asset_components` (
 	`residual_minor` integer NOT NULL,
 	`useful_life_months` integer NOT NULL,
 	`method` text NOT NULL,
+	`reducing_rate_bps` integer,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`asset_id`,`tenant_id`,`book_set_id`) REFERENCES `fixed_assets`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_asset_component_number" CHECK("asset_components"."component_number" > 0),
 	CONSTRAINT "chk_asset_component_cost" CHECK("asset_components"."cost_minor" > 0),
 	CONSTRAINT "chk_asset_component_residual" CHECK("asset_components"."residual_minor" >= 0 AND "asset_components"."residual_minor" <= "asset_components"."cost_minor"),
 	CONSTRAINT "chk_asset_component_life" CHECK("asset_components"."useful_life_months" > 0),
-	CONSTRAINT "chk_asset_component_method" CHECK("asset_components"."method" IN ('STRAIGHT_LINE', 'REDUCING_BALANCE'))
+	CONSTRAINT "chk_asset_component_method" CHECK("asset_components"."method" IN ('STRAIGHT_LINE', 'REDUCING_BALANCE')),
+	CONSTRAINT "chk_asset_component_reducing_rate" CHECK("asset_components"."reducing_rate_bps" IS NULL OR ("asset_components"."reducing_rate_bps" > 0 AND "asset_components"."reducing_rate_bps" <= 10000)),
+	CONSTRAINT "chk_asset_component_method_rate" CHECK(("asset_components"."method" = 'STRAIGHT_LINE' AND "asset_components"."reducing_rate_bps" IS NULL) OR ("asset_components"."method" = 'REDUCING_BALANCE' AND "asset_components"."reducing_rate_bps" IS NOT NULL))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `uq_asset_components_number` ON `asset_components` (`asset_id`,`component_number`);--> statement-breakpoint
@@ -87,9 +90,9 @@ CREATE TABLE `asset_depreciation_runs` (
 	`posted_at` text,
 	FOREIGN KEY (`book_set_id`,`tenant_id`) REFERENCES `book_sets`(`id`,`tenant_id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`journal_id`,`tenant_id`,`book_set_id`) REFERENCES `journal_entries`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "chk_asset_depreciation_run_status" CHECK("asset_depreciation_runs"."status" IN ('PREVIEW', 'POSTED')),
+	CONSTRAINT "chk_asset_depreciation_run_status" CHECK("asset_depreciation_runs"."status" IN ('PREVIEW', 'POSTED', 'NO_OP')),
 	CONSTRAINT "chk_asset_depreciation_run_dates" CHECK("asset_depreciation_runs"."period_end" >= "asset_depreciation_runs"."period_start"),
-	CONSTRAINT "chk_asset_depreciation_run_posted" CHECK(("asset_depreciation_runs"."status" = 'PREVIEW' AND "asset_depreciation_runs"."journal_id" IS NULL AND "asset_depreciation_runs"."posted_at" IS NULL) OR ("asset_depreciation_runs"."status" = 'POSTED' AND "asset_depreciation_runs"."journal_id" IS NOT NULL AND "asset_depreciation_runs"."posted_at" IS NOT NULL))
+	CONSTRAINT "chk_asset_depreciation_run_posted" CHECK(("asset_depreciation_runs"."status" = 'PREVIEW' AND "asset_depreciation_runs"."journal_id" IS NULL AND "asset_depreciation_runs"."posted_at" IS NULL) OR ("asset_depreciation_runs"."status" = 'NO_OP' AND "asset_depreciation_runs"."journal_id" IS NULL AND "asset_depreciation_runs"."posted_at" IS NULL) OR ("asset_depreciation_runs"."status" = 'POSTED' AND "asset_depreciation_runs"."journal_id" IS NOT NULL AND "asset_depreciation_runs"."posted_at" IS NOT NULL))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `uq_asset_depreciation_posted_period` ON `asset_depreciation_runs` (`tenant_id`,`book_set_id`,`period_start`,`period_end`) WHERE "asset_depreciation_runs"."status" = 'POSTED';--> statement-breakpoint
@@ -149,7 +152,7 @@ CREATE TABLE `asset_tax_rule_snapshots` (
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_asset_tax_rule_rate" CHECK("asset_tax_rule_snapshots"."rate_bps" >= 0 AND "asset_tax_rule_snapshots"."rate_bps" <= 10000),
-	CONSTRAINT "chk_asset_tax_rule_dates" CHECK("asset_tax_rule_snapshots"."effective_to" IS NULL OR "asset_tax_rule_snapshots"."effective_to" > "asset_tax_rule_snapshots"."effective_from"),
+	CONSTRAINT "chk_asset_tax_rule_dates" CHECK("asset_tax_rule_snapshots"."effective_to" IS NULL OR "asset_tax_rule_snapshots"."effective_to" >= "asset_tax_rule_snapshots"."effective_from"),
 	CONSTRAINT "chk_asset_tax_rule_source" CHECK("asset_tax_rule_snapshots"."source_url" GLOB 'https://*')
 );
 --> statement-breakpoint

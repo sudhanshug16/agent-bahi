@@ -767,6 +767,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "reducing_rate_bps": {
+          "name": "reducing_rate_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -836,6 +843,14 @@
         "chk_asset_component_method": {
           "name": "chk_asset_component_method",
           "value": "\"asset_components\".\"method\" IN ('STRAIGHT_LINE', 'REDUCING_BALANCE')"
+        },
+        "chk_asset_component_reducing_rate": {
+          "name": "chk_asset_component_reducing_rate",
+          "value": "\"asset_components\".\"reducing_rate_bps\" IS NULL OR (\"asset_components\".\"reducing_rate_bps\" > 0 AND \"asset_components\".\"reducing_rate_bps\" <= 10000)"
+        },
+        "chk_asset_component_method_rate": {
+          "name": "chk_asset_component_method_rate",
+          "value": "(\"asset_components\".\"method\" = 'STRAIGHT_LINE' AND \"asset_components\".\"reducing_rate_bps\" IS NULL) OR (\"asset_components\".\"method\" = 'REDUCING_BALANCE' AND \"asset_components\".\"reducing_rate_bps\" IS NOT NULL)"
         }
       }
     },
@@ -1144,7 +1159,7 @@
       "checkConstraints": {
         "chk_asset_depreciation_run_status": {
           "name": "chk_asset_depreciation_run_status",
-          "value": "\"asset_depreciation_runs\".\"status\" IN ('PREVIEW', 'POSTED')"
+          "value": "\"asset_depreciation_runs\".\"status\" IN ('PREVIEW', 'POSTED', 'NO_OP')"
         },
         "chk_asset_depreciation_run_dates": {
           "name": "chk_asset_depreciation_run_dates",
@@ -1152,7 +1167,7 @@
         },
         "chk_asset_depreciation_run_posted": {
           "name": "chk_asset_depreciation_run_posted",
-          "value": "(\"asset_depreciation_runs\".\"status\" = 'PREVIEW' AND \"asset_depreciation_runs\".\"journal_id\" IS NULL AND \"asset_depreciation_runs\".\"posted_at\" IS NULL) OR (\"asset_depreciation_runs\".\"status\" = 'POSTED' AND \"asset_depreciation_runs\".\"journal_id\" IS NOT NULL AND \"asset_depreciation_runs\".\"posted_at\" IS NOT NULL)"
+          "value": "(\"asset_depreciation_runs\".\"status\" = 'PREVIEW' AND \"asset_depreciation_runs\".\"journal_id\" IS NULL AND \"asset_depreciation_runs\".\"posted_at\" IS NULL) OR (\"asset_depreciation_runs\".\"status\" = 'NO_OP' AND \"asset_depreciation_runs\".\"journal_id\" IS NULL AND \"asset_depreciation_runs\".\"posted_at\" IS NULL) OR (\"asset_depreciation_runs\".\"status\" = 'POSTED' AND \"asset_depreciation_runs\".\"journal_id\" IS NOT NULL AND \"asset_depreciation_runs\".\"posted_at\" IS NOT NULL)"
         }
       }
     },
@@ -1585,7 +1600,7 @@
         },
         "chk_asset_tax_rule_dates": {
           "name": "chk_asset_tax_rule_dates",
-          "value": "\"asset_tax_rule_snapshots\".\"effective_to\" IS NULL OR \"asset_tax_rule_snapshots\".\"effective_to\" > \"asset_tax_rule_snapshots\".\"effective_from\""
+          "value": "\"asset_tax_rule_snapshots\".\"effective_to\" IS NULL OR \"asset_tax_rule_snapshots\".\"effective_to\" >= \"asset_tax_rule_snapshots\".\"effective_from\""
         },
         "chk_asset_tax_rule_source": {
           "name": "chk_asset_tax_rule_source",
