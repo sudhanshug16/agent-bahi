@@ -149,6 +149,38 @@ async function buildCandidate(session: BusinessSession, tenantId: string, taxCas
   return { preview: { tenantId, taxCaseId, candidateHash, candidate, blockers: blockers.sort() }, currentMembershipId: membership ? String(membership.id) : null };
 }
 
+export interface FilingSnapshotStateInSession {
+  snapshotId: string;
+  tenantId: string;
+  taxCaseId: string;
+  candidateHash: string;
+  candidate: Record<string, unknown>;
+  currentCandidateHash: string;
+  currentBlockers: string[];
+  status: "CURRENT" | "STALE" | "BLOCKED";
+}
+
+/** Re-evaluate a sealed snapshot on the caller's session for derived consumers. */
+export async function filingSnapshotStateInSession(session: BusinessSession, tenantId: string, taxCaseId: string, snapshotId: string): Promise<FilingSnapshotStateInSession> {
+  const row = await session.querySingle("SELECT id, candidate_hash, candidate_json, membership_version_id, pan_profile_id FROM filing_snapshots WHERE id = ? AND tenant_id = ? AND tax_case_id = ?", [snapshotId, tenantId, taxCaseId]);
+  if (!row) throw new DomainError("FILING_SNAPSHOT_NOT_FOUND", "FilingSnapshot does not belong to tenant and TaxCase");
+  let candidate: Record<string, unknown>;
+  try { candidate = JSON.parse(String(row.candidate_json)) as Record<string, unknown>; } catch { return { snapshotId, tenantId, taxCaseId, candidateHash: String(row.candidate_hash), candidate: {}, currentCandidateHash: "", currentBlockers: ["SNAPSHOT_INTEGRITY_FAILURE"], status: "BLOCKED" }; }
+  const built = await buildCandidate(session, tenantId, taxCaseId);
+  const storedMembership = (candidate.membership as Record<string, unknown> | null)?.versionId;
+  const storedPan = (candidate.pan as Record<string, unknown> | null)?.profileId;
+  const integrity = String(row.candidate_hash) !== hash(candidate)
+    || String(row.membership_version_id) !== String(storedMembership ?? "")
+    || String(row.pan_profile_id) !== String(storedPan ?? "");
+  const blocking = ["PAN_BINDING_INVALID", "BOOKSET_LINEAGE_INCONSISTENT", "MEMBERSHIP_LINEAGE_INCONSISTENT", "MEMBERSHIP_HASH_INCONSISTENT", "SOURCE_ARTIFACT_MISSING", "FACT_SOURCE_LINEAGE_INCONSISTENT", "FACT_TERMINAL_EVENT_MISSING", "RECONCILIATION_FACT_LINEAGE_INCONSISTENT", "RECONCILIATION_BOOKSET_LINEAGE_INCONSISTENT", "RECONCILIATION_JOURNAL_LINE_MISSING"];
+  const status = integrity || built.preview.blockers.some((code) => blocking.includes(code))
+    ? "BLOCKED"
+    : built.preview.candidateHash === String(row.candidate_hash) && built.preview.blockers.length === 0
+      ? "CURRENT"
+      : "STALE";
+  return { snapshotId, tenantId, taxCaseId, candidateHash: String(row.candidate_hash), candidate, currentCandidateHash: built.preview.candidateHash, currentBlockers: built.preview.blockers, status };
+}
+
 export async function previewTaxCaseFilingSnapshot(sessionRunner: BusinessSessionRunner, tenantId: string, taxCaseId: string): Promise<FilingSnapshotPreview> {
   return sessionRunner.withBusinessSession("read", async (session) => (await buildCandidate(session, tenantId, text(taxCaseId, "taxCaseId"))).preview);
 }

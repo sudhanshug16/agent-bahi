@@ -196,6 +196,10 @@ const handlers: Record<string, Handler> = {
   "tax-case.filing-snapshot.seal": (facade, input) => facade.taxCase.filingSnapshot.seal(input as never),
   "tax-case.filing-snapshot.show": (facade, input) => facade.taxCase.filingSnapshot.show(tenantId(input), text(input, "taxCaseId"), text(input, "snapshotId")),
   "tax-case.filing-snapshot.status": (facade, input) => facade.taxCase.filingSnapshot.status(tenantId(input), text(input, "taxCaseId"), text(input, "snapshotId")),
+  "tax-case.position.preview": (facade, input) => facade.taxCase.position.preview(tenantId(input), text(input, "taxCaseId"), text(input, "filingSnapshotId")),
+  "tax-case.position.generate": (facade, input) => facade.taxCase.position.generate(input as never),
+  "tax-case.position.show": (facade, input) => facade.taxCase.position.show(tenantId(input), text(input, "taxCaseId"), text(input, "worksheetId")),
+  "tax-case.position.status": (facade, input) => facade.taxCase.position.status(tenantId(input), text(input, "taxCaseId"), text(input, "worksheetId")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

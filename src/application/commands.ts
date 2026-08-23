@@ -11,7 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
-export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate";
 
 export interface Actor {
   kind: ActorKind;
@@ -126,6 +126,7 @@ export interface TaxCaseReconciliationRecordPayload {
 }
 
 export interface TaxCaseFilingSnapshotSealPayload { taxCaseId: string; candidateHash: string; snapshotId?: string; }
+export interface TaxCasePositionGeneratePayload { taxCaseId: string; filingSnapshotId: string; }
 
 export type TaxCaseSourceAssessmentExtractionMode = "MACHINE" | "AGENT_ASSISTED" | "MANUAL";
 export type TaxCaseSourceAssessmentOutcome = "FACTS_PRESENT" | "EMPTY";

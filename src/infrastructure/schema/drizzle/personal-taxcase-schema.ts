@@ -420,6 +420,32 @@ export const filingSnapshotReconciliations = sqliteTable(
   }),
 );
 
+/** Personal Tax Position Worksheet V1: immutable, non-filing workpaper. */
+export const personalTaxPositionWorksheets = sqliteTable(
+  "personal_tax_position_worksheets",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    filingSnapshotId: text("filing_snapshot_id").notNull(),
+    snapshotCandidateHash: text("snapshot_candidate_hash").notNull(),
+    inputBindingsJson: text("input_bindings_json").notNull(),
+    inputHash: text("input_hash").notNull(),
+    outputJson: text("output_json").notNull(),
+    outputHash: text("output_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+  },
+  (table) => ({
+    fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    fkSnapshot: foreignKey({ columns: [table.filingSnapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_personal_tax_position_worksheets_id_scope").on(table.id, table.tenantId, table.taxCaseId),
+    uqInput: uniqueIndex("uq_personal_tax_position_worksheets_input").on(table.tenantId, table.taxCaseId, table.filingSnapshotId, table.inputHash),
+    idxCase: index("idx_personal_tax_position_worksheets_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    chkHashes: check("chk_personal_tax_position_worksheets_hashes", sql`length(${table.snapshotCandidateHash}) = 64 AND ${table.snapshotCandidateHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.inputHash}) = 64 AND ${table.inputHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.outputHash}) = 64 AND ${table.outputHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
 /** Personal Tax Source Readiness V1: immutable assessments and append-only review events. */
 export const taxCaseSourceAssessments = sqliteTable(
   "tax_case_source_assessments",

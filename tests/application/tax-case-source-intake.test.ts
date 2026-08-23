@@ -99,15 +99,16 @@ describe("Personal Tax source evidence intake V1", () => {
     }
   });
 
-  test("preserves source bytes through backup/restore and upgrades a 0023 fixture to 0025", async () => {
+  test("preserves source bytes through backup/restore and upgrades a 0023 fixture to the current official migration", async () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-source-backup-"));
     const dbPath = join(directory, "books.sqlite");
     try {
       await initializeSqliteDatabase(dbPath, { cliVersion: "test", buildId: "source-upgrade" });
       const downgrade = new Database(dbPath, { safeIntegers: true });
-      downgrade.exec("DROP TRIGGER tax_case_source_assessment_events_no_delete; DROP TRIGGER tax_case_source_assessment_events_no_update; DROP TRIGGER tax_case_source_assessments_no_delete; DROP TRIGGER tax_case_source_assessments_no_update; DROP TABLE tax_case_source_assessment_events; DROP TABLE tax_case_source_assessments; DROP TRIGGER filing_snapshot_reconciliations_no_delete; DROP TRIGGER filing_snapshot_reconciliations_no_update; DROP TRIGGER filing_snapshot_facts_no_delete; DROP TRIGGER filing_snapshot_facts_no_update; DROP TRIGGER filing_snapshot_sources_no_delete; DROP TRIGGER filing_snapshot_sources_no_update; DROP TRIGGER filing_snapshot_book_sets_no_delete; DROP TRIGGER filing_snapshot_book_sets_no_update; DROP TRIGGER filing_snapshots_no_delete; DROP TRIGGER filing_snapshots_no_update; DROP TABLE filing_snapshot_reconciliations; DROP TABLE filing_snapshot_facts; DROP TABLE filing_snapshot_sources; DROP TABLE filing_snapshot_book_sets; DROP TABLE filing_snapshots; DROP INDEX uq_tax_case_fact_reconciliations_id_scope;");
-      downgrade.query("DELETE FROM __drizzle_migrations WHERE id >= ?").run(OFFICIAL_DRIZZLE_MIGRATIONS.length - 1);
-      const previous = OFFICIAL_DRIZZLE_MIGRATIONS[OFFICIAL_DRIZZLE_MIGRATIONS.length - 3]!;
+      downgrade.exec("DROP TRIGGER personal_tax_position_worksheets_no_delete; DROP TRIGGER personal_tax_position_worksheets_no_update; DROP TABLE personal_tax_position_worksheets; DROP TRIGGER tax_case_source_assessment_events_no_delete; DROP TRIGGER tax_case_source_assessment_events_no_update; DROP TRIGGER tax_case_source_assessments_no_delete; DROP TRIGGER tax_case_source_assessments_no_update; DROP TABLE tax_case_source_assessment_events; DROP TABLE tax_case_source_assessments; DROP TRIGGER filing_snapshot_reconciliations_no_delete; DROP TRIGGER filing_snapshot_reconciliations_no_update; DROP TRIGGER filing_snapshot_facts_no_delete; DROP TRIGGER filing_snapshot_facts_no_update; DROP TRIGGER filing_snapshot_sources_no_delete; DROP TRIGGER filing_snapshot_sources_no_update; DROP TRIGGER filing_snapshot_book_sets_no_delete; DROP TRIGGER filing_snapshot_book_sets_no_update; DROP TRIGGER filing_snapshots_no_delete; DROP TRIGGER filing_snapshots_no_update; DROP TABLE filing_snapshot_reconciliations; DROP TABLE filing_snapshot_facts; DROP TABLE filing_snapshot_sources; DROP TABLE filing_snapshot_book_sets; DROP TABLE filing_snapshots; DROP INDEX uq_tax_case_fact_reconciliations_id_scope;");
+      const targetCount = OFFICIAL_DRIZZLE_MIGRATIONS.findIndex((migration) => migration.id === "0023_personal_tax_facts_reconciliation_v1") + 1;
+      downgrade.query("DELETE FROM __drizzle_migrations WHERE id > ?").run(targetCount);
+      const previous = OFFICIAL_DRIZZLE_MIGRATIONS[targetCount - 1]!;
       downgrade.query("UPDATE database_control SET last_migration_id = ?, last_migration_checksum = ? WHERE id = 1").run(previous.id, previous.hash);
       downgrade.close();
       await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "0023.backup"), cliVersion: "test", buildId: "source-upgrade" });

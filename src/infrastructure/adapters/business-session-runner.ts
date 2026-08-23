@@ -124,6 +124,7 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "filing_snapshot_sources",
   "filing_snapshot_facts",
   "filing_snapshot_reconciliations",
+  "personal_tax_position_worksheets",
   "tax_case_source_assessments",
   "tax_case_source_assessment_events",
 ]);

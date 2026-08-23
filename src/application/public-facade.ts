@@ -38,7 +38,8 @@ import { createTaxCase, refreshTaxCaseMembership, taxCaseStatus, importTaxCaseSo
 import { proposeTaxCaseFact, confirmTaxCaseFact, rejectTaxCaseFact, listTaxCaseFacts, recordTaxCaseReconciliation, listTaxCaseReconciliations, taxCaseFactSummary } from "./services/tax-case-facts-service.ts";
 import { prepareTaxCaseSourceAssessment, confirmTaxCaseSourceAssessment, rejectTaxCaseSourceAssessment, showTaxCaseSourceAssessment, taxCaseSourceReadinessStatus } from "./services/tax-case-source-readiness-service.ts";
 import { previewTaxCaseFilingSnapshot, sealTaxCaseFilingSnapshot, showTaxCaseFilingSnapshot, statusTaxCaseFilingSnapshot, type FilingSnapshotPreview } from "./services/tax-case-filing-snapshot-service.ts";
-import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload, TaxCaseSourceAssessmentPreparePayload, TaxCaseSourceAssessmentDecisionPayload } from "./commands.ts";
+import { generateTaxCasePositionWorksheet, previewTaxCasePositionWorksheet, showTaxCasePositionWorksheet, statusTaxCasePositionWorksheet, type TaxPositionWorksheet, type TaxPositionWorksheetView } from "./services/tax-case-position-worksheet-service.ts";
+import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload, TaxCasePositionGeneratePayload, TaxCaseSourceAssessmentPreparePayload, TaxCaseSourceAssessmentDecisionPayload } from "./commands.ts";
 
 /**
  * Read-only tenant operations
@@ -254,6 +255,12 @@ export interface TaxCaseOperations {
     show(tenantId: TenantId, taxCaseId: string, snapshotId: string): Promise<Record<string, unknown>>;
     status(tenantId: TenantId, taxCaseId: string, snapshotId: string): Promise<Record<string, unknown>>;
   };
+  position: {
+    preview(tenantId: TenantId, taxCaseId: string, filingSnapshotId: string): Promise<TaxPositionWorksheet>;
+    generate(envelope: CommandEnvelope<TaxCasePositionGeneratePayload>): Promise<CommandResult<Record<string, unknown>>>;
+    show(tenantId: TenantId, taxCaseId: string, worksheetId: string): Promise<TaxPositionWorksheetView>;
+    status(tenantId: TenantId, taxCaseId: string, worksheetId: string): Promise<Record<string, unknown>>;
+  };
 }
 
 /**
@@ -464,6 +471,12 @@ export function createPublicFacade(
         seal: (envelope) => sealTaxCaseFilingSnapshot(sessionRunner, envelope),
         show: (tenantId, taxCaseId, snapshotId) => showTaxCaseFilingSnapshot(sessionRunner, tenantId, taxCaseId, snapshotId),
         status: (tenantId, taxCaseId, snapshotId) => statusTaxCaseFilingSnapshot(sessionRunner, tenantId, taxCaseId, snapshotId),
+      },
+      position: {
+        preview: (tenantId, taxCaseId, filingSnapshotId) => previewTaxCasePositionWorksheet(sessionRunner, tenantId, taxCaseId, filingSnapshotId),
+        generate: (envelope) => generateTaxCasePositionWorksheet(sessionRunner, envelope),
+        show: (tenantId, taxCaseId, worksheetId) => showTaxCasePositionWorksheet(sessionRunner, tenantId, taxCaseId, worksheetId),
+        status: (tenantId, taxCaseId, worksheetId) => statusTaxCasePositionWorksheet(sessionRunner, tenantId, taxCaseId, worksheetId),
       },
     },
     fx: {

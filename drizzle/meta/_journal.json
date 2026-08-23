@@ -120,6 +120,13 @@
       "when": 1787507000000,
       "tag": "0025_personal_tax_source_readiness_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1787509085873,
+      "tag": "0026_personal_tax_position_worksheet_v1",
+      "breakpoints": true
     }
   ]
 }
