@@ -94,3 +94,15 @@ export {
   gstReturnExports,
   gstReturnObservations,
 } from "./gst-return-readiness-schema";
+
+// Compliance Obligations & Calendar V1
+export {
+  complianceFactProfiles,
+  complianceRuleSnapshots,
+  complianceDeadlineSnapshots,
+  complianceApplicabilityDecisions,
+  complianceRulePredecessors,
+  complianceObligations,
+  complianceObligationArtifacts,
+  complianceObligationEvents,
+} from "./compliance-obligations-schema";

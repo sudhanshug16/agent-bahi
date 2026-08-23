@@ -30,6 +30,7 @@ import { executeAssetRegister, executeDepreciation, executeAssetTaxRule, execute
 import { registerCurrency, createFxRateSnapshot, registerFxPolicy, postFxRevaluation, fxOutstanding, type CurrencyRegisterPayload, type FxRateSnapshotPayload, type FxPolicyPayload, type FxRevaluationPayload, type FxReportRow } from "./services/fx-service.ts";
 import { createEmployee, getEmployee, listEmployees, createEmployeeProfile, createSalaryStructure, createSalaryVersion, createRuleSnapshot, createClaim, reviewClaim, preparePayRun, approvePayRun, postPayRun, listPayslips, createPaymentBatch, exportBankCsv, createRemittance, updateRemittance, payrollRegister, type EmployeeCreatePayload, type EmployeeProfilePayload, type SalaryStructurePayload, type SalaryVersionPayload, type SalaryComponentInput, type RuleSnapshotPayload, type ClaimPayload, type ClaimReviewPayload, type PayRunPreparePayload, type PayRunActionPayload, type PayrollBankBatchPayload, type BankExportPayload, type RemittancePayload, type RemittanceActionPayload, type EmployeeResult } from "./services/payroll-service.ts";
 import { createClaimant, getClaimant, listClaimants, createClaim as createExpenseClaim, submitClaim, reviewClaim as reviewExpenseClaim, postClaim, getClaim as getExpenseClaim, listClaims as listExpenseClaims, issueAdvance, getAdvance, listAdvances, repayAdvance, recordReimbursement, expenseRegister, expenseOpenItems, evidenceExceptions, type ClaimantCreatePayload, type ClaimantView, type ExpenseClaimCreatePayload, type ExpenseClaimSubmitPayload, type ExpenseClaimReviewPayload, type ExpenseClaimPostPayload, type ExpenseClaimView, type ExpenseAdvanceIssuePayload, type ExpenseAdvanceRepayPayload, type ExpenseAdvanceView, type ExpenseReimbursementPayload, type ExpenseRegisterRow, type ExpenseOpenItems, type ExpenseEvidenceException } from "./services/expense-claims-service.ts";
+import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot as createComplianceRuleSnapshot, getRuleSnapshot, listRuleSnapshots, createDeadlineSnapshot, getDeadlineSnapshot, listDeadlineSnapshots, createRulePredecessor, evaluateApplicability, getApplicabilityDecision, listApplicabilityDecisions, generateObligation, getObligation, listObligations, calendar, attachArtifact, recordObligationEvent, complianceStatus, type ComplianceEnvelope, type ComplianceFactProfileCreatePayload, type ComplianceRuleCreatePayload, type ComplianceDeadlineCreatePayload, type CompliancePredecessorCreatePayload, type ComplianceApplicabilityPayload, type ComplianceGeneratePayload, type ComplianceArtifactAttachPayload, type ComplianceEventPayload, type ObligationStatus } from "./services/compliance-obligations-service.ts";
 
 /**
  * Read-only tenant operations
@@ -181,6 +182,16 @@ export interface PayrollOperations {
   remittance: { create(envelope: CommandEnvelope<RemittancePayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; update(envelope: CommandEnvelope<RemittanceActionPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
   register(tenantId: TenantId, bookSetId: BookSetId, periodStart?: string, periodEnd?: string): Promise<Array<Record<string, unknown>>>;
 }
+export interface ComplianceOperations {
+  factProfile: { create(envelope: ComplianceEnvelope<ComplianceFactProfileCreatePayload>): Promise<CommandResult<unknown>>; get(tenantId: TenantId, bookSetId: BookSetId, factProfileId: string): Promise<Record<string, unknown>>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<Record<string, unknown>>> };
+  rule: { create(envelope: ComplianceEnvelope<ComplianceRuleCreatePayload>): Promise<CommandResult<unknown>>; get(tenantId: TenantId, bookSetId: BookSetId, ruleId: string): Promise<Record<string, unknown>>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<Record<string, unknown>>> };
+  deadline: { create(envelope: ComplianceEnvelope<ComplianceDeadlineCreatePayload>): Promise<CommandResult<unknown>>; get(tenantId: TenantId, bookSetId: BookSetId, deadlineId: string): Promise<Record<string, unknown>>; list(tenantId: TenantId, bookSetId: BookSetId, filter?: { fromDate?: string; toDate?: string; code?: string }): Promise<Array<Record<string, unknown>>> };
+  predecessor: { create(envelope: ComplianceEnvelope<CompliancePredecessorCreatePayload>): Promise<CommandResult<unknown>> };
+  applicability: { evaluate(envelope: ComplianceEnvelope<ComplianceApplicabilityPayload>): Promise<CommandResult<unknown>>; get(tenantId: TenantId, bookSetId: BookSetId, decisionId: string): Promise<Record<string, unknown>>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<Record<string, unknown>>> };
+  obligation: { generate(envelope: ComplianceEnvelope<ComplianceGeneratePayload>): Promise<CommandResult<unknown>>; get(tenantId: TenantId, bookSetId: BookSetId, obligationId: string): Promise<Record<string, unknown>>; list(tenantId: TenantId, bookSetId: BookSetId, filter?: { status?: ObligationStatus; code?: string }): Promise<Array<Record<string, unknown>>>; calendar(tenantId: TenantId, bookSetId: BookSetId, fromDate: string, toDate: string, asOfDate?: string, filter?: { status?: ObligationStatus; code?: string }): Promise<Array<Record<string, unknown>>>; event(envelope: ComplianceEnvelope<ComplianceEventPayload>): Promise<CommandResult<unknown>> };
+  artifact: { attach(envelope: ComplianceEnvelope<ComplianceArtifactAttachPayload>): Promise<CommandResult<unknown>> };
+  status(tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<Record<string, unknown>>;
+}
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -208,6 +219,7 @@ export type PublicApplicationFacade = {
   company: CompanyStatusOperations;
   payroll: PayrollOperations;
   expense: ExpenseOperations;
+  compliance: ComplianceOperations;
 };
 
 /**
@@ -324,6 +336,16 @@ export function createPublicFacade(
       paymentBatch: { create: (envelope) => createPaymentBatch(sessionRunner, envelope), export: (envelope) => exportBankCsv(sessionRunner, envelope) },
       remittance: { create: (envelope) => createRemittance(sessionRunner, envelope), update: (envelope) => updateRemittance(sessionRunner, envelope) },
       register: (tenantId, bookSetId, periodStart, periodEnd) => payrollRegister(sessionRunner, tenantId, bookSetId, periodStart, periodEnd),
+    },
+    compliance: {
+      factProfile: { create: (envelope) => createFactProfile(sessionRunner, envelope), get: (tenantId, bookSetId, id) => getFactProfile(sessionRunner, tenantId, bookSetId, id), list: (tenantId, bookSetId) => listFactProfiles(sessionRunner, tenantId, bookSetId) },
+      rule: { create: (envelope) => createComplianceRuleSnapshot(sessionRunner, envelope), get: (tenantId, bookSetId, id) => getRuleSnapshot(sessionRunner, tenantId, bookSetId, id), list: (tenantId, bookSetId) => listRuleSnapshots(sessionRunner, tenantId, bookSetId) },
+      deadline: { create: (envelope) => createDeadlineSnapshot(sessionRunner, envelope), get: (tenantId, bookSetId, id) => getDeadlineSnapshot(sessionRunner, tenantId, bookSetId, id), list: (tenantId, bookSetId, filter) => listDeadlineSnapshots(sessionRunner, tenantId, bookSetId, filter) },
+      predecessor: { create: (envelope) => createRulePredecessor(sessionRunner, envelope) },
+      applicability: { evaluate: (envelope) => evaluateApplicability(sessionRunner, envelope), get: (tenantId, bookSetId, id) => getApplicabilityDecision(sessionRunner, tenantId, bookSetId, id), list: (tenantId, bookSetId) => listApplicabilityDecisions(sessionRunner, tenantId, bookSetId) },
+      obligation: { generate: (envelope) => generateObligation(sessionRunner, envelope), get: (tenantId, bookSetId, id) => getObligation(sessionRunner, tenantId, bookSetId, id), list: (tenantId, bookSetId, filter) => listObligations(sessionRunner, tenantId, bookSetId, filter), calendar: (tenantId, bookSetId, fromDate, toDate, asOfDate, filter) => calendar(sessionRunner, tenantId, bookSetId, fromDate, toDate, asOfDate, filter), event: (envelope) => recordObligationEvent(sessionRunner, envelope) },
+      artifact: { attach: (envelope) => attachArtifact(sessionRunner, envelope) },
+      status: (tenantId, bookSetId, asOfDate) => complianceStatus(sessionRunner, tenantId, bookSetId, asOfDate),
     },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },

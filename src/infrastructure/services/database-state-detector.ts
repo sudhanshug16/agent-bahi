@@ -24,6 +24,8 @@ import {
   DRIZZLE_PAYROLL_V1_MIGRATION_ID,
   DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID,
   DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID,
+  DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID,
+  DRIZZLE_GST_RETURN_READINESS_V1_HASH,
   DRIZZLE_JOURNAL_DDL,
   DRIZZLE_MIGRATIONS_TABLE,
   validateOfficialDrizzleJournal,
@@ -87,6 +89,11 @@ const DRIZZLE_GST_RETURN_READINESS_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`),
   "utf8",
 );
+const DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID}.sql`),
+  "utf8",
+);
+const DRIZZLE_PRIOR_CURRENT_SQL = DRIZZLE_GST_RETURN_READINESS_SQL;
 
 function normalizeDdl(sql: string | null | undefined): string {
   return String(sql ?? "")
@@ -144,6 +151,7 @@ function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, curre
         for (const statement of DRIZZLE_PAYROLL_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_EXPENSE_CLAIMS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_GST_RETURN_READINESS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        for (const statement of DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
       }
     } else {
       memory.exec(MIGRATION_SCHEMA_SQLITE);
@@ -230,6 +238,25 @@ function exactFreshDrizzle(db: BunDatabase, current = false): boolean {
   return sameCatalog(catalog(db), expected);
 }
 
+function exactPriorCurrentDrizzle(db: BunDatabase): boolean {
+  const manifest = KNOWN_SCHEMA_MANIFESTS.at(-1)!;
+  if (!exactDrizzleJournal(db)) return false;
+  const memory = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
+  try {
+    memory.exec("PRAGMA foreign_keys = ON");
+    memory.exec(DRIZZLE_JOURNAL_DDL);
+    for (const statement of DRIZZLE_BASELINE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+    for (const id of [DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID]) {
+      const sql = id === DRIZZLE_GST_V1_MIGRATION_ID ? DRIZZLE_GST_V1_SQL : id === DRIZZLE_TDS_TCS_MIGRATION_ID ? DRIZZLE_TDS_TCS_SQL : id === DRIZZLE_FIXED_ASSETS_MIGRATION_ID ? DRIZZLE_FIXED_ASSETS_SQL : id === DRIZZLE_FX_V1_MIGRATION_ID ? DRIZZLE_FX_SQL : id === DRIZZLE_PAYROLL_V1_MIGRATION_ID ? DRIZZLE_PAYROLL_SQL : id === DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID ? DRIZZLE_EXPENSE_CLAIMS_SQL : DRIZZLE_PRIOR_CURRENT_SQL;
+      for (const statement of sql.split("--> statement-breakpoint")) memory.exec(statement);
+    }
+    const expected = catalog(memory);
+    const expectedDdl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
+    if (!exactControl(db, manifest, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, expectedDdl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
+    return sameCatalog(catalog(db), expected);
+  } finally { memory.close(); }
+}
+
 function exactBridgedCurrent(db: BunDatabase, manifest: SqliteSchemaManifest): boolean {
   if (!exactHistory(db, manifest) || !exactControl(db, manifest, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_HASH) || !exactDrizzleJournal(db)) return false;
   // Legacy bridges retain schema_migrations, whose non-GST DDL can differ
@@ -268,6 +295,9 @@ function exactBridgedCurrent(db: BunDatabase, manifest: SqliteSchemaManifest): b
     "uq_asset_book_policies_scope_key", "idx_asset_book_policies_effective", "uq_fixed_assets_asset_number_scope", "uq_fixed_assets_scope_key", "uq_fixed_assets_source_bill_line", "idx_fixed_assets_register", "uq_asset_components_number", "idx_asset_components_asset", "uq_asset_depreciation_posted_period", "idx_asset_depreciation_runs_period", "uq_asset_depreciation_line_run_asset_component", "idx_asset_depreciation_lines_asset", "uq_asset_tax_rule_snapshot_identity", "idx_asset_tax_rule_snapshot_effective", "uq_asset_tax_block_scope_code", "uq_asset_tax_run_period", "uq_asset_tax_run_line_block", "uq_asset_disposals_asset", "idx_asset_disposals_date",
     "asset_book_policies_no_update", "asset_book_policies_no_delete", "fixed_assets_no_update", "fixed_assets_no_delete", "asset_components_no_update", "asset_components_no_delete", "asset_depreciation_runs_no_update", "asset_depreciation_runs_no_delete", "asset_depreciation_lines_no_update", "asset_depreciation_lines_no_delete", "asset_tax_rule_snapshots_no_update", "asset_tax_rule_snapshots_no_delete", "asset_tax_blocks_no_update", "asset_tax_blocks_no_delete", "asset_tax_runs_no_update", "asset_tax_runs_no_delete", "asset_tax_run_lines_no_update", "asset_tax_run_lines_no_delete", "asset_disposals_no_update", "asset_disposals_no_delete",
     "expense_claim_lines_no_update", "expense_claim_lines_no_delete", "expense_claim_lines_no_insert_posted", "expense_claims_posted_fields_immutable", "expense_claims_posted_status_guard", "expense_claims_no_delete_posted", "expense_advance_allocations_no_update", "expense_advance_allocations_no_delete", "expense_advance_repayments_no_update", "expense_advance_repayments_no_delete", "expense_reimbursements_no_update", "expense_reimbursements_no_delete",
+    "compliance_fact_profiles", "compliance_rule_snapshots", "compliance_deadline_snapshots", "compliance_applicability_decisions", "compliance_rule_predecessors", "compliance_obligations", "compliance_obligation_artifacts", "compliance_obligation_events",
+    "uq_compliance_fact_profiles_scope_key", "idx_compliance_fact_profiles_effective", "uq_compliance_rule_code_version", "uq_compliance_rule_snapshots_scope_key", "idx_compliance_rule_snapshots_effective", "uq_compliance_deadline_rule_period", "uq_compliance_deadline_scope_key", "idx_compliance_deadline_calendar", "uq_compliance_applicability_input", "uq_compliance_applicability_scope_key", "idx_compliance_applicability_decision", "uq_compliance_rule_predecessor", "idx_compliance_rule_predecessor_rule", "uq_compliance_obligation_identity", "uq_compliance_obligation_identity_strict", "uq_compliance_obligation_scope_key", "idx_compliance_obligation_due", "uq_compliance_obligation_artifact", "uq_compliance_artifact_scope_key", "idx_compliance_artifact_obligation", "uq_compliance_event_scope_key", "idx_compliance_event_timeline",
+    "compliance_fact_profiles_no_update", "compliance_fact_profiles_no_delete", "compliance_rule_snapshots_no_update", "compliance_rule_snapshots_no_delete", "compliance_deadline_snapshots_no_update", "compliance_deadline_snapshots_no_delete", "compliance_applicability_decisions_no_update", "compliance_applicability_decisions_no_delete", "compliance_rule_predecessors_no_update", "compliance_rule_predecessors_no_delete", "compliance_obligations_no_update", "compliance_obligations_no_delete", "compliance_obligation_artifacts_no_update", "compliance_obligation_artifacts_no_delete", "compliance_obligation_events_no_update", "compliance_obligation_events_no_delete", "compliance_fact_profiles_no_overlap", "compliance_rule_snapshots_no_overlap",
   ]);
   for (const row of expectedCatalog(manifest, true, true)) {
     if (row.name.startsWith("payroll_") || row.name.startsWith("uq_payroll_") || row.name.startsWith("idx_payroll_")) gstObjects.add(row.name);
@@ -305,7 +335,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
       return state ? { state, schemaVersion: manifest.schemaVersion, hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount } : { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount };
     }
 
-    if (hasDrizzleMigrations && hasControl && (exactFreshDrizzle(db) || exactFreshDrizzle(db, true))) {
+    if (hasDrizzleMigrations && hasControl && (exactFreshDrizzle(db) || exactFreshDrizzle(db, true) || exactPriorCurrentDrizzle(db))) {
       return { state: "DRIZZLE_MANAGED", schemaVersion: 8, hasLegacyMigrations: false, hasDrizzleMigrations: true, drizzleMigrationCount };
     }
     return { state: "UNKNOWN", hasLegacyMigrations: false, hasDrizzleMigrations, drizzleMigrationCount };

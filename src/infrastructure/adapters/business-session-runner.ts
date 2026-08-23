@@ -95,6 +95,14 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "gst_return_validations",
   "gst_return_exports",
   "gst_return_observations",
+  "compliance_fact_profiles",
+  "compliance_rule_snapshots",
+  "compliance_deadline_snapshots",
+  "compliance_applicability_decisions",
+  "compliance_rule_predecessors",
+  "compliance_obligations",
+  "compliance_obligation_artifacts",
+  "compliance_obligation_events",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

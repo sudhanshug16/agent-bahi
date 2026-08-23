@@ -57,6 +57,13 @@
       "when": 1787476000000,
       "tag": "0016_gst_return_readiness_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787481311713,
+      "tag": "0017_compliance_obligations_v1",
+      "breakpoints": true
     }
   ]
 }

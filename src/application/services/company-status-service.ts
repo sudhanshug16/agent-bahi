@@ -125,6 +125,14 @@ export interface CompanyStatusBookSetSummary {
     openAdvanceMinor: number;
     evidenceExceptionCount: number;
   };
+  compliance: {
+    obligationCount: number;
+    openCount: number;
+    overdueCount: number;
+    unknownApplicabilityCount: number;
+    missingFactsCount: number;
+    blockedPredecessorCount: number;
+  };
   cashBank: {
     status: "UNAVAILABLE";
     reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE";
@@ -480,6 +488,28 @@ async function expenseStatus(session: BusinessSession, tenantId: string, bookSet
   return { submittedClaimCount: submitted.rows.length, pendingReviewClaimCount: submitted.rows.length, openReimbursementPayableMinor, openAdvanceCount: advances.rows.length, openAdvanceMinor, evidenceExceptionCount: exceptions.rows.length };
 }
 
+async function complianceStatus(session: BusinessSession, tenantId: string, bookSetId: string, asOfDate: string): Promise<CompanyStatusBookSetSummary["compliance"]> {
+  const obligations = await session.query("SELECT id, rule_id, gst_registration_id, period_start, period_end, due_date FROM compliance_obligations WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  let openCount = 0; let overdueCount = 0; let blockedPredecessorCount = 0;
+  for (const obligation of obligations.rows) {
+    const event = await session.querySingle("SELECT event_type FROM compliance_obligation_events WHERE obligation_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 1", [obligation.id, tenantId, bookSetId]);
+    const status = String(event?.event_type ?? "OPEN");
+    if (!["CLOSED", "WAIVED", "EXEMPT"].includes(status)) { openCount += 1; if (String(obligation.due_date) < asOfDate) overdueCount += 1; }
+    if (status === "OPEN") {
+      const predecessors = await session.query("SELECT predecessor_rule_id, required_status FROM compliance_rule_predecessors WHERE rule_id = ? AND tenant_id = ? AND book_set_id = ?", [obligation.rule_id, tenantId, bookSetId]);
+      for (const predecessor of predecessors.rows) {
+        const predecessorObligation = obligation.gst_registration_id == null ? await session.querySingle("SELECT id FROM compliance_obligations WHERE rule_id = ? AND tenant_id = ? AND book_set_id = ? AND period_start = ? AND period_end = ? AND gst_registration_id IS NULL", [predecessor.predecessor_rule_id, tenantId, bookSetId, obligation.period_start, obligation.period_end]) : await session.querySingle("SELECT id FROM compliance_obligations WHERE rule_id = ? AND tenant_id = ? AND book_set_id = ? AND period_start = ? AND period_end = ? AND gst_registration_id = ?", [predecessor.predecessor_rule_id, tenantId, bookSetId, obligation.period_start, obligation.period_end, obligation.gst_registration_id]);
+        const predecessorStatus = predecessorObligation ? await session.querySingle("SELECT event_type FROM compliance_obligation_events WHERE obligation_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 1", [predecessorObligation.id, tenantId, bookSetId]) : undefined;
+        if (!predecessorObligation || String(predecessorStatus?.event_type) !== String(predecessor.required_status)) blockedPredecessorCount += 1;
+      }
+    }
+  }
+  const decisions = await session.query("SELECT decision, missing_keys_json FROM compliance_applicability_decisions WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  const unknown = decisions.rows.filter((row) => String(row.decision) === "UNKNOWN");
+  const missing = unknown.filter((row) => { try { return (JSON.parse(String(row.missing_keys_json)) as unknown[]).length > 0; } catch { return true; } });
+  return { obligationCount: obligations.rows.length, openCount, overdueCount, unknownApplicabilityCount: unknown.length, missingFactsCount: missing.length, blockedPredecessorCount };
+}
+
 function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   const issues: CompanyStatusIssue[] = [];
   if (!summary.ledger.isBalanced) issues.push({ severity: "BLOCKED", code: "LEDGER_UNBALANCED", bookSetId: summary.bookSet.bookSetId, amountMinor: Math.abs(summary.ledger.totalDebitMinor - summary.ledger.totalCreditMinor) });
@@ -503,6 +533,10 @@ function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   if (summary.expenses.evidenceExceptionCount > 0) issues.push({ severity: "MEDIUM", code: "EXPENSE_EVIDENCE_EXCEPTION", bookSetId: summary.bookSet.bookSetId, count: summary.expenses.evidenceExceptionCount });
   if (summary.expenses.openReimbursementPayableMinor > 0) issues.push({ severity: "INFO", code: "EXPENSE_REIMBURSEMENT_PAYABLE", bookSetId: summary.bookSet.bookSetId, amountMinor: summary.expenses.openReimbursementPayableMinor });
   if (summary.expenses.openAdvanceMinor > 0) issues.push({ severity: "INFO", code: "EXPENSE_ADVANCES_OPEN", bookSetId: summary.bookSet.bookSetId, count: summary.expenses.openAdvanceCount, amountMinor: summary.expenses.openAdvanceMinor });
+  if (summary.compliance.unknownApplicabilityCount > 0) issues.push({ severity: "HIGH", code: "COMPLIANCE_APPLICABILITY_UNKNOWN", bookSetId: summary.bookSet.bookSetId, count: summary.compliance.unknownApplicabilityCount });
+  if (summary.compliance.missingFactsCount > 0) issues.push({ severity: "HIGH", code: "COMPLIANCE_FACTS_MISSING", bookSetId: summary.bookSet.bookSetId, count: summary.compliance.missingFactsCount });
+  if (summary.compliance.blockedPredecessorCount > 0) issues.push({ severity: "HIGH", code: "COMPLIANCE_BLOCKED_PREDECESSOR", bookSetId: summary.bookSet.bookSetId, count: summary.compliance.blockedPredecessorCount });
+  if (summary.compliance.overdueCount > 0) issues.push({ severity: "HIGH", code: "COMPLIANCE_OBLIGATION_OVERDUE", bookSetId: summary.bookSet.bookSetId, count: summary.compliance.overdueCount });
   if (summary.fx.missingOrUnverifiedRateCount > 0) issues.push({ severity: "HIGH", code: "FX_RATE_MISSING_OR_UNVERIFIED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.missingOrUnverifiedRateCount });
   if (summary.fx.foreignOpenItemCount > 0) issues.push({ severity: "INFO", code: "FX_FOREIGN_OPEN_ITEMS", bookSetId: summary.bookSet.bookSetId, count: summary.fx.foreignOpenItemCount });
   if (summary.fx.unreversedRevaluationCount > 0) issues.push({ severity: "HIGH", code: "FX_REVALUATION_UNREVERSED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.unreversedRevaluationCount });
@@ -518,8 +552,8 @@ function issueRank(issue: CompanyStatusIssue): number {
   return { BLOCKED: 0, HIGH: 1, MEDIUM: 2, INFO: 3 }[issue.severity];
 }
 
-function drillDown(tenantId: string, bookSetId: string, asOfDate: string): CompanyStatusDrillDown[] {
-  return [
+function drillDown(tenantId: string, bookSetId: string, asOfDate: string, compliance?: CompanyStatusBookSetSummary["compliance"]): CompanyStatusDrillDown[] {
+  const result: CompanyStatusDrillDown[] = [
     { operationId: "ledger.trial-balance", inputTemplate: { tenantId, bookSetId, asOfDate } },
     { operationId: "ledger.balance-sheet", inputTemplate: { tenantId, bookSetId, asOfDate } },
     { operationId: "ledger.profit-and-loss", inputTemplate: { tenantId, bookSetId, fromDate: "<YYYY-MM-DD>", toDate: asOfDate } },
@@ -536,6 +570,10 @@ function drillDown(tenantId: string, bookSetId: string, asOfDate: string): Compa
     { operationId: "expense.open-items", inputTemplate: { tenantId, bookSetId } },
     { operationId: "expense.evidence-exceptions", inputTemplate: { tenantId, bookSetId } },
   ];
+  if (compliance && (compliance.obligationCount > 0 || compliance.unknownApplicabilityCount > 0)) {
+    result.push({ operationId: "compliance.obligation.calendar", inputTemplate: { tenantId, bookSetId, fromDate: "<YYYY-MM-DD>", toDate: asOfDate, asOfDate } }, { operationId: "compliance.status", inputTemplate: { tenantId, bookSetId, asOfDate } });
+  }
+  return result;
 }
 
 export class CompanyStatusService {
@@ -574,6 +612,7 @@ export class CompanyStatusService {
           fx: await fxStatus(session, tenantId, bookSetId),
           payroll: await payrollStatus(session, tenantId, bookSetId),
           expenses: await expenseStatus(session, tenantId, bookSetId),
+          compliance: await complianceStatus(session, tenantId, bookSetId, asOfDate),
           cashBank: { status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" },
         };
         summaries.push(summary);
@@ -593,7 +632,7 @@ export class CompanyStatusService {
         summaries,
         issues,
         overallReadiness: hasBlocked ? "BLOCKED" : issues.length > 0 ? "REVIEW_REQUIRED" : "READY",
-        drillDown: summaries.flatMap((summary) => drillDown(tenantId, summary.bookSet.bookSetId, asOfDate)),
+        drillDown: summaries.flatMap((summary) => drillDown(tenantId, summary.bookSet.bookSetId, asOfDate, summary.compliance)),
       };
     });
   }
