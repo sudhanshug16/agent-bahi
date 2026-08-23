@@ -1,17 +1,26 @@
 /**
- * Database state detector: Determines the current initialization state of a SQLite database.
+ * Exact, read-only SQLite state detection.
  *
- * States:
- * - EMPTY: No schema_migrations table (fresh DB)
- * - LEGACY_V2: schema_migrations exists with 2 entries (foundation only)
- * - LEGACY_V3_TO_V7: schema_migrations has 3-7 entries (legacy upgrade path)
- * - CUSTOM_V8_WITHOUT_DRIZZLE: schema_migrations has 8 entries, no Drizzle journal
- * - DRIZZLE_MANAGED: __drizzle_migrations table exists (official path)
- * - UNKNOWN: Tampered/hybrid/malformed (fails closed)
+ * A migration count is only a diagnostic.  Authorization is based on the
+ * ordered immutable history, checksum, table DDL/catalog, control row, and
+ * (when present) the official Drizzle journal prefix.
  */
 
 import { Database as BunDatabase } from "bun:sqlite";
 import { DomainError } from "../../core/types.ts";
+import { DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
+import { MIGRATION_CATALOG, KNOWN_SCHEMA_MANIFESTS, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
+import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
+import {
+  DRIZZLE_BASELINE_HASH,
+  DRIZZLE_BASELINE_CREATED_AT,
+  DRIZZLE_BASELINE_MIGRATION_ID,
+  DRIZZLE_JOURNAL_DDL,
+  DRIZZLE_MIGRATIONS_TABLE,
+  validateOfficialDrizzleJournal,
+} from "./drizzle-baseline.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export type DatabaseState =
   | "EMPTY"
@@ -23,6 +32,7 @@ export type DatabaseState =
   | "LEGACY_V7"
   | "CUSTOM_V8_WITHOUT_DRIZZLE"
   | "DRIZZLE_MANAGED"
+  | "DRIZZLE_BRIDGED"
   | "UNKNOWN";
 
 export interface DatabaseStateSummary {
@@ -34,139 +44,199 @@ export interface DatabaseStateSummary {
   drizzleMigrationCount?: number;
 }
 
-/**
- * Detect the current state of a SQLite database.
- * Never mutates the database; read-only inspection only.
- */
-export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
+type CatalogRow = { type: string; name: string; tbl_name: string; sql: string | null };
+
+const DRIZZLE_BASELINE_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_BASELINE_MIGRATION_ID}.sql`),
+  "utf8",
+);
+
+function normalizeDdl(sql: string | null | undefined): string {
+  return String(sql ?? "")
+    .replace(/\bIF\s+NOT\s+EXISTS\b/gi, "")
+    .replace(/[`\"]([^`\"]+)[`\"]/g, "$1")
+    .replace(/;\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function canonical(value: unknown): unknown {
+  if (typeof value === "bigint") return `${value}n`;
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonical(entry)]));
+  }
+  return value;
+}
+
+function sameCatalog(actual: readonly CatalogRow[], expected: readonly CatalogRow[]): boolean {
+  if (actual.length !== expected.length) return false;
+  return actual.every((row, index) => {
+    const wanted = expected[index];
+    return !!wanted && canonical(row.type) === canonical(wanted.type)
+      && canonical(row.name) === canonical(wanted.name)
+      && canonical(row.tbl_name) === canonical(wanted.tbl_name)
+      && normalizeDdl(row.sql) === normalizeDdl(wanted.sql);
+  });
+}
+
+function catalog(db: BunDatabase): CatalogRow[] {
+  return db.prepare(`
+    SELECT type, name, tbl_name, sql
+    FROM sqlite_schema
+    WHERE name NOT LIKE 'sqlite_%'
+    ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
+  `).all() as CatalogRow[];
+}
+
+function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean): CatalogRow[] {
+  const memory = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
-    // Check for legacy schema_migrations table
-    const legacyTableExists = db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
-    ).get() as { "1": number } | undefined;
-
-    // Check for Drizzle migrations table
-    const drizzleTableExists = db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'"
-    ).get() as { "1": number } | undefined;
-
-    // Check for database_control table (v8 marker)
-    const controlTableExists = db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'database_control'"
-    ).get() as { "1": number } | undefined;
-
-    // If nothing exists, it's empty
-    if (!legacyTableExists && !drizzleTableExists && !controlTableExists) {
-      return {
-        state: "EMPTY",
-        hasLegacyMigrations: false,
-        hasDrizzleMigrations: false,
-      };
+    memory.exec("PRAGMA foreign_keys = ON");
+    if (drizzle) {
+      memory.exec(DRIZZLE_JOURNAL_DDL);
+      for (const statement of DRIZZLE_BASELINE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+    } else {
+      memory.exec(MIGRATION_SCHEMA_SQLITE);
+      memory.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
+      const ids = new Set(manifest.migrations.map((migration) => migration.id));
+      for (const entry of MIGRATION_CATALOG) if (ids.has(entry.id)) memory.exec(entry.sqlite);
     }
-
-    // If only Drizzle migrations exist, it's Drizzle-managed
-    if (drizzleTableExists && !legacyTableExists) {
-      const drizzleCount = (
-        db.prepare("SELECT COUNT(*) as count FROM __drizzle_migrations").get() as {
-          count: number;
-        }
-      ).count;
-
-      return {
-        state: "DRIZZLE_MANAGED",
-        hasLegacyMigrations: false,
-        hasDrizzleMigrations: true,
-        drizzleMigrationCount: drizzleCount,
-      };
-    }
-
-    // If legacy migrations exist, determine which version
-    if (legacyTableExists) {
-      const migrationCount = (
-        db.prepare("SELECT COUNT(*) as count FROM schema_migrations").get() as {
-          count: number;
-        }
-      ).count;
-
-      // Hybrid: has both legacy and Drizzle (should never happen, but detect it)
-      if (drizzleTableExists) {
-        return {
-          state: "UNKNOWN",
-          hasLegacyMigrations: true,
-          hasDrizzleMigrations: true,
-          legacyMigrationCount: migrationCount,
-          drizzleMigrationCount: (
-            db.prepare("SELECT COUNT(*) as count FROM __drizzle_migrations").get() as {
-              count: number;
-            }
-          ).count,
-        };
-      }
-
-      // Determine schema version from migration count
-      // v2 = 2 migrations (foundation only)
-      // v3+ = +1 for each version beyond v2
-      const schemaVersion = Math.min(migrationCount, 8); // Cap at 8
-
-      const versionNames: Record<number, DatabaseState> = {
-        2: "LEGACY_V2",
-        3: "LEGACY_V3",
-        4: "LEGACY_V4",
-        5: "LEGACY_V5",
-        6: "LEGACY_V6",
-        7: "LEGACY_V7",
-        8: controlTableExists ? "CUSTOM_V8_WITHOUT_DRIZZLE" : "UNKNOWN",
-      };
-
-      const state = versionNames[schemaVersion] || "UNKNOWN";
-
-      return {
-        state,
-        schemaVersion,
-        hasLegacyMigrations: true,
-        hasDrizzleMigrations: false,
-        legacyMigrationCount: migrationCount,
-      };
-    }
-
-    // Malformed: has control table but no migration history
-    return {
-      state: "UNKNOWN",
-      hasLegacyMigrations: false,
-      hasDrizzleMigrations: false,
-    };
-  } catch (error) {
-    throw new DomainError(
-      "DATABASE_STATE_DETECTION_FAILED",
-      `Failed to detect database state: ${error instanceof Error ? error.message : String(error)}`
-    );
+    return catalog(memory);
+  } finally {
+    memory.close();
   }
 }
 
-/**
- * Check if database state requires migration before use.
- * Returns true if the database needs to be upgraded before business operations.
- */
-export function requiresDatabaseMigration(state: DatabaseStateSummary): boolean {
-  return state.state !== "DRIZZLE_MANAGED" && state.state !== "EMPTY";
+function tableDdl(db: BunDatabase, name: string): string | undefined {
+  const row = db.prepare("SELECT type, sql FROM sqlite_schema WHERE name = ?").get(name) as { type?: unknown; sql?: string | null } | undefined;
+  if (!row || row.type !== "table") return undefined;
+  return row.sql ?? undefined;
 }
 
-/**
- * Get a human-readable description of the database state.
- */
+function exactHistory(db: BunDatabase, manifest: SqliteSchemaManifest): boolean {
+  if (normalizeDdl(tableDdl(db, "schema_migrations")) !== normalizeDdl(MIGRATION_SCHEMA_SQLITE)) return false;
+  const rows = db.prepare(`
+    SELECT id, dialect, checksum, status, dirty_reason
+    FROM schema_migrations ORDER BY rowid ASC
+  `).all() as Array<Record<string, unknown>>;
+  return rows.length === manifest.migrations.length && manifest.migrations.every((migration, index) => {
+    const row = rows[index];
+    return !!row && row.id === migration.id && row.dialect === migration.dialect
+      && row.checksum === migration.checksum && row.status === migration.status && row.dirty_reason === null;
+  });
+}
+
+function exactControl(db: BunDatabase, manifest: SqliteSchemaManifest, expectedLastId = manifest.migrations.at(-1)?.id, expectedLastChecksum = manifest.migrations.at(-1)?.checksum, expectedDdl = DATABASE_CONTROL_TABLE_DDL): boolean {
+  if (normalizeDdl(tableDdl(db, "database_control")) !== normalizeDdl(expectedDdl)) return false;
+  const rows = db.prepare("SELECT * FROM database_control ORDER BY id").all() as Array<Record<string, unknown>>;
+  if (rows.length !== 1) return false;
+  const row = rows[0]!;
+  const integer = (value: unknown): number | undefined => {
+    const number = typeof value === "bigint" ? Number(value) : value;
+    return typeof number === "number" && Number.isSafeInteger(number) ? number : undefined;
+  };
+  const iso = (value: unknown): boolean => typeof value === "string" && new Date(value).toISOString() === value;
+  return integer(row.id) === 1
+    && integer(row.schema_version) === manifest.schemaVersion
+    && integer(row.data_format_version) === manifest.dataFormatVersion
+    && integer(row.reader_compatibility_min) === manifest.readerCompatibilityMin
+    && integer(row.reader_compatibility_max) === manifest.readerCompatibilityMax
+    && integer(row.required_writer_protocol) === manifest.writerProtocol
+    && row.state === "READY"
+    && integer(row.revision) === manifest.revision
+    && integer(row.generation) === manifest.generation
+    && row.last_migration_id === expectedLastId
+    && row.last_migration_checksum === expectedLastChecksum
+    && typeof row.last_writer_cli_version === "string" && row.last_writer_cli_version.length > 0
+    && typeof row.last_writer_build_id === "string" && row.last_writer_build_id.length > 0
+    && iso(row.last_writer_at) && iso(row.created_at) && iso(row.updated_at)
+    && row.recovery_reason === null;
+}
+
+function exactLegacySchema(db: BunDatabase, manifest: SqliteSchemaManifest, bridged = false): boolean {
+  const actual = bridged ? catalog(db).filter((row) => row.name !== DRIZZLE_MIGRATIONS_TABLE) : catalog(db);
+  return exactHistory(db, manifest) && exactControl(db, manifest) && sameCatalog(actual, expectedCatalog(manifest, false));
+}
+
+function exactDrizzleJournal(db: BunDatabase): boolean {
+  if (normalizeDdl(tableDdl(db, DRIZZLE_MIGRATIONS_TABLE)) !== normalizeDdl(DRIZZLE_JOURNAL_DDL)) return false;
+  const rows = db.prepare(`SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`).all() as Array<Record<string, unknown>>;
+  try {
+    validateOfficialDrizzleJournal(rows);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function exactFreshDrizzle(db: BunDatabase): boolean {
+  const manifest = KNOWN_SCHEMA_MANIFESTS.at(-1)!;
+  if (!exactDrizzleJournal(db)) return false;
+  const expected = expectedCatalog(manifest, true);
+  const expectedControl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
+  if (!exactControl(db, manifest, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_BASELINE_HASH, expectedControl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
+  return sameCatalog(catalog(db), expected);
+}
+
+/** Detect the current state without creating tables, repairing rows, or running migrations. */
+export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
+  try {
+    const has = (name: string): boolean => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+    const hasLegacyMigrations = has("schema_migrations");
+    const hasDrizzleMigrations = has(DRIZZLE_MIGRATIONS_TABLE);
+    const hasControl = has("database_control");
+    if (!hasLegacyMigrations && !hasDrizzleMigrations && !hasControl) return { state: "EMPTY", hasLegacyMigrations: false, hasDrizzleMigrations: false };
+
+    const drizzleMigrationCount = hasDrizzleMigrations
+      ? Number((db.prepare(`SELECT COUNT(*) AS count FROM ${DRIZZLE_MIGRATIONS_TABLE}`).get() as { count: number | bigint }).count)
+      : undefined;
+    const legacyMigrationCount = hasLegacyMigrations
+      ? Number((db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number | bigint }).count)
+      : undefined;
+
+    if (hasLegacyMigrations) {
+      const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => exactLegacySchema(db, candidate, hasDrizzleMigrations));
+      if (!manifest) return { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations, legacyMigrationCount, drizzleMigrationCount };
+      if (hasDrizzleMigrations) {
+        if (manifest.schemaVersion !== 8 || !exactDrizzleJournal(db)) return { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations: true, legacyMigrationCount, drizzleMigrationCount };
+        return { state: "DRIZZLE_BRIDGED", schemaVersion: 8, hasLegacyMigrations: true, hasDrizzleMigrations: true, legacyMigrationCount, drizzleMigrationCount };
+      }
+      const state = (["LEGACY_V2", "LEGACY_V3", "LEGACY_V4", "LEGACY_V5", "LEGACY_V6", "LEGACY_V7", "CUSTOM_V8_WITHOUT_DRIZZLE"] as const)[manifest.schemaVersion - 2];
+      return state ? { state, schemaVersion: manifest.schemaVersion, hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount } : { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount };
+    }
+
+    if (hasDrizzleMigrations && hasControl && exactFreshDrizzle(db)) {
+      return { state: "DRIZZLE_MANAGED", schemaVersion: 8, hasLegacyMigrations: false, hasDrizzleMigrations: true, drizzleMigrationCount };
+    }
+    return { state: "UNKNOWN", hasLegacyMigrations: false, hasDrizzleMigrations, drizzleMigrationCount };
+  } catch (error) {
+    throw new DomainError("DATABASE_STATE_DETECTION_FAILED", `Failed to detect database state: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export function requiresDatabaseMigration(state: DatabaseStateSummary): boolean {
+  return state.state !== "DRIZZLE_MANAGED" && state.state !== "DRIZZLE_BRIDGED" && state.state !== "EMPTY";
+}
+
 export function describeDbState(state: DatabaseStateSummary): string {
-  const stateDescriptions: Record<DatabaseState, string> = {
-    EMPTY: "Empty/Fresh database (no migrations applied)",
+  const descriptions: Record<DatabaseState, string> = {
+    EMPTY: "Empty/Fresh database (no migration history)",
     LEGACY_V2: "Legacy v2 (foundation only)",
     LEGACY_V3: "Legacy v3 (BookSet added)",
-    LEGACY_V4: "Legacy v4 (Audit records added)",
-    LEGACY_V5: "Legacy v5 (Journal ledger added)",
-    LEGACY_V6: "Legacy v6 (Sales invoices added)",
-    LEGACY_V7: "Legacy v7 (Vendor bills added)",
-    CUSTOM_V8_WITHOUT_DRIZZLE: "Custom v8 (Bank reconciliation, custom migrations, needs Drizzle baseline)",
-    DRIZZLE_MANAGED: "Drizzle-managed (current official baseline)",
-    UNKNOWN: "Unknown/Tampered (fails closed, requires manual recovery)",
+    LEGACY_V4: "Legacy v4 (audit records added)",
+    LEGACY_V5: "Legacy v5 (journal ledger added)",
+    LEGACY_V6: "Legacy v6 (sales invoices added)",
+    LEGACY_V7: "Legacy v7 (vendor bills added)",
+    CUSTOM_V8_WITHOUT_DRIZZLE: "Custom v8 (awaiting official Drizzle baseline)",
+    DRIZZLE_MANAGED: "Drizzle-managed (official baseline)",
+    DRIZZLE_BRIDGED: "Drizzle-bridged (exact legacy v8 plus official baseline)",
+    UNKNOWN: "Unknown/tampered (fails closed)",
   };
-
-  return stateDescriptions[state.state] || "Unknown";
+  return descriptions[state.state];
 }
+
+export const OFFICIAL_DRIZZLE_BASELINE = Object.freeze({ hash: DRIZZLE_BASELINE_HASH, createdAt: DRIZZLE_BASELINE_CREATED_AT });

@@ -10,6 +10,8 @@
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate as migrateDrizzle } from "drizzle-orm/bun-sqlite/migrator";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { Database as BunDatabase } from "bun:sqlite";
 import type { MigrationSession } from "../../application/ports/persistence.ts";
 import { DomainError } from "../../core/types.ts";
@@ -18,6 +20,23 @@ export const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations" as const;
 export const DRIZZLE_BASELINE_MIGRATION_ID = "0009_drizzle_v8_baseline" as const;
 
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
+export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
+\t\t\t\tid SERIAL PRIMARY KEY,
+\t\t\t\thash text NOT NULL,
+\t\t\t\tcreated_at numeric
+\t\t\t)` as const;
+
+const officialJournal = JSON.parse(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, "meta", "_journal.json"), "utf8")) as {
+  entries?: Array<{ idx: number; tag: string; when: number }>;
+};
+const officialEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_BASELINE_MIGRATION_ID);
+if (!officialEntry || !Number.isSafeInteger(officialEntry.when)) {
+  throw new Error("Official Drizzle baseline journal entry is missing or malformed");
+}
+export const DRIZZLE_BASELINE_HASH = createHash("sha256")
+  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_BASELINE_MIGRATION_ID}.sql`)))
+  .digest("hex");
+export const DRIZZLE_BASELINE_CREATED_AT = officialEntry.when;
 
 export interface DrizzleControlInitializationOptions {
   readonly cliVersion: string;
@@ -29,6 +48,43 @@ export interface DrizzleJournalRecord {
   readonly id: number | null;
   readonly hash: string;
   readonly createdAt: number;
+}
+
+export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
+  // Drizzle's SQLite SERIAL declaration yields a NULL id for the first row;
+  // preserve that official result rather than inventing an identifier.
+  return [{ id: null, hash: DRIZZLE_BASELINE_HASH, createdAt: DRIZZLE_BASELINE_CREATED_AT }];
+}
+
+/** Validate the exact official journal prefix without inferring trust from count. */
+export function validateOfficialDrizzleJournal(rows: readonly Record<string, unknown>[]): void {
+  const expected = officialDrizzleJournal();
+  if (rows.length !== expected.length) throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Official Drizzle migration journal is not an exact prefix");
+  rows.forEach((row, index) => {
+    const expectedRow = expected[index]!;
+    const hash = String(row.hash ?? "");
+    const createdAt = typeof row.created_at === "bigint" ? Number(row.created_at) : Number(row.created_at);
+    const id = row.id === null || row.id === undefined ? null : Number(row.id);
+    if (id !== expectedRow.id || hash !== expectedRow.hash || createdAt !== expectedRow.createdAt) {
+      throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Official Drizzle migration journal is not an exact prefix");
+    }
+  });
+}
+
+/** Seed only the official baseline row; DDL and values match Drizzle's migrator. */
+export async function seedOfficialDrizzleBaseline(session: MigrationSession): Promise<void> {
+  await session.executeRaw(DRIZZLE_JOURNAL_DDL);
+  const rows = (await session.execute(
+    `SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`,
+  )).rows;
+  if (rows.length === 0) {
+    await session.execute(
+      `INSERT INTO ${DRIZZLE_MIGRATIONS_TABLE} ("hash", "created_at") VALUES (?, ?)`,
+      [DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_CREATED_AT],
+    );
+    return;
+  }
+  validateOfficialDrizzleJournal(rows);
 }
 
 /**

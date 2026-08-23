@@ -8,7 +8,10 @@ export type UpgradeErrorCode =
   | "UPGRADE_IDEMPOTENCY_CONFLICT"
   | "UPGRADE_RECOVERY_REQUIRED"
   | "UPGRADE_OUTCOME_UNCERTAIN"
-  | "UPGRADE_APPLY_FAILED";
+  | "UPGRADE_APPLY_FAILED"
+  | "UPGRADE_FAILED_RESTORED"
+  | "RESTORE_FAILED"
+  | "RECOVERY_REQUIRED";
 
 export interface UpgradeBackupReference {
   readonly path: string;

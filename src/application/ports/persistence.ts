@@ -254,6 +254,9 @@ export interface BackupService {
    * database-control readiness before a caller decides what to do with it.
    */
   verifyBackup(backupPath: string, expectedSourceManifest?: import("../../infrastructure/schema/current-manifest.ts").SqliteSchemaManifest): Promise<boolean>;
+
+  /** Atomically restore a previously verified snapshot after closing callers. */
+  restoreFromBackup(backupPath: string, targetPath: string, expectedSourceManifest?: import("../../infrastructure/schema/current-manifest.ts").SqliteSchemaManifest): Promise<boolean>;
 }
 
 /**

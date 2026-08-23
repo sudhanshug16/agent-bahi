@@ -11,16 +11,17 @@ import { IdempotencyService as SqliteIdempotencyService } from "./services/idemp
 import { BookSetScopeService } from "./services/book-set-scope-service.ts";
 import { BusinessSessionFactory } from "../infrastructure/adapters/business-session-factory.ts";
 import { SqliteAdapter } from "../infrastructure/adapters/sqlite-adapter.ts";
-import { MigrationService } from "../infrastructure/services/migration-service.ts";
-import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
 import {
   DRIZZLE_MIGRATIONS_TABLE,
   initializeDrizzleControl,
+  seedOfficialDrizzleBaseline,
 } from "../infrastructure/services/drizzle-baseline.ts";
+import type { BackupResult, BackupService as BackupServicePort } from "../application/ports/persistence.ts";
 import { detectDatabaseState } from "../infrastructure/services/database-state-detector.ts";
-import { FOUNDATION_MIGRATIONS, ORDERED_UPGRADE_STEPS, CURRENT_SCHEMA_MANIFEST } from "../infrastructure/schema/migration-catalog.ts";
+import { ORDERED_UPGRADE_STEPS, CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, type SqliteSchemaManifest } from "../infrastructure/schema/migration-catalog.ts";
+import { UpgradeError } from "../infrastructure/services/upgrade-coordinator.ts";
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
 import { LedgerReportService } from "./services/ledger-report-service.ts";
 
@@ -57,18 +58,20 @@ export interface SqliteDatabaseInitializationOptions {
 
 export interface SqliteDatabaseUpgradeOptions extends SqliteDatabaseInitializationOptions {
   backupDestinationPath: string;
+  faults?: {
+    beforeLegacyMigration?: () => void | Promise<void>;
+    beforeBaselineSeed?: () => void | Promise<void>;
+    beforeOfficialMigration?: () => void | Promise<void>;
+    beforeFinalVerification?: () => void | Promise<void>;
+    beforeRestore?: () => void | Promise<void>;
+  };
 }
 
-/**
- * Each upgrade hop gets its own deterministic, no-replace artifact. The
- * coordinator owns collision handling, so an existing path is never replaced
- * or silently reused for a different hop.
- */
-function backupDestinationForStep(basePath: string, stepId: string): string {
-  if (!/^\d{4}-[a-z0-9-]+$/.test(stepId)) throw new Error("Migration step id is not a safe backup suffix");
-  return basePath.endsWith(".sqlite")
-    ? `${basePath.slice(0, -".sqlite".length)}.${stepId}.sqlite`
-    : `${basePath}.${stepId}.sqlite`;
+class ReusedVerifiedBackup implements BackupServicePort {
+  constructor(private readonly backup: BackupResult) {}
+  async createBackup(): Promise<BackupResult> { return this.backup; }
+  async verifyBackup(): Promise<boolean> { return true; }
+  async restoreFromBackup(): Promise<boolean> { return true; }
 }
 
 /**
@@ -130,22 +133,10 @@ export async function initializeSqliteDatabase(
   const now = options.now ?? new Date();
   try {
     const state = databaseState(dbPath);
-    if (state.hasLegacyMigrations) {
-      // Existing legacy fixtures/databases remain on the legacy foundation
-      // path until the separately scoped bridge is implemented.
-      await new MigrationService(db, "sqlite").migrate(FOUNDATION_MIGRATIONS);
-      const control = new DatabaseControlService(db, "sqlite");
-      await db.withMigrationLease((session) => control.initialize({
-        cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "initialize",
-        now,
-      }, session).then(() => undefined));
-      return;
-    }
-
-    if (state.state !== "EMPTY" && state.state !== "DRIZZLE_MANAGED") {
+    if (state.state !== "EMPTY" && state.state !== "DRIZZLE_MANAGED" && state.state !== "DRIZZLE_BRIDGED") {
       throw new Error("Database is neither empty nor a recognized Drizzle-managed database");
     }
+    if (state.state !== "EMPTY") return;
 
     // The official migrator owns DDL, transaction boundaries, and its journal.
     db.runFreshDrizzleMigrations();
@@ -168,44 +159,87 @@ export async function upgradeSqliteDatabase(
   dbPath: string,
   options: SqliteDatabaseUpgradeOptions,
 ): Promise<void> {
-  const db = new SqliteAdapter({ path: dbPath });
-  const now = options.now ?? new Date();
+  let db: SqliteAdapter | undefined = new SqliteAdapter({ path: dbPath });
+  let closed = false;
+  let backup: BackupResult | undefined;
+  let sourceManifest: SqliteSchemaManifest | undefined;
+  let sourceState: ReturnType<typeof detectDatabaseState> | undefined;
   try {
     const state = databaseState(dbPath);
-    if (state.state === "DRIZZLE_MANAGED" && !state.hasLegacyMigrations) {
-      // No legacy bridge or Drizzle upgrade migration is part of this slice.
-      // Fresh v8 databases are already at the current product baseline.
+    sourceState = state;
+    if (state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED") {
+      await options.faults?.beforeOfficialMigration?.();
+      db.runFreshDrizzleMigrations();
+      await options.faults?.beforeFinalVerification?.();
+      const finalState = databaseState(dbPath);
+      if (finalState.state !== state.state) throw new UpgradeError("UPGRADE_APPLY_FAILED", "Official Drizzle migration did not preserve a valid state");
       return;
     }
-    const control = new DatabaseControlService(db, "sqlite");
-    const inspection = await control.inspect();
-    if (inspection.status !== "AVAILABLE" || !inspection.record) {
-      throw new Error("Database is not initialized for an explicit upgrade");
-    }
-    let schemaVersion = inspection.record.schemaVersion;
+    if (state.state === "EMPTY") throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Empty databases must be explicitly initialized before upgrade");
+    const version = state.schemaVersion;
+    sourceManifest = version === undefined ? undefined : KNOWN_SCHEMA_MANIFESTS.find((manifest) => manifest.schemaVersion === version);
+    if (!sourceManifest || version === undefined || version < 2 || version > 8) throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Database state is not an exact supported legacy manifest");
+
+    const initialBackupService = new BackupService({ sourcePath: dbPath, expectedSourceManifest: sourceManifest });
+    backup = await initialBackupService.createBackup(options.backupDestinationPath, sourceManifest);
+    if (backup.status !== "SUCCESS" || !backup.path || !backup.manifest?.files[0]) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be created");
+    await initialBackupService.verifyBackup(backup.path, sourceManifest);
+    const reusedBackup = new ReusedVerifiedBackup(backup);
+
+    let schemaVersion = version;
+    await options.faults?.beforeLegacyMigration?.();
     for (const step of ORDERED_UPGRADE_STEPS) {
       if (step.targetManifest.schemaVersion <= schemaVersion) continue;
       if (step.sourceManifest.schemaVersion !== schemaVersion) {
         throw new Error(`Database schema cannot advance from v${schemaVersion} with ${step.migration.id}`);
       }
-      await new UpgradeCoordinator(db, new BackupService({
-        sourcePath: dbPath,
-        expectedSourceManifest: step.sourceManifest,
-      })).upgrade({
+      await new UpgradeCoordinator(db, reusedBackup).upgrade({
         plan: step,
-        backupDestinationPath: backupDestinationForStep(options.backupDestinationPath, step.migration.id),
+        backupDestinationPath: backup.path,
         cliVersion: options.cliVersion ?? "agent-bahi",
         buildId: options.buildId ?? "upgrade",
-        now,
+        now: options.now ?? new Date(),
       });
       schemaVersion = step.targetManifest.schemaVersion;
     }
-    const finalInspection = await new DatabaseControlService(db, "sqlite", CURRENT_SCHEMA_MANIFEST).inspect();
-    if (finalInspection.status !== "AVAILABLE" || finalInspection.record?.schemaVersion !== CURRENT_SCHEMA_MANIFEST.schemaVersion) {
-      throw new Error("Explicit database upgrade did not reach the latest catalog manifest");
+    await options.faults?.beforeBaselineSeed?.();
+    await db.withMigrationLease((session) => seedOfficialDrizzleBaseline(session).then(() => undefined));
+    await options.faults?.beforeOfficialMigration?.();
+    db.runFreshDrizzleMigrations();
+    await options.faults?.beforeFinalVerification?.();
+    if (databaseState(dbPath).state !== "DRIZZLE_BRIDGED") throw new UpgradeError("UPGRADE_APPLY_FAILED", "Explicit bridge did not reach exact DRIZZLE_BRIDGED state");
+  } catch (error) {
+    if (!backup?.path || !sourceManifest || !sourceState) throw error;
+    const original = error instanceof Error ? error.message : String(error);
+    try {
+      await db?.close();
+      closed = true;
+      await options.faults?.beforeRestore?.();
+      await new BackupService(dbPath).restoreFromBackup(backup.path, dbPath, sourceManifest);
+      const restored = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
+      try {
+        const restoredState = detectDatabaseState(restored);
+        if (restoredState.state !== sourceState.state || restoredState.schemaVersion !== sourceState.schemaVersion) throw new Error("restored state differs from invocation-start state");
+        const integrity = restored.prepare("PRAGMA integrity_check").all() as Array<Record<string, unknown>>;
+        if (integrity.length !== 1 || String(Object.values(integrity[0] ?? {})[0]) !== "ok" || restored.prepare("PRAGMA foreign_key_check").all().length !== 0) throw new Error("restored integrity or foreign-key check failed");
+      } finally { restored.close(); }
+    } catch (restoreError) {
+      try {
+        const recoveryDb = new BunDatabase(dbPath);
+        try {
+          recoveryDb.exec("BEGIN IMMEDIATE");
+          recoveryDb.exec("UPDATE database_control SET state = 'RECOVERY_REQUIRED', recovery_reason = 'Automatic upgrade restore failed; operator recovery required', updated_at = datetime('now') WHERE id = 1");
+          recoveryDb.exec("COMMIT");
+        } catch { try { recoveryDb.exec("ROLLBACK"); } catch { /* preserve restore failure */ } }
+        recoveryDb.close();
+      } catch { /* readiness remains blocked by the typed recovery result */ }
+      const backupFile = backup.manifest?.files[0];
+      throw new UpgradeError("RECOVERY_REQUIRED", `Upgrade failed and restore could not complete: ${original}; ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`, { path: backup.path, checksum: backupFile?.checksum ?? "", size: backupFile?.size ?? 0 });
     }
+    const backupFile = backup.manifest?.files[0];
+    throw new UpgradeError("UPGRADE_FAILED_RESTORED", `Upgrade failed and invocation-start backup was restored: ${original}`, { path: backup.path, checksum: backupFile?.checksum ?? "", size: backupFile?.size ?? 0 });
   } finally {
-    await db.close();
+    if (db && !closed) await db.close();
   }
 }
 
@@ -214,7 +248,8 @@ export async function initializeAndUpgradeSqliteDatabase(
   dbPath: string,
   options: SqliteDatabaseUpgradeOptions,
 ): Promise<void> {
-  await initializeSqliteDatabase(dbPath, options);
+  const state = databaseState(dbPath);
+  if (state.state === "EMPTY") await initializeSqliteDatabase(dbPath, options);
   await upgradeSqliteDatabase(dbPath, options);
 }
 
@@ -299,6 +334,16 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
         currentSchemaVersion: Number(control.schema_version),
         requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
         currentDataFormatVersion: Number(control.data_format_version),
+        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+      };
+    }
+
+    if (state.state === "DRIZZLE_BRIDGED") {
+      return {
+        status: "READY",
+        currentSchemaVersion: 8,
+        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        currentDataFormatVersion: 1,
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
     }

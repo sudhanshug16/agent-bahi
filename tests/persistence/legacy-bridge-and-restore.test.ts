@@ -16,11 +16,38 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { initializeAndUpgradeSqliteDatabase } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteDatabase, upgradeSqliteDatabase } from "../../src/application/application.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
+import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
+import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
+import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
 import { detectLegacyState, inspectLegacyDatabase } from "../../src/infrastructure/services/legacy-bridge-service.ts";
-import { MIGRATION_CATALOG, V2_SCHEMA_MANIFEST, V8_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/migration-catalog.ts";
+import { MIGRATION_CATALOG, KNOWN_SCHEMA_MANIFESTS } from "../../src/infrastructure/schema/migration-catalog.ts";
+
+async function createLegacyFixture(path: string, schemaVersion: number): Promise<void> {
+  const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === schemaVersion)!;
+  const db = new SqliteAdapter({ path });
+  try {
+    await new MigrationService(db, "sqlite").migrate(MIGRATION_CATALOG.slice(0, manifest.migrations.length).map((entry) => ({ id: entry.id, sql: entry.sqlite })));
+    await db.withMigrationLease((session) => new DatabaseControlService(db, "sqlite", manifest).initialize({
+      cliVersion: "fixture",
+      buildId: `legacy-v${schemaVersion}`,
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    }, session).then(() => undefined));
+  } finally {
+    await db.close();
+  }
+  const native = new BunDatabase(path);
+  try {
+    native.exec("INSERT INTO tenants (id, kind, lifecycle, name, base_currency, created_at, updated_at) VALUES ('tenant-fixture', 'COMPANY', 'CREATING', 'Fixture', 'INR', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')");
+    if (schemaVersion >= 3) native.exec("INSERT INTO book_sets (id, tenant_id, kind, lifecycle, display_name, created_at, updated_at) VALUES ('book-set-fixture', 'tenant-fixture', 'COMPANY', 'ACTIVE', 'Fixture Books', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')");
+    else native.exec("INSERT INTO book_sets (id, tenant_id, kind, lifecycle, created_at, updated_at) VALUES ('book-set-fixture', 'tenant-fixture', 'COMPANY', 'ACTIVE', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')");
+    native.exec("UPDATE tenants SET default_book_set_id = 'book-set-fixture', lifecycle = 'ACTIVE' WHERE id = 'tenant-fixture'");
+  } finally {
+    native.close();
+  }
+}
 
 describe("Legacy Bridge and Restore", () => {
   let tempDir: string;
@@ -173,5 +200,90 @@ describe("Legacy Bridge and Restore", () => {
         db.close();
       }
     });
+  });
+
+  test("upgrades every canonical legacy prefix and preserves representative business data", async () => {
+    for (const version of [2, 3, 4, 5, 6, 7]) {
+      const path = join(tempDir, `prefix-v${version}-${randomUUID()}.sqlite`);
+      const backup = join(tempDir, `prefix-v${version}-${randomUUID()}.backup`);
+      await createLegacyFixture(path, version);
+      await upgradeSqliteDatabase(path, { backupDestinationPath: backup, cliVersion: "test", buildId: `upgrade-v${version}` });
+      const db = new BunDatabase(path, { readonly: true, safeIntegers: true });
+      try {
+        expect(detectDatabaseState(db).state).toBe("DRIZZLE_BRIDGED");
+        expect(db.query("SELECT id, name FROM tenants").all()).toEqual([{ id: "tenant-fixture", name: "Fixture" }]);
+        expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 8n });
+      } finally { db.close(); }
+    }
+  });
+
+  test("bridges custom v8 without replaying product DDL and reruns idempotently", async () => {
+    const path = join(tempDir, `custom-v8-${randomUUID()}.sqlite`);
+    const backup = join(tempDir, `custom-v8-${randomUUID()}.backup`);
+    await createLegacyFixture(path, 8);
+    const before = new BunDatabase(path, { readonly: true });
+    const beforeTenant = before.query("SELECT id, name FROM tenants").all();
+    before.close();
+    await upgradeSqliteDatabase(path, { backupDestinationPath: backup, cliVersion: "test", buildId: "custom-v8" });
+    await upgradeSqliteDatabase(path, { backupDestinationPath: `${backup}.second`, cliVersion: "test", buildId: "custom-v8-rerun" });
+    const db = new BunDatabase(path, { readonly: true, safeIntegers: true });
+    try {
+      expect(detectDatabaseState(db).state).toBe("DRIZZLE_BRIDGED");
+      expect(db.query("SELECT id, name FROM tenants").all()).toEqual(beforeTenant);
+      expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([{ id: null, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" }]);
+    } finally { db.close(); }
+  });
+
+  test("restores the invocation-start state after an injected final verification failure", async () => {
+    const path = join(tempDir, `restore-${randomUUID()}.sqlite`);
+    const backup = join(tempDir, `restore-${randomUUID()}.backup`);
+    await createLegacyFixture(path, 2);
+    await expect(upgradeSqliteDatabase(path, {
+      backupDestinationPath: backup,
+      faults: { beforeFinalVerification: () => { throw new Error("final verification fault"); } },
+    })).rejects.toMatchObject({ code: "UPGRADE_FAILED_RESTORED" });
+    const db = new BunDatabase(path, { readonly: true, safeIntegers: true });
+    try {
+      expect(detectDatabaseState(db).state).toBe("LEGACY_V2");
+      expect(db.query("SELECT id, name FROM tenants").all()).toEqual([{ id: "tenant-fixture", name: "Fixture" }]);
+      expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 2n });
+    } finally { db.close(); }
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(existsSync(`${path}-shm`)).toBe(false);
+  });
+
+  test("restores the exact source after legacy, baseline-seed, and official-migration faults", async () => {
+    const faultOptions = [
+      { beforeLegacyMigration: () => { throw new Error("legacy migration fault"); } },
+      { beforeBaselineSeed: () => { throw new Error("baseline seed fault"); } },
+      { beforeOfficialMigration: () => { throw new Error("official migration fault"); } },
+    ];
+    for (const [index, faults] of faultOptions.entries()) {
+      const path = join(tempDir, `stage-fault-${index}-${randomUUID()}.sqlite`);
+      const backup = join(tempDir, `stage-fault-${index}-${randomUUID()}.backup`);
+      await createLegacyFixture(path, 2);
+      await expect(upgradeSqliteDatabase(path, { backupDestinationPath: backup, faults })).rejects.toMatchObject({ code: "UPGRADE_FAILED_RESTORED" });
+      const db = new BunDatabase(path, { readonly: true, safeIntegers: true });
+      try {
+        expect(detectDatabaseState(db).state).toBe("LEGACY_V2");
+        expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 2n });
+      } finally { db.close(); }
+    }
+  });
+
+  test("blocks readiness when restore itself fails", async () => {
+    const path = join(tempDir, `restore-fault-${randomUUID()}.sqlite`);
+    const backup = join(tempDir, `restore-fault-${randomUUID()}.backup`);
+    await createLegacyFixture(path, 2);
+    await expect(upgradeSqliteDatabase(path, {
+      backupDestinationPath: backup,
+      faults: {
+        beforeFinalVerification: () => { throw new Error("final verification fault"); },
+        beforeRestore: () => { throw new Error("restore fault"); },
+      },
+    })).rejects.toMatchObject({ code: "RECOVERY_REQUIRED" });
+    const db = new BunDatabase(path, { readonly: true });
+    try { expect(db.query("SELECT state FROM database_control WHERE id = 1").get()).toEqual({ state: "RECOVERY_REQUIRED" }); }
+    finally { db.close(); }
   });
 });

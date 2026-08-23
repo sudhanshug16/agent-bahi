@@ -22,7 +22,10 @@ export type LegacyBridgeErrorCode =
   | "LEGACY_BRIDGE_UPGRADE_FAILED"
   | "LEGACY_BRIDGE_BASELINE_FAILED"
   | "LEGACY_BRIDGE_RESTORE_FAILED"
-  | "LEGACY_BRIDGE_RECOVERY_REQUIRED";
+  | "LEGACY_BRIDGE_RECOVERY_REQUIRED"
+  | "UPGRADE_FAILED_RESTORED"
+  | "RESTORE_FAILED"
+  | "RECOVERY_REQUIRED";
 
 export class LegacyBridgeError extends DomainError {
   readonly backupPath?: string;
@@ -74,7 +77,7 @@ export function detectLegacyState(db: BunDatabase): LegacyDatabaseRecord {
   }
 
   // DRIZZLE_MANAGED with no legacy history: already current
-  if (state.state === "DRIZZLE_MANAGED" && !state.hasLegacyMigrations) {
+  if (state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED") {
     throw new LegacyBridgeError("LEGACY_BRIDGE_UNKNOWN_STATE", "Database is already Drizzle-managed");
   }
 

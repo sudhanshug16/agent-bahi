@@ -14,7 +14,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Database as BunDatabase } from "bun:sqlite";
 import type { BackupResult, Database, BackupService as BackupServicePort, QueryResult } from "../../application/ports/persistence.ts";
 import { DomainError } from "../../core/types.ts";
@@ -23,6 +23,8 @@ import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService, type DatabaseControlRecord } from "./database-control-service.ts";
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
+import { detectDatabaseState } from "./database-state-detector.ts";
+import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -360,45 +362,56 @@ export class BackupService implements BackupServicePort {
 export { BackupService as SqliteBackupService };
 
 async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSchemaManifest): Promise<SourceExpectation> {
-  const port = readonlyPort(db);
-  const historyRows = queryRows<MigrationRow>(db, `
-    SELECT id, dialect, checksum, status, executed_at, duration_ms,
-           dirty_reason, lease_token, manifest_version,
-           verification_manifest_hash, manifest_json
-    FROM schema_migrations ORDER BY id ASC
-  `);
-  const manifest = expectedManifest ?? manifestForHistory(historyRows);
-  if (!manifest) throw new DomainError("BACKUP_HISTORY_MISMATCH", "SQLite migration history is not an accepted immutable sequence");
-  validateMigrationHistory(historyRows, manifest);
+  const state = detectDatabaseState(db);
+  let manifest: SqliteSchemaManifest;
+  let controlRecord: DatabaseControlRecord;
+  let historyRows: MigrationRow[] = [];
+  let history: string;
+  if (state.state === "DRIZZLE_MANAGED") {
+    manifest = expectedManifest ?? CURRENT_SCHEMA_MANIFEST;
+    if (manifest.schemaVersion !== CURRENT_SCHEMA_MANIFEST.schemaVersion) throw new DomainError("BACKUP_HISTORY_MISMATCH", "Drizzle-managed backup requires the current manifest");
+    const journalRows = queryRows<Record<string, unknown>>(db, `SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`);
+    try { validateOfficialDrizzleJournal(journalRows); } catch { throw new DomainError("BACKUP_HISTORY_MISMATCH", "Official Drizzle migration journal is not exact"); }
+    controlRecord = drizzleControlRecord(db);
+    history = canonicalHash(journalRows);
+  } else {
+    const port = readonlyPort(db);
+    historyRows = queryRows<MigrationRow>(db, `
+      SELECT id, dialect, checksum, status, executed_at, duration_ms,
+             dirty_reason, lease_token, manifest_version,
+             verification_manifest_hash, manifest_json
+      FROM schema_migrations ORDER BY rowid ASC
+    `);
+    manifest = expectedManifest ?? manifestForHistory(historyRows)!;
+    if (!manifest) throw new DomainError("BACKUP_HISTORY_MISMATCH", "SQLite migration history is not an accepted immutable sequence");
+    validateMigrationHistory(historyRows, manifest);
 
-  const controlService = new DatabaseControlService(port, "sqlite", manifest);
-  const control = await controlService.inspect();
-  let controlRecord = control.record;
-  if (control.status !== "AVAILABLE" || !controlRecord) {
-    // A valid but changed READY row must still be captured so the second
-    // snapshot comparison can report BACKUP_CONTROL_CHANGED. Malformed rows
-    // remain unavailable and fail closed.
-    if (control.reason !== "ROW_DATA_INVALID") {
-      throw new DomainError("BACKUP_SOURCE_UNAVAILABLE", "Database control is unavailable");
+    const controlService = new DatabaseControlService(port, "sqlite", manifest);
+    const control = await controlService.inspect();
+    controlRecord = control.record!;
+    if (control.status !== "AVAILABLE" || !controlRecord) {
+      // A valid but changed READY row must still be captured so the second
+      // snapshot comparison can report BACKUP_CONTROL_CHANGED. Malformed rows
+      // remain unavailable and fail closed.
+      if (control.reason !== "ROW_DATA_INVALID") throw new DomainError("BACKUP_SOURCE_UNAVAILABLE", "Database control is unavailable");
+      controlRecord = looseControlRecord(db);
+      const expectedLast = manifest.migrations.at(-1);
+      if (controlRecord.schemaVersion !== manifest.schemaVersion
+        || controlRecord.dataFormatVersion !== manifest.dataFormatVersion
+        || controlRecord.readerCompatibilityMin !== manifest.readerCompatibilityMin
+        || controlRecord.readerCompatibilityMax !== manifest.readerCompatibilityMax
+        || controlRecord.requiredWriterProtocol !== manifest.writerProtocol
+        || controlRecord.generation !== manifest.generation
+        || controlRecord.revision !== manifest.revision
+        || !expectedLast
+        || controlRecord.lastMigrationId !== expectedLast.id
+        || controlRecord.lastMigrationChecksum !== expectedLast.checksum) {
+        throw new DomainError("BACKUP_CONTROL_CHANGED", "Source database control changed during backup");
+      }
     }
-    controlRecord = looseControlRecord(db);
-    const expectedLast = manifest.migrations.at(-1);
-    if (controlRecord.schemaVersion !== manifest.schemaVersion
-      || controlRecord.dataFormatVersion !== manifest.dataFormatVersion
-      || controlRecord.readerCompatibilityMin !== manifest.readerCompatibilityMin
-      || controlRecord.readerCompatibilityMax !== manifest.readerCompatibilityMax
-      || controlRecord.requiredWriterProtocol !== manifest.writerProtocol
-      || controlRecord.generation !== manifest.generation
-      || controlRecord.revision !== manifest.revision
-      || !expectedLast
-      || controlRecord.lastMigrationId !== expectedLast.id
-      || controlRecord.lastMigrationChecksum !== expectedLast.checksum) {
-      throw new DomainError("BACKUP_CONTROL_CHANGED", "Source database control changed during backup");
-    }
+    history = canonicalHash(historyRows);
   }
-  if (controlRecord.state !== "READY") {
-    throw new DomainError("BACKUP_SOURCE_NOT_READY", "Database control is not ready");
-  }
+  if (controlRecord.state !== "READY") throw new DomainError("BACKUP_SOURCE_NOT_READY", "Database control is not ready");
 
   const catalogRows = queryRows<CatalogRow>(db, `
     SELECT type, name, tbl_name, sql
@@ -406,11 +419,11 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
     WHERE name NOT LIKE 'sqlite_%'
     ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
   `);
-  validateCanonicalSchema(catalogRows, manifest);
+  validateCanonicalSchema(catalogRows, manifest, state.state === "DRIZZLE_MANAGED");
 
   return {
     control: controlRecord,
-    history: canonicalHash(historyRows),
+    history,
     catalog: canonicalHash(catalogRows),
     catalogRows,
   };
@@ -452,6 +465,46 @@ function looseControlRecord(db: BunDatabase): DatabaseControlRecord {
   };
 }
 
+function drizzleControlRecord(db: BunDatabase): DatabaseControlRecord {
+  const row = db.prepare(`SELECT schema_version, data_format_version,
+    reader_compatibility_min, reader_compatibility_max, required_writer_protocol,
+    state, revision, generation, last_migration_id, last_migration_checksum,
+    last_writer_cli_version, last_writer_build_id, last_writer_at, created_at,
+    updated_at, recovery_reason FROM database_control WHERE id = 1`).get() as Record<string, unknown> | undefined;
+  if (!row || safeInteger(row.schema_version) !== CURRENT_SCHEMA_MANIFEST.schemaVersion
+    || safeInteger(row.data_format_version) !== CURRENT_SCHEMA_MANIFEST.dataFormatVersion
+    || safeInteger(row.reader_compatibility_min) !== CURRENT_SCHEMA_MANIFEST.readerCompatibilityMin
+    || safeInteger(row.reader_compatibility_max) !== CURRENT_SCHEMA_MANIFEST.readerCompatibilityMax
+    || safeInteger(row.required_writer_protocol) !== CURRENT_SCHEMA_MANIFEST.writerProtocol
+    || safeInteger(row.revision) !== CURRENT_SCHEMA_MANIFEST.revision
+    || safeInteger(row.generation) !== CURRENT_SCHEMA_MANIFEST.generation
+    || row.state !== "READY" || row.last_migration_id !== DRIZZLE_BASELINE_MIGRATION_ID
+    || row.last_migration_checksum !== DRIZZLE_BASELINE_HASH
+    || typeof row.last_writer_cli_version !== "string" || typeof row.last_writer_build_id !== "string"
+    || typeof row.last_writer_at !== "string" || typeof row.created_at !== "string" || typeof row.updated_at !== "string"
+    || row.recovery_reason !== null) {
+    throw new DomainError("BACKUP_SOURCE_NOT_READY", "Drizzle control metadata is unavailable");
+  }
+  return {
+    schemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+    dataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+    readerCompatibilityMin: CURRENT_SCHEMA_MANIFEST.readerCompatibilityMin,
+    readerCompatibilityMax: CURRENT_SCHEMA_MANIFEST.readerCompatibilityMax,
+    requiredWriterProtocol: CURRENT_SCHEMA_MANIFEST.writerProtocol,
+    state: "READY",
+    revision: CURRENT_SCHEMA_MANIFEST.revision,
+    generation: CURRENT_SCHEMA_MANIFEST.generation,
+    lastMigrationId: DRIZZLE_BASELINE_MIGRATION_ID,
+    lastMigrationChecksum: DRIZZLE_BASELINE_HASH,
+    lastWriterCliVersion: row.last_writer_cli_version as string,
+    lastWriterBuildId: row.last_writer_build_id as string,
+    lastWriterAt: row.last_writer_at as string,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    recoveryReason: null,
+  };
+}
+
 function safeInteger(value: unknown): number | undefined {
   const number = typeof value === "bigint" ? Number(value) : value;
   return typeof number === "number" && Number.isSafeInteger(number) ? number : undefined;
@@ -471,8 +524,8 @@ function validateMigrationHistory(rows: MigrationRow[], expectedManifest: Sqlite
   }
 }
 
-function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest): void {
-  const expected = expectedCatalog(expectedManifest);
+function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false): void {
+  const expected = expectedCatalog(expectedManifest, drizzle);
   const actualByName = new Map(catalog.map((row) => [`${row.type}:${row.name}`, row]));
   for (const expectedRow of expected) {
     const actual = actualByName.get(`${expectedRow.type}:${expectedRow.name}`);
@@ -496,25 +549,29 @@ function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[])
 }
 
 const cachedExpectedCatalog = new Map<string, CatalogRow[]>();
-function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST): CatalogRow[] {
-  const key = expectedManifest.schemaVersion + ":" + expectedManifest.revision;
+function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST, drizzle = false): CatalogRow[] {
+  const key = `${drizzle ? "drizzle" : "legacy"}:${expectedManifest.schemaVersion}:${expectedManifest.revision}`;
   const cached = cachedExpectedCatalog.get(key);
   if (cached) return cached;
   const db = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
     db.exec("PRAGMA foreign_keys = ON");
-    db.exec(MIGRATION_SCHEMA_SQLITE);
-    db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
-    db.exec(MIGRATION_CATALOG[0].sqlite);
-    db.exec(MIGRATION_CATALOG[1].sqlite);
+    if (drizzle) {
+      db.exec(DRIZZLE_JOURNAL_DDL);
+      const baseline = readFileSync(join(import.meta.dir, "../../..", "drizzle", "0009_drizzle_v8_baseline.sql"), "utf8");
+      for (const statement of baseline.split("--> statement-breakpoint")) db.exec(statement);
+    } else {
+      db.exec(MIGRATION_SCHEMA_SQLITE);
+      db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
+      db.exec(MIGRATION_CATALOG[0].sqlite);
+      db.exec(MIGRATION_CATALOG[1].sqlite);
+    }
     // The expected catalog is the actual production schema for the requested
     // history, not the v2 source catalog. Apply the immutable sequence through
     // the requested target so a v4 history cannot pass with missing 0004
     // objects or triggers.
     const expectedIds = new Set(expectedManifest.migrations.map((migration) => migration.id));
-    for (const entry of MIGRATION_CATALOG.slice(2)) {
-      if (expectedIds.has(entry.id)) db.exec(entry.sqlite);
-    }
+    if (!drizzle) for (const entry of MIGRATION_CATALOG.slice(2)) if (expectedIds.has(entry.id)) db.exec(entry.sqlite);
     const catalog = queryRows<CatalogRow>(db, `
       SELECT type, name, tbl_name, sql
       FROM sqlite_schema

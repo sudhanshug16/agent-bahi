@@ -436,32 +436,31 @@ Commit 839982d implements the BookSet command boundary from specification n127:
 ## OD-012 — Legacy bridge and Drizzle baseline
 
 - **Date**: 2026-08-23
-- **Decision**: Implement legacy bridge for v2-v8 custom databases with automatic verified backup/restore. Path: explicit upgrade API detects state, creates pre-mutation backup, conditionally bridges v2-v7 to v8 via existing migration catalog, baselines to Drizzle journal and control metadata, restores on failure. Fresh Drizzle and status inspection remain non-mutating.
+- **Decision**: Implement the runtime bridge/restore path for v2-v8 custom databases. Explicit upgrade performs exact state validation, one invocation-start verified backup, existing catalog/coordinator hops, transactional official Drizzle baseline seeding, official no-op migration, exact final verification, and atomic restore on every post-backup failure. Fresh Drizzle, construction, and status inspection remain non-mutating.
 - **Alternatives**: In-situ schema transformation; gradual per-hop cutover; defer bridge to manual operator script; drop legacy database support.
-- **Evidence**: Legacy database detection via schema_migrations migration count (v2-v7 exact match against catalog), custom v8 detection (no __drizzle_migrations), hybrid schema detection (both tables present = fail closed). BackupService extended with verified restore operation: atomic replace via staging pattern, idempotent sidecar cleanup, post-restore integrity check. Explicit upgrade API invokes bridge only on operator request; normal status and construction are side-effect-free. Database state detector distinguishes LEGACY_V{2-7}, CUSTOM_V8_WITHOUT_DRIZZLE, DRIZZLE_MANAGED, UNKNOWN.
+- **Evidence**: Exact ordered catalog/checksum/status and control/schema/catalog validation now gates LEGACY_V2..V7, CUSTOM_V8_WITHOUT_DRIZZLE, DRIZZLE_MANAGED, and DRIZZLE_BRIDGED. The baseline uses the production SQL hash and journal `when` value; Drizzle's official SQLite NULL SERIAL id is preserved. Representative v2-v7 fixtures preserve tenant/BookSet data and reach DRIZZLE_BRIDGED; custom v8 performs no product DDL replay; injected final-verification and restore faults prove rollback/recovery behavior.
 - **Reversibility**: Migration catalog remains authoritative; bridge logic is contained in upgrade-coordinator and bridge service. Rollback is via restore from created backup. Legacy databases retain immutable schema_migrations rows for audit. Drizzle baseline is one-time operation per database.
-- **Status**: `IMPLEMENTED; BRIDGE DETECTION AND STATUS COMPLETE; BACKUP/RESTORE INFRASTRUCTURE READY; EXPLICIT UPGRADE COORDINATION DEFERRED TO UPGRADE-COORDINATOR`.
+- **Status**: `IMPLEMENTED FOR SQLITE V1; RUNTIME BRIDGE/RESTORE AND FOCUSED END-TO-END TESTS GREEN; BROADER PRODUCT DATABASE GAPS REMAIN OUTSIDE THIS TASK`.
 
 ### Implementation details
 
-- **State detection** (`database-state-detector.ts`): Read-only inspection of sqlite_master for schema_migrations (count and migration ID sequences) and __drizzle_migrations presence. No mutation. Fails closed on hybrid or malformed schemas.
+- **State detection** (`database-state-detector.ts`): Read-only exact validation of ordered migration IDs/checksums/status, migration/control/product schema shape, control row semantics, and official Drizzle journal prefix. Valid legacy v8 plus official journal is DRIZZLE_BRIDGED; partial/tampered hybrids fail closed.
 - **Legacy bridge service** (`legacy-bridge-service.ts`): Stateless detection and inspection. `detectLegacyState` validates version and rejects unknown/tampered/hybrid. `inspectLegacyDatabase` reports requiresUpgrade flag for CLI status.
 - **Backup and restore** (`backup-service.ts`): Extended with `restoreFromBackup(backupPath, targetPath, expectedManifest)`. Verifies backup before replace. Atomic replace via staging file + renameSync. Post-restore integrity check + foreign-key check. WAL/SHM cleanup after rename. Fails closed on verification failure.
 - **Application status** (`application.ts`): `inspectSqliteApplicationCompatibility` returns status tuple including LEGACY_V2..V7, CUSTOM_V8, UPDATE_REQUIRED, READY. No mutation.
-- **Upgrade coordination** (deferred): Explicit upgrade API will detect legacy state, create backup before each hop, invoke bridge if needed, then continue with standard upgrade steps.
+- **Upgrade coordination** (`application.ts`): Explicit upgrade creates one invocation-start backup, reuses it across existing legacy coordinator hops, seeds the exact Drizzle baseline transactionally, runs official Drizzle migration, verifies final state, and closes/reopens through `BackupService.restoreFromBackup` on failure.
 
 ### Known limitations and deferred work
 
-- Bridge DDL execution for v2-v7 to v8 is integrated into upgrade-coordinator as an explicit operation after backup creation; not isolated here.
 - Backup/restore only handles SQLite; no cross-database restore.
 - WAL/SHM cleanup assumes single-threaded access post-restore; concurrent readers may cache old headers.
-- Drizzle baseline does not replay DDL for v8 -> Drizzle transition; expects schema to already match.
+- Drizzle baseline does not replay product DDL for custom v8 -> Drizzle; it only creates the exact official journal table/row after exact v8 verification.
 - Legacy databases preserve schema_migrations as immutable audit trail; fresh Drizzle has no legacy table.
 - CLI/MCP transport for explicit upgrade not implemented in this commit.
 
 ### Test coverage
 
-- Database state detection: EMPTY, DRIZZLE_MANAGED, hybrid (fails closed), unknown (fails closed)
-- Backup/restore mechanics deferred pending investigation of Drizzle-managed database backup expectations
+- Database state detection: EMPTY, all canonical legacy prefixes, CUSTOM_V8, DRIZZLE_MANAGED, DRIZZLE_BRIDGED, hybrid/tampered (fails closed)
+- Backup/restore covers both legacy and fresh Drizzle-managed sources; restore proves integrity, foreign keys, exact pre-upgrade state, and sidecar cleanup
 - Status inspection: distinguishes all legacy versions, CUSTOM_V8, READY states
-- Full integration test cycle: initialize -> inspect -> ready (all non-mutating)
+- Full integration test cycle: fresh initialize -> inspect -> ready; v2-v7 populated upgrade; custom v8 bridge; idempotent rerun; injected restore/recovery faults

@@ -9,6 +9,7 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
+import { initializeSqliteDatabase } from "../../src/application/application.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 
@@ -78,6 +79,22 @@ describe("SQLite BackupService", () => {
     malformed.exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)");
     malformed.close();
     await expect(new BackupService(malformedPath).createBackup(join(directory, "malformed-out.sqlite"))).rejects.toMatchObject({ code: "BACKUP_SOURCE_UNAVAILABLE" });
+  });
+
+  it("backs up and restores a fresh Drizzle-managed source without legacy history", async () => {
+    const freshPath = join(directory, "fresh-drizzle.sqlite");
+    const backupPath = join(directory, "fresh-drizzle.backup");
+    const restoredPath = join(directory, "fresh-drizzle-restored.sqlite");
+    await initializeSqliteDatabase(freshPath, { cliVersion: "test", buildId: "fresh-backup" });
+    const service = new BackupService(freshPath);
+    await service.createBackup(backupPath);
+    expect(await service.verifyBackup(backupPath)).toBe(true);
+    expect(await service.restoreFromBackup(backupPath, restoredPath)).toBe(true);
+    const restored = new BunDatabase(restoredPath, { readonly: true });
+    try {
+      expect(() => restored.query("SELECT COUNT(*) FROM schema_migrations").get()).toThrow();
+      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 1 });
+    } finally { restored.close(); }
   });
 
   it("rejects every pre-existing destination without changing it", async () => {
