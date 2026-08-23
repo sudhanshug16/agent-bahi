@@ -398,8 +398,18 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
       if (controlRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control row cardinality is invalid");
       const control = controlRows[0];
       if (normalizeInteger(control.id, "id") !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control identity is invalid");
-      if (normalizeInteger(control.schema_version, "schema_version") !== this.expectedManifest.schemaVersion || normalizeInteger(control.data_format_version, "data_format_version") !== this.expectedManifest.dataFormatVersion) {
-        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database schema version is incompatible");
+      const currentSchemaVersion = normalizeInteger(control.schema_version, "schema_version");
+      const currentDataFormatVersion = normalizeInteger(control.data_format_version, "data_format_version");
+      if (currentSchemaVersion !== this.expectedManifest.schemaVersion || currentDataFormatVersion !== this.expectedManifest.dataFormatVersion) {
+        if (currentSchemaVersion > this.expectedManifest.schemaVersion || currentDataFormatVersion > this.expectedManifest.dataFormatVersion) {
+          throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database schema or data format is newer than this application");
+        }
+        throw new DomainError("UPDATE_REQUIRED", "Database update is required before business work", {
+          currentSchemaVersion,
+          requiredSchemaVersion: this.expectedManifest.schemaVersion,
+          currentDataFormatVersion,
+          requiredDataFormatVersion: this.expectedManifest.dataFormatVersion,
+        });
       }
       if (String(control.state) !== "READY") throw new DomainError("DATABASE_CONTROL_NOT_READY", "Database control is not READY");
       if (normalizeInteger(control.generation, "generation") !== this.expectedManifest.generation || normalizeInteger(control.revision, "revision") !== this.expectedManifest.revision) {

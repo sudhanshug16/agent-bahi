@@ -168,7 +168,10 @@ describe("SQLite UpgradeCoordinator", () => {
     const plan = planFor();
     await new UpgradeCoordinator(db, new BackupService(dbPath)).upgrade(request(plan, "reader.sqlite"));
     const oldReader = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1);
-    await expect(oldReader.withBusinessSession("read", async () => undefined)).rejects.toMatchObject({ code: "DATABASE_CONTROL_UNAVAILABLE" });
+    await expect(oldReader.withBusinessSession("read", async () => undefined)).rejects.toMatchObject({
+      code: "UPDATE_REQUIRED",
+      context: { currentSchemaVersion: 3, requiredSchemaVersion: 8 },
+    });
     const v3Reader = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1, plan.targetManifest);
     await expect(v3Reader.withBusinessSession("read", async (session) => session.querySingle("SELECT id FROM tenants LIMIT 1"))).resolves.toBeNull();
   });

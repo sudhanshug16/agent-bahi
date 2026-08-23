@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 
 describe("customer, invoice, and receipt vertical slice", () => {
   let directory: string | undefined;
@@ -11,7 +11,7 @@ describe("customer, invoice, and receipt vertical slice", () => {
 
   it("creates, posts, allocates receipts, and reports the same ledger", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-sales-"));
-    const app = await bootstrapSqliteApplication(join(directory, "books.sqlite"), { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const app = await initializeAndUpgradeSqliteApplication(join(directory, "books.sqlite"), { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenant = await app.tenant.create({ schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "COMPANY", name: "Sales Co", baseCurrency: "INR" } });
     const created = JSON.parse(tenant.resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { assets: string; cash: string; income: string } };
     const party = await app.party.create({ schemaVersion: 1, tenantId: created.tenantId as any, bookSetId: created.defaultBookSetId as any, requestId: randomUUID(), actor: { kind: "HUMAN", id: "owner" }, source: "CLI", reason: "create customer", payload: { displayName: "Acme Customer", email: "acme@example.test" } });
@@ -40,7 +40,7 @@ describe("customer, invoice, and receipt vertical slice", () => {
   it("rejects account classes, cross-scope/customer allocations, over-allocation, and replays without mutations", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-sales-reject-"));
     const dbPath = join(directory, "books.sqlite");
-    const app = await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenant = await app.tenant.create({ schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "COMPANY", name: "Sales Reject Co" } });
     const data = JSON.parse(tenant.resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { assets: string; cash: string; income: string; expenses: string } };
     const party = await app.party.create({ schemaVersion: 1, tenantId: data.tenantId as any, bookSetId: data.defaultBookSetId as any, requestId: randomUUID(), actor: { kind: "HUMAN", id: "owner" }, source: "CLI", reason: "customer", payload: { displayName: "Reject Customer" } });

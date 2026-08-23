@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 import { createSqliteApplication } from "../../src/application/application.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
@@ -22,7 +22,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-bootstrap-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -72,7 +72,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-replay-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -131,7 +131,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-conflict-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -171,7 +171,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-audit-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -210,7 +210,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-concurrent-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -263,7 +263,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-public-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -292,7 +292,7 @@ describe("tenant.create bootstrap command", () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tenant-rollback-"));
     const dbPath = join(directory, "test.sqlite");
     try {
-      const app = await bootstrapSqliteApplication(dbPath, {
+      const app = await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -333,7 +333,7 @@ describe("tenant.create bootstrap command", () => {
     const dbPath = join(directory, "test.sqlite");
     try {
       // Bootstrap database once
-      await bootstrapSqliteApplication(dbPath, {
+      await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 
@@ -457,7 +457,7 @@ describe("tenant.create bootstrap command", () => {
     const dbPath = join(directory, "test.sqlite");
     try {
       // Bootstrap database
-      await bootstrapSqliteApplication(dbPath, {
+      await initializeAndUpgradeSqliteApplication(dbPath, {
         backupDestinationPath: join(directory, "backup.sqlite"),
       });
 

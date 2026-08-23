@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 
 describe("journal.post and ledger reports", () => {
   let directory: string | undefined;
@@ -16,7 +16,7 @@ describe("journal.post and ledger reports", () => {
   it("posts through the public facade and reports balanced books", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-journal-"));
     const dbPath = join(directory, "ledger.sqlite");
-    const application = await bootstrapSqliteApplication(dbPath, {
+    const application = await initializeAndUpgradeSqliteApplication(dbPath, {
       backupDestinationPath: join(directory, "bootstrap.sqlite"),
       cliVersion: "test",
       buildId: "journal-test",
@@ -82,7 +82,7 @@ describe("journal.post and ledger reports", () => {
   it("rejects invalid and cross-BookSet posts without side effects", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-journal-reject-"));
     const dbPath = join(directory, "ledger.sqlite");
-    const application = await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const application = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const created = await application.tenant.create({
       schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "INDIVIDUAL", name: "Reject Co" },
     });
@@ -107,7 +107,7 @@ describe("journal.post and ledger reports", () => {
   it("replays a journal command with the exact stored result", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-journal-replay-"));
     const dbPath = join(directory, "ledger.sqlite");
-    const application = await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const application = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const created = await application.tenant.create({ schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "COMPANY", name: "Replay Co" } });
     const data = JSON.parse(created.resultJson) as { tenantId: string; defaultBookSetId: string };
     const cash = await application.account.getByCode("1100", data.tenantId as any, data.defaultBookSetId as any);

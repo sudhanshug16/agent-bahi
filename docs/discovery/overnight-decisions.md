@@ -63,6 +63,32 @@ Singleton `database_control` table holds schema versions, compatibility, and dat
 
 ## SQLite upgrade foundation — TENTATIVE - NOT OWNER-APPROVED (n116/n117)
 
+## Migration composition and explicit upgrade boundary — OWNER-APPROVED (2026-08-23)
+
+Per-version application wiring is rejected. Agent-Bahi uses a Drizzle-like
+ordered migration catalog/journal ergonomics, but retains the Agent-Bahi runner
+because its serialized lease, verified backup, probes, and recovery safeguards
+are stronger for this product. A Drizzle schema/query layer is a separate
+future evaluation and is not introduced by this refactor.
+
+The migration catalog is infrastructure-owned and is the sole ordered source
+for foundation migrations, historical/current manifests, known manifests, and
+pending upgrade steps. Normal application construction and compatibility status
+inspection are side-effect free: they never run migrations. An outdated database
+returns UPDATE_REQUIRED with current and required schema/data-format versions
+and blocks business work. Only an explicit operator database-upgrade action may
+run the verified-backup and pending-migration path; HTTP MCP clients and normal
+CLI/business commands cannot trigger it.
+
+The accepted external upgrade contract is create and verify a backup before
+pending migrations, run the generic pending list, verify the result, and
+automatically restore the verified backup on migration/verification failure.
+The current coordinator already preserves the verified backup and rolls back
+transactional SQLite DDL/history/control failures, but does not yet implement
+automatic file restore after a failure. That restore is an immediate follow-up
+writer task; this structural catalog commit does not claim it or add a new
+recovery state machine.
+
 The generic SQLite `UpgradeCoordinator` foundation is an implementation slice,
 not an owner approval for product schema expansion. It keeps the production
 manifest at v2 and permits only a strict one-migration manifest extension under

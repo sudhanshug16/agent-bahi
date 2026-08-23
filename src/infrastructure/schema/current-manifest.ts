@@ -1,209 +1,41 @@
-import { createHash } from "node:crypto";
-import { CORE_MIGRATIONS } from "./core-schema.ts";
-import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_MIGRATIONS } from "./database-control-schema.ts";
-import { BOOKSET_V3_MIGRATION } from "./bookset-v3-migration.ts";
-import { BOOKSET_V4_MIGRATION } from "./bookset-v4-migration.ts";
-import { JOURNAL_V5_MIGRATION } from "./journal-v5-migration.ts";
-import { SALES_V6_MIGRATION } from "./sales-v6-migration.ts";
-import { PURCHASE_V7_MIGRATION } from "./purchase-v7-migration.ts";
-import { BANK_RECONCILIATION_V8_MIGRATION } from "./bank-reconciliation-v8-migration.ts";
-
-export type CurrentSqliteMigration = {
-  readonly id: string;
-  readonly checksum: string;
-  readonly dialect: "sqlite";
-  readonly status: "APPLIED";
-};
-
-export function computeSqliteMigrationChecksum(sql: string): string {
-  return createHash("sha256").update(sql).digest("hex");
-}
-
-/** Immutable production migration manifest used by the business compatibility fence. */
-export const CURRENT_SQLITE_MIGRATIONS: readonly CurrentSqliteMigration[] = Object.freeze([
-  Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: BOOKSET_V3_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V3_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: BOOKSET_V4_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V4_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: JOURNAL_V5_MIGRATION.id, checksum: computeSqliteMigrationChecksum(JOURNAL_V5_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: SALES_V6_MIGRATION.id, checksum: computeSqliteMigrationChecksum(SALES_V6_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: PURCHASE_V7_MIGRATION.id, checksum: computeSqliteMigrationChecksum(PURCHASE_V7_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  Object.freeze({ id: BANK_RECONCILIATION_V8_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BANK_RECONCILIATION_V8_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-]);
-
-export const CURRENT_SCHEMA_VERSION = 8;
-export const CURRENT_DATA_FORMAT_VERSION = 1;
-export const CURRENT_DATABASE_GENERATION = 1;
-export const CURRENT_DATABASE_REVISION = 7;
-export const CURRENT_READER_PROTOCOL_MIN = 1;
-export const CURRENT_READER_PROTOCOL_MAX = 1;
-export const CURRENT_WRITER_PROTOCOL = 1;
-
-export const V3_SCHEMA_VERSION = 3;
-export const V3_DATABASE_REVISION = 2;
-
-export const V4_SCHEMA_VERSION = 4;
-export const V4_DATABASE_REVISION = 3;
-
-export const V5_SCHEMA_VERSION = 5;
-export const V5_DATABASE_REVISION = 4;
-
-export const V6_SCHEMA_VERSION = 6;
-export const V6_DATABASE_REVISION = 5;
-
-export interface SqliteSchemaManifest {
-  readonly manifestVersion: number;
-  readonly schemaVersion: number;
-  readonly dataFormatVersion: number;
-  readonly generation: number;
-  readonly revision: number;
-  readonly readerCompatibilityMin: number;
-  readonly readerCompatibilityMax: number;
-  readonly writerProtocol: number;
-  readonly migrations: readonly CurrentSqliteMigration[];
-}
-
-function canonicalValue(value: unknown): unknown {
-  if (typeof value === "bigint") return `${value}n`;
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, canonicalValue(entry)]));
-  }
-  return value;
-}
-
-/** Canonical JSON used for hashes persisted in migration metadata. */
-export function canonicalManifestJson(manifest: SqliteSchemaManifest): string {
-  return JSON.stringify(canonicalValue(manifest));
-}
-
-/** Stable SHA-256 identity for a complete schema manifest. */
-export function schemaManifestHash(manifest: SqliteSchemaManifest): string {
-  return createHash("sha256").update(canonicalManifestJson(manifest)).digest("hex");
-}
-
-export const hashSchemaManifest = schemaManifestHash;
-
-const freezeManifest = (manifest: SqliteSchemaManifest): SqliteSchemaManifest => Object.freeze({
-  ...manifest,
-  migrations: Object.freeze(manifest.migrations.map((migration) => Object.freeze({ ...migration }))),
-});
-
-/** V2 Schema Manifest for test compatibility and upgrade source verification. */
-export const V2_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: 2,
-  dataFormatVersion: 1,
-  generation: 1,
-  revision: 1,
-  readerCompatibilityMin: 1,
-  readerCompatibilityMax: 1,
-  writerProtocol: 1,
-  migrations: Object.freeze([
-    Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
-  ]),
-});
-
-/** V3 Schema Manifest for upgrade source verification (V2->V3 transition). */
-export const V3_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: V3_SCHEMA_VERSION,
-  dataFormatVersion: 1,
-  generation: 1,
-  revision: V3_DATABASE_REVISION,
-  readerCompatibilityMin: 1,
-  readerCompatibilityMax: 1,
-  writerProtocol: 1,
-  migrations: Object.freeze([
-    Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: BOOKSET_V3_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V3_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  ]),
-});
-
-/** V4 Schema Manifest for upgrade source verification (V3->V4 transition). */
-export const V4_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: V4_SCHEMA_VERSION,
-  dataFormatVersion: 1,
-  generation: 1,
-  revision: V4_DATABASE_REVISION,
-  readerCompatibilityMin: 1,
-  readerCompatibilityMax: 1,
-  writerProtocol: 1,
-  migrations: Object.freeze([
-    Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: BOOKSET_V3_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V3_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: BOOKSET_V4_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V4_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  ]),
-});
-
-/** V5 Schema Manifest for the V5->V6 upgrade source. */
-export const V5_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: V5_SCHEMA_VERSION,
-  dataFormatVersion: 1,
-  generation: 1,
-  revision: V5_DATABASE_REVISION,
-  readerCompatibilityMin: 1,
-  readerCompatibilityMax: 1,
-  writerProtocol: 1,
-  migrations: Object.freeze([
-    Object.freeze({ id: CORE_MIGRATIONS.id, checksum: computeSqliteMigrationChecksum(CORE_MIGRATIONS.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: DATABASE_CONTROL_MIGRATIONS.id, checksum: DATABASE_CONTROL_CHECKSUM, dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: BOOKSET_V3_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V3_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: BOOKSET_V4_MIGRATION.id, checksum: computeSqliteMigrationChecksum(BOOKSET_V4_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-    Object.freeze({ id: JOURNAL_V5_MIGRATION.id, checksum: computeSqliteMigrationChecksum(JOURNAL_V5_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  ]),
-});
-
-/** V6 Schema Manifest for the V6->V7 purchase slice source. */
-export const V6_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: V6_SCHEMA_VERSION,
-  dataFormatVersion: 1,
-  generation: 1,
-  revision: V6_DATABASE_REVISION,
-  readerCompatibilityMin: 1,
-  readerCompatibilityMax: 1,
-  writerProtocol: 1,
-  migrations: Object.freeze([
-    ...V5_SCHEMA_MANIFEST.migrations,
-    Object.freeze({ id: SALES_V6_MIGRATION.id, checksum: computeSqliteMigrationChecksum(SALES_V6_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  ]),
-});
-
-/** V7 Schema Manifest for the V7->V8 bank reconciliation slice source. */
-export const V7_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: 7,
-  dataFormatVersion: 1,
-  generation: 1,
-  revision: 6,
-  readerCompatibilityMin: 1,
-  readerCompatibilityMax: 1,
-  writerProtocol: 1,
-  migrations: [
-    ...V6_SCHEMA_MANIFEST.migrations,
-    Object.freeze({ id: PURCHASE_V7_MIGRATION.id, checksum: computeSqliteMigrationChecksum(PURCHASE_V7_MIGRATION.sqlite), dialect: "sqlite" as const, status: "APPLIED" as const }),
-  ],
-});
-
-/** Immutable production manifest. The current schema is v8 after bank reconciliation. */
-export const CURRENT_SCHEMA_MANIFEST: SqliteSchemaManifest = freezeManifest({
-  manifestVersion: 1,
-  schemaVersion: CURRENT_SCHEMA_VERSION,
-  dataFormatVersion: CURRENT_DATA_FORMAT_VERSION,
-  generation: CURRENT_DATABASE_GENERATION,
-  revision: CURRENT_DATABASE_REVISION,
-  readerCompatibilityMin: CURRENT_READER_PROTOCOL_MIN,
-  readerCompatibilityMax: CURRENT_READER_PROTOCOL_MAX,
-  writerProtocol: CURRENT_WRITER_PROTOCOL,
-  migrations: CURRENT_SQLITE_MIGRATIONS,
-});
-
-export const CURRENT_SCHEMA_MANIFEST_HASH = schemaManifestHash(CURRENT_SCHEMA_MANIFEST);
+/**
+ * Compatibility exports for callers that historically imported manifests from
+ * this module. The ordered definitions and all generated identities live in
+ * migration-catalog.ts.
+ */
+export {
+  BOOKSET_V3_UPGRADE_PLAN,
+  BOOKSET_V4_UPGRADE_PLAN,
+  CURRENT_DATA_FORMAT_VERSION,
+  CURRENT_DATABASE_GENERATION,
+  CURRENT_DATABASE_REVISION,
+  CURRENT_READER_PROTOCOL_MAX,
+  CURRENT_READER_PROTOCOL_MIN,
+  CURRENT_SCHEMA_MANIFEST,
+  CURRENT_SCHEMA_MANIFEST_HASH,
+  CURRENT_SCHEMA_VERSION,
+  CURRENT_SQLITE_MIGRATIONS,
+  CURRENT_WRITER_PROTOCOL,
+  HISTORICAL_SCHEMA_MANIFESTS,
+  JOURNAL_V5_UPGRADE_PLAN,
+  KNOWN_SCHEMA_MANIFESTS,
+  V2_SCHEMA_MANIFEST,
+  V3_DATABASE_REVISION,
+  V3_SCHEMA_MANIFEST,
+  V3_SCHEMA_VERSION,
+  V4_DATABASE_REVISION,
+  V4_SCHEMA_MANIFEST,
+  V4_SCHEMA_VERSION,
+  V5_DATABASE_REVISION,
+  V5_SCHEMA_MANIFEST,
+  V5_SCHEMA_VERSION,
+  V6_DATABASE_REVISION,
+  V6_SCHEMA_MANIFEST,
+  V6_SCHEMA_VERSION,
+  V7_SCHEMA_MANIFEST,
+  canonicalManifestJson,
+  computeSqliteMigrationChecksum,
+  hashSchemaManifest,
+  schemaManifestHash,
+} from "./migration-catalog.ts";
+export type { CurrentSqliteMigration, SqliteSchemaManifest } from "./migration-catalog.ts";

@@ -19,14 +19,7 @@ import { DomainError } from "../../core/types.ts";
 import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService, type DatabaseControlRecord } from "./database-control-service.ts";
-import { CORE_SCHEMA_SQLITE } from "../schema/core-schema.ts";
-import { DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
-import { CURRENT_SCHEMA_MANIFEST, V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, V7_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
-import { BOOKSET_V3_MIGRATION } from "../schema/bookset-v3-migration.ts";
-import { BOOKSET_V4_MIGRATION } from "../schema/bookset-v4-migration.ts";
-import { JOURNAL_V5_MIGRATION } from "../schema/journal-v5-migration.ts";
-import { SALES_V6_MIGRATION } from "../schema/sales-v6-migration.ts";
-import { PURCHASE_V7_MIGRATION } from "../schema/purchase-v7-migration.ts";
+import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 
 type CatalogRow = {
@@ -340,7 +333,7 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
 }
 
 function manifestForHistory(rows: readonly MigrationRow[]): SqliteSchemaManifest | undefined {
-  return [V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, V7_SCHEMA_MANIFEST, CURRENT_SCHEMA_MANIFEST].find((candidate) => candidate.migrations.length === rows.length && candidate.migrations.every((migration, index) => {
+  return KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.migrations.length === rows.length && candidate.migrations.every((migration, index) => {
     const actual = rows[index];
     return actual?.id === migration.id && actual?.dialect === migration.dialect && actual?.checksum === migration.checksum && actual?.status === migration.status && actual?.dirty_reason === null;
   }));
@@ -428,17 +421,16 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
     db.exec("PRAGMA foreign_keys = ON");
     db.exec(MIGRATION_SCHEMA_SQLITE);
     db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
-    db.exec(CORE_SCHEMA_SQLITE);
-    db.exec(DATABASE_CONTROL_TABLE_DDL);
+    db.exec(MIGRATION_CATALOG[0].sqlite);
+    db.exec(MIGRATION_CATALOG[1].sqlite);
     // The expected catalog is the actual production schema for the requested
     // history, not the v2 source catalog. Apply the immutable sequence through
     // the requested target so a v4 history cannot pass with missing 0004
     // objects or triggers.
-    if (expectedManifest.schemaVersion >= 3) db.exec(BOOKSET_V3_MIGRATION.sqlite);
-    if (expectedManifest.schemaVersion >= 4) db.exec(BOOKSET_V4_MIGRATION.sqlite);
-    if (expectedManifest.schemaVersion >= 5) db.exec(JOURNAL_V5_MIGRATION.sqlite);
-    if (expectedManifest.schemaVersion >= 6) db.exec(SALES_V6_MIGRATION.sqlite);
-    if (expectedManifest.schemaVersion >= 7) db.exec(PURCHASE_V7_MIGRATION.sqlite);
+    const expectedIds = new Set(expectedManifest.migrations.map((migration) => migration.id));
+    for (const entry of MIGRATION_CATALOG.slice(2)) {
+      if (expectedIds.has(entry.id)) db.exec(entry.sqlite);
+    }
     const catalog = queryRows<CatalogRow>(db, `
       SELECT type, name, tbl_name, sql
       FROM sqlite_schema

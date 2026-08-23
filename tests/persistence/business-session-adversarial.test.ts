@@ -86,14 +86,14 @@ async function mutate(path: string, sql: string): Promise<void> {
   }
 }
 
-async function expectGateRejects(path: string): Promise<void> {
+async function expectGateRejects(path: string, expectedCode = "DATABASE_CONTROL_UNAVAILABLE"): Promise<void> {
   const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
   let callbackCount = 0;
   await expect(
     runner.withBusinessSession("write", async () => {
       callbackCount += 1;
     }),
-  ).rejects.toMatchObject({ code: "DATABASE_CONTROL_UNAVAILABLE" });
+  ).rejects.toMatchObject({ code: expectedCode });
   expect(callbackCount).toBe(0);
 }
 
@@ -161,7 +161,7 @@ describe("BusinessSession adversarial compatibility gate", () => {
     test(`rejects ${name} before callback`, async () => {
       await withFixture(async (path) => {
         await mutate(path, sql);
-        await expectGateRejects(path);
+        await expectGateRejects(path, name.startsWith("stale") ? "UPDATE_REQUIRED" : "DATABASE_CONTROL_UNAVAILABLE");
       });
     });
   }

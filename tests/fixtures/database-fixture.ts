@@ -7,14 +7,14 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
 import type { BusinessSessionRunner, BusinessSession } from "../../src/application/ports/persistence.ts";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 
 export async function initializeTestDatabase(): Promise<BunDatabase> {
   const dbPath = join(tmpdir(), `test-${randomUUID()}.db`);
 
   // Bootstrap the database with all migrations through the application layer
   const backupPath = join(tmpdir(), `backup-${randomUUID()}.sqlite`);
-  await bootstrapSqliteApplication(dbPath, {
+  await initializeAndUpgradeSqliteApplication(dbPath, {
     backupDestinationPath: backupPath,
     cliVersion: "test",
     buildId: "test-fixture",

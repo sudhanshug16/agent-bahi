@@ -13,10 +13,7 @@ import { MigrationService } from "../infrastructure/services/migration-service.t
 import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
-import { BOOKSET_V3_UPGRADE_PLAN, BOOKSET_V4_UPGRADE_PLAN, JOURNAL_V5_UPGRADE_PLAN, SALES_V6_UPGRADE_PLAN, PURCHASE_V7_UPGRADE_PLAN, BANK_RECONCILIATION_V8_UPGRADE_PLAN } from "../infrastructure/schema/upgrade-plans.ts";
-import { CORE_MIGRATIONS } from "../infrastructure/schema/core-schema.ts";
-import { DATABASE_CONTROL_MIGRATIONS } from "../infrastructure/schema/database-control-schema.ts";
-import { V2_SCHEMA_MANIFEST, V3_SCHEMA_MANIFEST, V4_SCHEMA_MANIFEST, V5_SCHEMA_MANIFEST, V6_SCHEMA_MANIFEST, V7_SCHEMA_MANIFEST } from "../infrastructure/schema/current-manifest.ts";
+import { FOUNDATION_MIGRATIONS, ORDERED_UPGRADE_STEPS, CURRENT_SCHEMA_MANIFEST } from "../infrastructure/schema/migration-catalog.ts";
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
 import { LedgerReportService } from "./services/ledger-report-service.ts";
 
@@ -45,15 +42,26 @@ export interface SqliteBootstrapOptions {
   now?: Date;
 }
 
+export interface SqliteDatabaseInitializationOptions {
+  cliVersion?: string;
+  buildId?: string;
+  now?: Date;
+}
+
+export interface SqliteDatabaseUpgradeOptions extends SqliteDatabaseInitializationOptions {
+  backupDestinationPath: string;
+}
+
 /**
  * Each upgrade hop gets its own deterministic, no-replace artifact. The
  * coordinator owns collision handling, so an existing path is never replaced
  * or silently reused for a different hop.
  */
-function backupDestinationForHop(basePath: string, hop: "v2-to-v3" | "v3-to-v4" | "v4-to-v5" | "v5-to-v6" | "v6-to-v7" | "v7-to-v8"): string {
+function backupDestinationForStep(basePath: string, stepId: string): string {
+  if (!/^\d{4}-[a-z0-9-]+$/.test(stepId)) throw new Error("Migration step id is not a safe backup suffix");
   return basePath.endsWith(".sqlite")
-    ? `${basePath.slice(0, -".sqlite".length)}.${hop}.sqlite`
-    : `${basePath}.${hop}.sqlite`;
+    ? `${basePath.slice(0, -".sqlite".length)}.${stepId}.sqlite`
+    : `${basePath}.${stepId}.sqlite`;
 }
 
 /**
@@ -102,120 +110,123 @@ export function createSqliteApplication(
   );
 }
 
-/**
- * Production bootstrap. The v2 foundation is initialized first, then the
- * immutable coordinator applies each pending SQLite upgrade in sequence.
- * Returns the public facade.
- */
-export async function bootstrapSqliteApplication(
+/** Explicit operator/test initialization: creates only the foundation. */
+export async function initializeSqliteDatabase(
   dbPath: string,
-  options: SqliteBootstrapOptions,
-): Promise<PublicApplicationFacade> {
+  options: SqliteDatabaseInitializationOptions = {},
+): Promise<void> {
   const db = new SqliteAdapter({ path: dbPath });
   const now = options.now ?? new Date();
   try {
-    await new MigrationService(db, "sqlite").migrate([
-      { id: CORE_MIGRATIONS.id, sql: CORE_MIGRATIONS.sqlite },
-      { id: DATABASE_CONTROL_MIGRATIONS.id, sql: DATABASE_CONTROL_MIGRATIONS.sqlite },
-    ]);
+    await new MigrationService(db, "sqlite").migrate(FOUNDATION_MIGRATIONS);
     const control = new DatabaseControlService(db, "sqlite");
     await db.withMigrationLease((session) => control.initialize({
       cliVersion: options.cliVersion ?? "agent-bahi",
-      buildId: options.buildId ?? "bootstrap",
+      buildId: options.buildId ?? "initialize",
       now,
     }, session).then(() => undefined));
+  } finally {
+    await db.close();
+  }
+}
 
+/**
+ * Explicit operator upgrade action. Normal application construction never
+ * calls this function; callers must authorize backup and DDL themselves.
+ */
+export async function upgradeSqliteDatabase(
+  dbPath: string,
+  options: SqliteDatabaseUpgradeOptions,
+): Promise<void> {
+  const db = new SqliteAdapter({ path: dbPath });
+  const now = options.now ?? new Date();
+  try {
+    const control = new DatabaseControlService(db, "sqlite");
     const inspection = await control.inspect();
     if (inspection.status !== "AVAILABLE" || !inspection.record) {
-      throw new Error("Database control did not converge to a known foundation state");
+      throw new Error("Database is not initialized for an explicit upgrade");
     }
-
-    // Every versioned upgrade uses the coordinator
-    // and its verified pre-DDL backup boundary.
-    if (inspection.record.schemaVersion === V2_SCHEMA_MANIFEST.schemaVersion) {
+    let schemaVersion = inspection.record.schemaVersion;
+    for (const step of ORDERED_UPGRADE_STEPS) {
+      if (step.targetManifest.schemaVersion <= schemaVersion) continue;
+      if (step.sourceManifest.schemaVersion !== schemaVersion) {
+        throw new Error(`Database schema cannot advance from v${schemaVersion} with ${step.migration.id}`);
+      }
       await new UpgradeCoordinator(db, new BackupService({
         sourcePath: dbPath,
-        expectedSourceManifest: V2_SCHEMA_MANIFEST,
+        expectedSourceManifest: step.sourceManifest,
       })).upgrade({
-        plan: BOOKSET_V3_UPGRADE_PLAN,
-        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v2-to-v3"),
+        plan: step,
+        backupDestinationPath: backupDestinationForStep(options.backupDestinationPath, step.migration.id),
         cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "bootstrap",
+        buildId: options.buildId ?? "upgrade",
         now,
       });
+      schemaVersion = step.targetManifest.schemaVersion;
     }
-
-    const postV3Inspection = await new DatabaseControlService(db, "sqlite", V3_SCHEMA_MANIFEST).inspect();
-    if (postV3Inspection.status === "AVAILABLE" && postV3Inspection.record?.schemaVersion === V3_SCHEMA_MANIFEST.schemaVersion) {
-      await new UpgradeCoordinator(db, new BackupService({
-        sourcePath: dbPath,
-        expectedSourceManifest: V3_SCHEMA_MANIFEST,
-      })).upgrade({
-        plan: BOOKSET_V4_UPGRADE_PLAN,
-        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v3-to-v4"),
-        cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "bootstrap",
-        now,
-      });
-    }
-
-    const postV4Inspection = await new DatabaseControlService(db, "sqlite", V4_SCHEMA_MANIFEST).inspect();
-    if (postV4Inspection.status === "AVAILABLE" && postV4Inspection.record?.schemaVersion === V4_SCHEMA_MANIFEST.schemaVersion) {
-      await new UpgradeCoordinator(db, new BackupService({
-        sourcePath: dbPath,
-        expectedSourceManifest: V4_SCHEMA_MANIFEST,
-      })).upgrade({
-        plan: JOURNAL_V5_UPGRADE_PLAN,
-        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v4-to-v5"),
-        cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "bootstrap",
-        now,
-      });
-    }
-
-    const postV5Inspection = await new DatabaseControlService(db, "sqlite", V5_SCHEMA_MANIFEST).inspect();
-    if (postV5Inspection.status === "AVAILABLE" && postV5Inspection.record?.schemaVersion === V5_SCHEMA_MANIFEST.schemaVersion) {
-      await new UpgradeCoordinator(db, new BackupService({
-        sourcePath: dbPath,
-        expectedSourceManifest: V5_SCHEMA_MANIFEST,
-      })).upgrade({
-        plan: SALES_V6_UPGRADE_PLAN,
-        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v5-to-v6"),
-        cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "bootstrap",
-        now,
-      });
-    }
-
-    const postV6Inspection = await new DatabaseControlService(db, "sqlite", V6_SCHEMA_MANIFEST).inspect();
-    if (postV6Inspection.status === "AVAILABLE" && postV6Inspection.record?.schemaVersion === V6_SCHEMA_MANIFEST.schemaVersion) {
-      await new UpgradeCoordinator(db, new BackupService({
-        sourcePath: dbPath,
-        expectedSourceManifest: V6_SCHEMA_MANIFEST,
-      })).upgrade({
-        plan: PURCHASE_V7_UPGRADE_PLAN,
-        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v6-to-v7"),
-        cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "bootstrap",
-        now,
-      });
-    }
-
-    const postV7Inspection = await new DatabaseControlService(db, "sqlite", V7_SCHEMA_MANIFEST).inspect();
-    if (postV7Inspection.status === "AVAILABLE" && postV7Inspection.record?.schemaVersion === V7_SCHEMA_MANIFEST.schemaVersion) {
-      await new UpgradeCoordinator(db, new BackupService({
-        sourcePath: dbPath,
-        expectedSourceManifest: V7_SCHEMA_MANIFEST,
-      })).upgrade({
-        plan: BANK_RECONCILIATION_V8_UPGRADE_PLAN,
-        backupDestinationPath: backupDestinationForHop(options.backupDestinationPath, "v7-to-v8"),
-        cliVersion: options.cliVersion ?? "agent-bahi",
-        buildId: options.buildId ?? "bootstrap",
-        now,
-      });
+    const finalInspection = await new DatabaseControlService(db, "sqlite", CURRENT_SCHEMA_MANIFEST).inspect();
+    if (finalInspection.status !== "AVAILABLE" || finalInspection.record?.schemaVersion !== CURRENT_SCHEMA_MANIFEST.schemaVersion) {
+      throw new Error("Explicit database upgrade did not reach the latest catalog manifest");
     }
   } finally {
     await db.close();
   }
+}
+
+/** Explicit initialization followed by the explicit upgrade action. */
+export async function initializeAndUpgradeSqliteDatabase(
+  dbPath: string,
+  options: SqliteDatabaseUpgradeOptions,
+): Promise<void> {
+  await initializeSqliteDatabase(dbPath, options);
+  await upgradeSqliteDatabase(dbPath, options);
+}
+
+/** Explicit test/operator composition after initialization and upgrade. */
+export async function initializeAndUpgradeSqliteApplication(
+  dbPath: string,
+  options: SqliteDatabaseUpgradeOptions,
+): Promise<PublicApplicationFacade> {
+  await initializeAndUpgradeSqliteDatabase(dbPath, options);
+  return createSqliteApplication(dbPath);
+}
+
+/**
+ * Side-effect-free compatibility status for CLI/MCP callers. It never creates
+ * schema objects or runs migrations; an older valid database is UPDATE_REQUIRED.
+ */
+export async function inspectSqliteApplicationCompatibility(dbPath: string): Promise<{
+  status: "UNINITIALIZED" | "UNAVAILABLE" | "UPDATE_REQUIRED" | "READY";
+  currentSchemaVersion?: number;
+  requiredSchemaVersion: number;
+  currentDataFormatVersion?: number;
+  requiredDataFormatVersion: number;
+}> {
+  const db = new SqliteAdapter({ path: dbPath });
+  try {
+    const inspection = await new DatabaseControlService(db, "sqlite").inspect();
+    if (inspection.status !== "AVAILABLE" || !inspection.record) {
+      return {
+        status: inspection.status === "UNINITIALIZED" ? "UNINITIALIZED" : "UNAVAILABLE",
+        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+      };
+    }
+    const currentSchemaVersion = inspection.record.schemaVersion;
+    const currentDataFormatVersion = inspection.record.dataFormatVersion;
+    return {
+      status: currentSchemaVersion === CURRENT_SCHEMA_MANIFEST.schemaVersion && currentDataFormatVersion === CURRENT_SCHEMA_MANIFEST.dataFormatVersion ? "READY" : "UPDATE_REQUIRED",
+      currentSchemaVersion,
+      requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+      currentDataFormatVersion,
+      requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+/** Normal construction is side-effect free; callers must choose explicit upgrade separately. */
+export function bootstrapSqliteApplication(dbPath: string): PublicApplicationFacade {
   return createSqliteApplication(dbPath);
 }

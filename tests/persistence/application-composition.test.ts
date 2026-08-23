@@ -3,14 +3,14 @@ import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 import { brandBookSetId } from "../../src/core/types.ts";
 
 test("production composition exposes typed services without raw persistence handles", async () => {
   const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-application-"));
   const dbPath = join(directory, "application.sqlite");
   try {
-    const application = await bootstrapSqliteApplication(dbPath, {
+    const application = await initializeAndUpgradeSqliteApplication(dbPath, {
       backupDestinationPath: join(directory, "bootstrap.sqlite"),
       cliVersion: "0.0.0-test",
       buildId: "composition",
@@ -42,7 +42,7 @@ test("bootstrap applies the journal migration and scope resolution is active-onl
   const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-bootstrap-"));
   const dbPath = join(directory, "bootstrap.sqlite");
   try {
-    const application = await bootstrapSqliteApplication(dbPath, {
+    const application = await initializeAndUpgradeSqliteApplication(dbPath, {
       backupDestinationPath: join(directory, "v2.sqlite"),
       cliVersion: "0.0.0-test",
       buildId: "bootstrap-test",

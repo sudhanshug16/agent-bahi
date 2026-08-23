@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 
 function env<T>(tenantId: string, bookSetId: string, payload: T, reason = "bank reconciliation test") {
   return { schemaVersion: 1 as const, tenantId: tenantId as any, bookSetId: bookSetId as any, requestId: randomUUID(), actor: { kind: "HUMAN" as const, id: "owner" }, source: "CLI" as const, reason, payload };
@@ -15,7 +15,7 @@ describe("bank statement import and reconciliation", () => {
 
   it("imports, deterministically candidates, confirms, undoes, and reconciles receipt/payment journals", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-bank-"));
-    const app = await bootstrapSqliteApplication(join(directory, "books.sqlite"), { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const app = await initializeAndUpgradeSqliteApplication(join(directory, "books.sqlite"), { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenantResult = await app.tenant.create(env("bootstrap", "ignored", { kind: "COMPANY", name: "Bank Co", baseCurrency: "INR" }));
     const created = JSON.parse(tenantResult.resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { cash: string; assets: string; income: string; expenses: string; liabilities: string } };
     const customerResult = await app.party.create(env(created.tenantId, created.defaultBookSetId, { displayName: "Customer" }));
@@ -57,7 +57,7 @@ describe("bank statement import and reconciliation", () => {
   it("rejects arithmetic, changed duplicate, mismatch, scope, and double matches atomically", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-bank-negative-"));
     const dbPath = join(directory, "books.sqlite");
-    const app = await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenantResult = await app.tenant.create(env("bootstrap", "ignored", { kind: "COMPANY", name: "Bank Negative" }));
     const created = JSON.parse(tenantResult.resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { cash: string; equity: string } };
     const bad = env(created.tenantId, created.defaultBookSetId, { bankAccountId: created.seedAccountIds.cash, externalStatementId: "BAD", periodStart: "2026-04-01", periodEnd: "2026-04-30", openingBalanceMinor: 0, closingBalanceMinor: 20, rows: [{ lineNumber: 1, transactionDate: "2026-04-01", description: "bad", signedAmountMinor: 10 }] });

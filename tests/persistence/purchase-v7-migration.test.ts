@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Database as BunDatabase } from "bun:sqlite";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
@@ -38,7 +38,7 @@ describe("Purchase V7 migration", () => {
     await db.withMigrationLease((session) => new DatabaseControlService(db, "sqlite", V6_SCHEMA_MANIFEST).initialize({ cliVersion: "test", buildId: "v6", now: new Date() }, session).then(() => undefined));
     await db.close();
 
-    await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite"), cliVersion: "test", buildId: "v7" });
+    await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite"), cliVersion: "test", buildId: "v7" });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
     expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0008-bank-reconciliation" });
     expect(native.query("SELECT name FROM pragma_table_info('parties') WHERE name = 'party_role'").get()).toEqual({ name: "party_role" });
@@ -62,7 +62,7 @@ describe("Purchase V7 migration", () => {
     ]);
     await db.withMigrationLease((session) => new DatabaseControlService(db, "sqlite", V7_SCHEMA_MANIFEST).initialize({ cliVersion: "test", buildId: "v7", now: new Date() }, session).then(() => undefined));
     await db.close();
-    await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite"), cliVersion: "test", buildId: "v8" });
+    await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite"), cliVersion: "test", buildId: "v8" });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
     expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0008-bank-reconciliation" });
     expect(native.query("SELECT COUNT(*) AS count FROM bank_matches").get()).toEqual({ count: 0n });

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Database as BunDatabase } from "bun:sqlite";
-import { bootstrapSqliteApplication } from "../../src/application/application.ts";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 
 function envelope<T>(tenantId: string, bookSetId: string, payload: T, requestId: string = randomUUID()) {
   return {
@@ -29,7 +29,7 @@ describe("vendor bill and payment vertical slice", () => {
   it("creates, posts, partially pays, settles, and reports a vendor bill", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-purchase-"));
     const dbPath = join(directory, "books.sqlite");
-    const app = await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenantResult = await app.tenant.create({
       schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "COMPANY", name: "Purchase Co", baseCurrency: "INR" },
     });
@@ -79,7 +79,7 @@ describe("vendor bill and payment vertical slice", () => {
   it("rejects wrong classes, scope/vendor mismatches, over-allocation, and conflicting replays without purchase mutations", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-purchase-reject-"));
     const dbPath = join(directory, "books.sqlite");
-    const app = await bootstrapSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenantResult = await app.tenant.create({
       schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "INDIVIDUAL", name: "Purchase Reject Co" },
     });
