@@ -88,6 +88,13 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "expense_advance_allocations",
   "expense_advance_repayments",
   "expense_reimbursements",
+  "gst_outward_facts",
+  "gst_outward_line_facts",
+  "gst_returns",
+  "gst_return_snapshots",
+  "gst_return_validations",
+  "gst_return_exports",
+  "gst_return_observations",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

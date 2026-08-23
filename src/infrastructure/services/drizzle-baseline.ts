@@ -24,8 +24,9 @@ export const DRIZZLE_FIXED_ASSETS_MIGRATION_ID = "0012_fixed_assets_v1" as const
 export const DRIZZLE_FX_V1_MIGRATION_ID = "0013_fx_v1" as const;
 export const DRIZZLE_PAYROLL_V1_MIGRATION_ID = "0014_payroll_v1" as const;
 export const DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID = "0015_expense_claims_v1" as const;
+export const DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID = "0016_gst_return_readiness_v1" as const;
 /** Backwards-compatible name for the current official Drizzle migration. */
-export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID;
+export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID;
 
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -44,7 +45,8 @@ const currentEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZ
 const fxEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_FX_V1_MIGRATION_ID);
 const payrollEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_PAYROLL_V1_MIGRATION_ID);
 const expenseClaimsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID);
-if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when) || !payrollEntry || !Number.isSafeInteger(payrollEntry.when) || !expenseClaimsEntry || !Number.isSafeInteger(expenseClaimsEntry.when)) {
+const gstReturnReadinessEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID);
+if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when) || !payrollEntry || !Number.isSafeInteger(payrollEntry.when) || !expenseClaimsEntry || !Number.isSafeInteger(expenseClaimsEntry.when) || !gstReturnReadinessEntry || !Number.isSafeInteger(gstReturnReadinessEntry.when)) {
   throw new Error("Official Drizzle baseline journal entry is missing or malformed");
 }
 if (!gstEntry || !Number.isSafeInteger(gstEntry.when) || !tdsEntry || !Number.isSafeInteger(tdsEntry.when) || !currentEntry || !Number.isSafeInteger(currentEntry.when)) {
@@ -78,8 +80,12 @@ export const DRIZZLE_EXPENSE_CLAIMS_V1_HASH = createHash("sha256")
   .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID}.sql`)))
   .digest("hex");
 export const DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT = expenseClaimsEntry.when;
-export const DRIZZLE_GST_HASH = DRIZZLE_EXPENSE_CLAIMS_V1_HASH;
-export const DRIZZLE_GST_CREATED_AT = DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT;
+export const DRIZZLE_GST_RETURN_READINESS_V1_HASH = createHash("sha256")
+  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`)))
+  .digest("hex");
+export const DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT = gstReturnReadinessEntry.when;
+export const DRIZZLE_GST_HASH = DRIZZLE_GST_RETURN_READINESS_V1_HASH;
+export const DRIZZLE_GST_CREATED_AT = DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT;
 
 export interface DrizzleControlInitializationOptions {
   readonly cliVersion: string;
@@ -104,6 +110,7 @@ export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
     { id: null, hash: DRIZZLE_FX_V1_HASH, createdAt: DRIZZLE_FX_V1_CREATED_AT },
     { id: null, hash: DRIZZLE_PAYROLL_V1_HASH, createdAt: DRIZZLE_PAYROLL_V1_CREATED_AT },
     { id: null, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH, createdAt: DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT },
+    { id: null, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH, createdAt: DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT },
   ];
 }
 

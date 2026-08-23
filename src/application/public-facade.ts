@@ -23,6 +23,7 @@ import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeRe
 import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
 import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
 import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
+import { recordOutwardFacts, getOutwardFacts, listOutwardFacts, prepareReturn, validateReturn, exportReviewPack, recordObservation, getReturn, listReturns, readinessReport, type GstOutwardFactsPayload, type GstOutwardFactsView, type GstReturnPreparePayload, type GstReturnPrepareResult, type GstReturnValidateResult, type GstReturnExportPackPayload, type GstReturnExportPackResult, type GstReturnObservationPayload, type GstEnvelope } from "./services/gst-return-readiness-service.ts";
 import type { CompanyStatusInput, CompanyStatusResult, CompanyStatusService } from "./services/company-status-service.ts";
 import { executeDeductorProfileCreate, executePartyTaxProfileCreate, executeTaxRuleSnapshotCreate, executeWithholdingDeposit, listDeductorProfiles, listPartyTaxProfiles, listWithholdingRegister, type DeductorProfilePayload, type PartyTaxProfilePayload, type TaxRuleSnapshotPayload, type WithholdingDepositPayload, type WithholdingEventRow, type TaxKind } from "./services/tds-tcs-service.ts";
 import { executeAssetRegister, executeDepreciation, executeAssetTaxRule, executeTaxBlock, executeTaxCompute, executeAssetDispose, listAssetRegister, listBookDepreciation, listTaxSchedule, bookTaxReconciliation, type AssetRegisterPayload, type AssetRegisterResult, type DepreciationPreviewPayload, type DepreciationResult, type AssetTaxRulePayload, type TaxRuleResult, type TaxBlockPayload, type TaxBlockResult, type TaxComputePayload, type TaxRunResult, type AssetDisposePayload, type AssetDisposeResult, type AssetRegisterRow, type DepreciationLineResult, type TaxLineResult } from "./services/fixed-assets-service.ts";
@@ -132,6 +133,10 @@ export interface GstRegisterOperations {
   sales(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
   purchases(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
 }
+export interface GstReturnReadinessOperations {
+  outwardFacts: { record(envelope: GstEnvelope<GstOutwardFactsPayload>): Promise<CommandResult<{ factsId: string; invoiceId: string }>>; get(tenantId: TenantId, bookSetId: BookSetId, factsId: string): Promise<GstOutwardFactsView>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<GstOutwardFactsView[]> };
+  return: { prepare(envelope: GstEnvelope<GstReturnPreparePayload>): Promise<CommandResult<GstReturnPrepareResult>>; validate(tenantId: TenantId, bookSetId: BookSetId, snapshotId: string, actorId: string): Promise<GstReturnValidateResult>; exportReviewPack(envelope: GstEnvelope<GstReturnExportPackPayload>): Promise<CommandResult<GstReturnExportPackResult>>; recordObservation(envelope: GstEnvelope<GstReturnObservationPayload>): Promise<CommandResult<{ observationId: string; returnId: string }>>; get(tenantId: TenantId, bookSetId: BookSetId, returnId: string): Promise<Record<string, unknown>>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<Record<string, unknown>>>; readinessReport(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<{ returnId: string; gstin: string; periodFrom: string; periodTo: string; readinessStatus?: string; lastExportedAt?: string }>> };
+}
 export interface CompanyStatusOperations { status(input?: CompanyStatusInput): Promise<CompanyStatusResult>; }
 export interface ExpenseOperations {
   claimant: { create(envelope: CommandEnvelope<ClaimantCreatePayload> & { bookSetId: BookSetId }): Promise<CommandResult<{ claimantId: string; status: "ACTIVE" }>>; get(tenantId: TenantId, bookSetId: BookSetId, claimantId: string): Promise<ClaimantView>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<ClaimantView[]> };
@@ -196,7 +201,7 @@ export type PublicApplicationFacade = {
   bankStatement: BankStatementCommands;
   bankMatch: BankMatchCommands;
   bankReconciliation: BankReconciliationOperations;
-  gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations };
+  gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations; returnReadiness: GstReturnReadinessOperations };
   tax: TaxOperations;
   fixedAssets: FixedAssetOperations;
   fx: FxOperations;
@@ -280,6 +285,22 @@ export function createPublicFacade(
       register: {
         sales: (args) => listGstRegister(sessionRunner, { ...args, documentType: "SALE" }),
         purchases: (args) => listGstRegister(sessionRunner, { ...args, documentType: "PURCHASE" }),
+      },
+      returnReadiness: {
+        outwardFacts: {
+          record: (envelope) => recordOutwardFacts(sessionRunner, envelope),
+          get: (tenantId, bookSetId, factsId) => getOutwardFacts(sessionRunner, tenantId, bookSetId, factsId),
+          list: (tenantId, bookSetId) => listOutwardFacts(sessionRunner, tenantId, bookSetId),
+        },
+        return: {
+          prepare: (envelope) => prepareReturn(sessionRunner, envelope),
+          validate: (tenantId, bookSetId, snapshotId, actorId) => validateReturn(sessionRunner, tenantId, bookSetId, snapshotId, actorId),
+          exportReviewPack: (envelope) => exportReviewPack(sessionRunner, envelope),
+          recordObservation: (envelope) => recordObservation(sessionRunner, envelope),
+          get: (tenantId, bookSetId, returnId) => getReturn(sessionRunner, tenantId, bookSetId, returnId),
+          list: (tenantId, bookSetId) => listReturns(sessionRunner, tenantId, bookSetId),
+          readinessReport: (tenantId, bookSetId) => readinessReport(sessionRunner, tenantId, bookSetId),
+        },
       },
     },
     company: { status: (input) => companyStatusService.status(input) },
