@@ -45,6 +45,11 @@ function printHuman(value: unknown): void {
   else process.stdout.write(`${JSON.stringify(jsonSafe(value), null, 2)}\n`);
 }
 
+function printHumanError(value: unknown): void {
+  if (typeof value === "string") process.stderr.write(`${value}\n`);
+  else process.stderr.write(`${JSON.stringify(jsonSafe(value), null, 2)}\n`);
+}
+
 function errorExitCode(envelope: DispatchEnvelope): number {
   if (envelope.ok) return EXIT_CODES.SUCCESS;
   if (["UNINITIALIZED", "UPDATE_REQUIRED", "DATABASE_UNAVAILABLE", "INCOMPATIBLE_DATABASE"].includes(envelope.error.code)) return EXIT_CODES.DATABASE;
@@ -96,7 +101,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     const entry = operationId ? findOperation(operationId) : undefined;
     if (!entry) {
       const error: DispatchEnvelope = { ok: false, operationId, error: { code: "UNKNOWN_OPERATION", message: `Unknown operation: ${operationId ?? ""}` } };
-      if (json) printJson(error); else printHuman(`Error [${error.error.code}]: ${error.error.message}`);
+      if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
       return EXIT_CODES.USAGE;
     }
     if (json) printJson({ ok: true, operationId: "operations.describe", result: entry }); else printHuman(entry);
@@ -107,7 +112,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     const inputSpec = takeFlag(args, "--input");
     if (!operationId) {
       const error: DispatchEnvelope = { ok: false, error: { code: "INVALID_INPUT", message: "operations run requires an operation ID" } };
-      if (json) printJson(error); else printHuman(`Error [${error.error.code}]: ${error.error.message}`);
+      if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
       return EXIT_CODES.USAGE;
     }
     try {
@@ -123,12 +128,12 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else {
     const error: DispatchEnvelope = { ok: false, error: { code: "UNKNOWN_OPERATION", message: "Expected operations list, operations describe, operations run, or database.*" } };
-    if (json) printJson(error); else printHuman(`Error [${error.error.code}]: ${error.error.message}`);
+    if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
     return EXIT_CODES.USAGE;
   }
 
   if (json) printJson(result);
   else if (result.ok) printHuman(result.result);
-  else printHuman(`Error [${result.error.code}]: ${result.error.message}${result.error.details ? `\n${JSON.stringify(result.error.details, null, 2)}` : ""}`);
+  else printHumanError(`Error [${result.error.code}]: ${result.error.message}${result.error.details ? `\n${JSON.stringify(result.error.details, null, 2)}` : ""}`);
   return errorExitCode(result);
 }

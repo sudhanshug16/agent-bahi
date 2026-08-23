@@ -37,6 +37,29 @@ describe("shared CLI and stdio MCP transport", () => {
     }
   });
 
+  it("keeps human failures on stderr while successful human output stays on stdout", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-bahi-human-"));
+    const db = join(dir, "human.sqlite");
+    try {
+      const unknown = await cli(db, ["operations", "run", "unknown.operation", "--input", "-"], {});
+      expect(unknown.code).toBe(2);
+      expect(unknown.stdout).toBe("");
+      expect(unknown.stderr).toContain("UNKNOWN_OPERATION");
+
+      expect((await cli(db, ["database.init", "--json"])).code).toBe(0);
+      const domain = await cli(db, ["operations", "run", "tenant.get", "--input", "-"], { tenantId: "missing-tenant" });
+      expect(domain.code).toBe(4);
+      expect(domain.stdout).toBe("");
+      expect(domain.stderr).toContain("TENANT_NOT_FOUND");
+
+      const success = await cli(db, ["database.status"]);
+      expect(success.code).toBe(0);
+      expect(success.stdout).toContain('"status": "READY"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("uses one typed operation dispatcher for CLI and official MCP stdio", async () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-bahi-mcp-"));
     const db = join(dir, "books.sqlite");
