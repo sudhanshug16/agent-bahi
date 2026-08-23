@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { OperationDispatcher } from "./dispatcher.ts";
 import type { DispatchEnvelope } from "./types.ts";
+import { runRemoteMcp } from "../mcp-http.ts";
 
 export const EXIT_CODES = {
   SUCCESS: 0,
@@ -23,7 +24,10 @@ function help(): string {
     "  agent-bahi [--database PATH] database.status|database.init",
     "  agent-bahi [--database PATH] database.upgrade --backup ABS_PATH",
     "  agent-bahi [--database PATH] status [--tenant-id ID] [--book-set-id ID] [--as-of-date YYYY-MM-DD] [--json]",
-    "  agent-bahi [--database PATH] mcp",
+    "  agent-bahi [--database PATH|sqlite:///URL] mcp",
+    "  agent-bahi [--database PATH|sqlite:///URL] mcp serve [--host HOST] [--port PORT] [--allow-remote] [--token-file PATH] [--allow-insecure-no-auth] [--allowed-host HOST]",
+    "  Local stdio MCP: agent-bahi-mcp (database updates remain CLI-owned).",
+    "  Remote MCP: mcp serve speaks HTTP on loopback by default; use a TLS proxy/Tailscale for HTTPS.",
     "",
     "Normal business operations never initialize, upgrade, or mutate database schema.",
     "Use --input - (or a file path) for deterministic JSON operation input.",
@@ -101,13 +105,47 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
   const json = args.includes("--json");
   if (json) args.splice(args.indexOf("--json"), 1);
   const databasePath = takeFlag(args, "--database") ?? process.env.AGENT_BAHI_DATABASE ?? `${process.cwd()}/agent-bahi.sqlite`;
-  if (args.includes("--help") || args.includes("-h") || args.length === 0) {
+  if (args.includes("--help") || args.includes("-h") || args[0] === "help" || args.length === 0) {
     printHuman(help());
     return EXIT_CODES.SUCCESS;
   }
   if (args[0] === "mcp") {
-    process.stderr.write("Use the agent-bahi-mcp entrypoint for stdio MCP.\n");
-    return EXIT_CODES.USAGE;
+    if (args[1] !== "serve") {
+      process.stderr.write("Use the agent-bahi-mcp entrypoint for local stdio MCP, or `agent-bahi mcp serve` for remote HTTP MCP.\n");
+      return EXIT_CODES.USAGE;
+    }
+    const host = takeFlag(args, "--host");
+    const portValue = takeFlag(args, "--port");
+    const tokenFile = takeFlag(args, "--token-file");
+    const allowedHosts: string[] = [];
+    while (args.includes("--allowed-host")) {
+      const allowedHost = takeFlag(args, "--allowed-host");
+      if (!allowedHost) {
+        process.stderr.write("Error [INVALID_INPUT]: --allowed-host requires a host\n");
+        return EXIT_CODES.INPUT;
+      }
+      allowedHosts.push(allowedHost);
+    }
+    const port = portValue === undefined ? null : Number(portValue);
+    if (port !== null && (!Number.isInteger(port) || port < 0 || port > 65535)) {
+      process.stderr.write("Error [INVALID_INPUT]: --port must be an integer from 0 through 65535\n");
+      return EXIT_CODES.INPUT;
+    }
+    try {
+      await runRemoteMcp({
+        databasePath,
+        ...(host ? { host } : {}),
+        ...(port === null ? {} : { port }),
+        allowRemote: args.includes("--allow-remote"),
+        allowInsecureNoAuth: args.includes("--allow-insecure-no-auth"),
+        ...(tokenFile ? { tokenFile } : {}),
+        allowedHosts,
+      });
+      return EXIT_CODES.SUCCESS;
+    } catch (error) {
+      process.stderr.write(`Error [MCP_SERVER_CONFIGURATION]: ${error instanceof Error ? error.message : "server could not start"}\n`);
+      return EXIT_CODES.INPUT;
+    }
   }
 
   const metadataDispatcher = new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" });

@@ -1,0 +1,37 @@
+services:
+  agent-bahi:
+    build: .
+    image: agent-bahi:local
+    user: "10001:10001"
+    read_only: true
+    init: true
+    ports:
+      - "${AGENT_BAHI_MCP_PORT:-8787}:${AGENT_BAHI_MCP_PORT:-8787}"
+    environment:
+      AGENT_BAHI_DATABASE: /data/agent-bahi.sqlite
+      AGENT_BAHI_MCP_HOST: "${AGENT_BAHI_MCP_HOST:-127.0.0.1}"
+      AGENT_BAHI_MCP_PORT: "${AGENT_BAHI_MCP_PORT:-8787}"
+      # For a remote authenticated bind, set this to /run/secrets/agent_bahi_mcp_token
+      # and add the read-only secret mount below.
+      AGENT_BAHI_MCP_TOKEN_FILE: "${AGENT_BAHI_MCP_TOKEN_FILE:-}"
+    volumes:
+      - agent-bahi-data:/data
+    tmpfs:
+      - /tmp
+    stop_signal: SIGTERM
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:' + (process.env.AGENT_BAHI_MCP_PORT || '8787') + '/healthz').then(r => { if (!r.ok) process.exit(1); })"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    # secrets:
+    #   - agent_bahi_mcp_token
+
+volumes:
+  agent-bahi-data:
+
+# Provision this outside the repository when enabling remote auth:
+# secrets:
+#   agent_bahi_mcp_token:
+#     file: ./mcp-token

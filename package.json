@@ -16,6 +16,7 @@
     "test:gate0": "bun test tests/gate0/gate0.test.ts",
     "test:commands": "bun test tests/application/bookset-command.test.ts",
     "test": "bun test",
+    "build": "bun build src/cli.ts --compile --outfile dist/agent-bahi",
     "build:gate0": "bun build spikes/gate0/cli-smoke.ts --compile --outfile .gate0-build/agent-bahi-gate0"
   },
   "dependencies": {

@@ -11,3 +11,9 @@ Agents must inspect status first, provide explicit tenant/BookSet/TaxCase
 scope for mutations, preview before irreversible or human-gated actions,
 preserve evidence and result hashes, never equate export with government
 submission, and surface typed blockers instead of guessing.
+
+Transport choice is explicit: use `agent-bahi-mcp` for local stdio MCP, or
+`agent-bahi mcp serve` for bounded-session Streamable HTTP. HTTP is plain HTTP
+by design and may be placed behind a TLS reverse proxy or Tailscale. Agents
+must not initialize or upgrade databases through MCP; use the CLI-owned
+`database.init` or verified `database.upgrade --backup ABS_PATH` workflow.

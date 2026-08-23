@@ -9,6 +9,7 @@ private/
 node_modules/
 .gate0-build/*
 !.gate0-build/.gitkeep
+dist/
 
 # Private fixtures containing sensitive accounting data
 fixtures/private/

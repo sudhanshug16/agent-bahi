@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+.gate0-build
+private
+fixtures/private
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.zip
+*.log
