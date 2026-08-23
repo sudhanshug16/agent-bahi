@@ -2,7 +2,7 @@ import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtempSync, rmSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRemoteMcpServer } from "../../src/mcp-http.ts";
@@ -27,6 +27,11 @@ async function initializedDatabase(): Promise<{ directory: string; path: string 
   return { directory, path };
 }
 
+async function waitForClose(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => child.once("close", () => resolve()));
+}
+
 describe.serial("remote MCP Streamable HTTP", () => {
   it("smokes the compiled CLI/server binary", async () => {
     const binary = join(root, "dist", "agent-bahi");
@@ -49,18 +54,19 @@ describe.serial("remote MCP Streamable HTTP", () => {
             resolve(JSON.parse(line));
           }
         });
-        child.once("exit", (code) => reject(new Error(`compiled MCP exited before startup: ${code}`)));
+        child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`compiled MCP exited before startup: ${code}`)); });
+        if (child.exitCode !== null || child.signalCode !== null) reject(new Error(`compiled MCP exited before startup: ${child.exitCode ?? child.signalCode}`));
       });
       const bindUrl = new URL(String(diagnostic.bindUrl));
       expect(bindUrl.hostname).toBe("127.0.0.1");
       expect(bindUrl.port).not.toBe("0");
       expect((await fetch(`${bindUrl.origin}/healthz`)).status).toBe(200);
     } finally {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) => child.once("close", () => resolve()));
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      await waitForClose(child);
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, { timeout: 60_000 });
 
   it("starts through the documented CLI command, emits safe JSON diagnostics, and shuts down on SIGTERM", async () => {
     const database = await initializedDatabase();
@@ -77,7 +83,8 @@ describe.serial("remote MCP Streamable HTTP", () => {
             resolve(JSON.parse(line));
           }
         });
-        child.once("exit", (code) => reject(new Error(`MCP exited before startup: ${code}`)));
+        child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`MCP exited before startup: ${code}`)); });
+        if (child.exitCode !== null || child.signalCode !== null) reject(new Error(`MCP exited before startup: ${child.exitCode ?? child.signalCode}`));
       });
       const bindUrl = new URL(String(diagnostic.bindUrl));
       expect(bindUrl.hostname).toBe("127.0.0.1");
@@ -87,8 +94,8 @@ describe.serial("remote MCP Streamable HTTP", () => {
       expect(String(diagnostic.database)).not.toContain(database.directory);
       expect(await (await fetch(`${bindUrl.origin}/healthz`)).json()).toMatchObject({ ok: true, status: "LIVE" });
     } finally {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) => child.once("close", () => resolve()));
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      await waitForClose(child);
       rmSync(database.directory, { recursive: true, force: true });
     }
   });
