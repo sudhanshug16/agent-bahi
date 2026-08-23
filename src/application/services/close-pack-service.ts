@@ -38,7 +38,17 @@ export interface ClosePackExportResult {
 type ClosePackEnvelope<P> = CommandEnvelope<P> & { bookSetId: BookSetId };
 
 function isoDate(value: unknown, field: string): asserts value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new DomainError("INVALID_DATE", `${field} must be a valid ISO date`);
+  if (typeof value !== "string" || !/^(\d{4})-(\d{2})-(\d{2})$/.test(value)) {
+    throw new DomainError("INVALID_DATE", `${field} must be a valid ISO date`);
+  }
+  const [, yearText, monthText, dayText] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)!;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const roundTrip = new Date(Date.UTC(year, month - 1, day));
+  if (roundTrip.getUTCFullYear() !== year || roundTrip.getUTCMonth() !== month - 1 || roundTrip.getUTCDate() !== day) {
+    throw new DomainError("INVALID_DATE", `${field} must be a valid ISO date`);
+  }
 }
 
 function nonblank(value: unknown, field: string): string {

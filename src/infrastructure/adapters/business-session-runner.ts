@@ -6,8 +6,9 @@ import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.t
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService } from "../services/database-control-service.ts";
 import { MigrationService, MIGRATION_SCHEMA_SQLITE } from "../services/migration-service.ts";
-import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
-import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_MIGRATIONS_TABLE, officialDrizzleJournal } from "../services/drizzle-baseline.ts";
+import { CURRENT_SCHEMA_MANIFEST, V8_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_MIGRATIONS_TABLE, officialDrizzleJournal, validateOfficialDrizzleJournal } from "../services/drizzle-baseline.ts";
+import { expectedSqliteCatalog, readSqliteCatalog, sqliteCatalogMatches } from "../services/sqlite-catalog-validator.ts";
 
 const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tenants",
@@ -471,6 +472,9 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
       if (drizzleMetadata && !legacyMetadata) {
         return this.validateFreshDrizzleDatabase(connection, controlMetadata, drizzleMetadata);
       }
+      if (drizzleMetadata && legacyMetadata) {
+        return this.validateBridgedDatabase(connection, controlMetadata, drizzleMetadata, legacyMetadata);
+      }
       if (DatabaseControlService.validateDatabaseControlTableSchema(controlMetadata)) {
         throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control schema is unavailable");
       }
@@ -515,6 +519,9 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
           throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Migration history is not canonical");
         }
       });
+      if (!sqliteCatalogMatches(readSqliteCatalog(connection), expectedSqliteCatalog(this.expectedManifest, { kind: "legacy" }))) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database catalog is not canonical");
+      }
 
       const readerMin = normalizeInteger(control.reader_compatibility_min, "reader_compatibility_min");
       const readerMax = normalizeInteger(control.reader_compatibility_max, "reader_compatibility_max");
@@ -571,6 +578,10 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
     const control = controlRows[0];
     const journalRows = connection.prepare(`SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`).all() as Array<Record<string, unknown>>;
     if (journalRows.length !== officialDrizzleJournal().length) throw new DomainError("UPDATE_REQUIRED", "Database update is required before business work");
+    try { validateOfficialDrizzleJournal(journalRows); } catch { throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Official Drizzle migration journal is not canonical"); }
+    if (!sqliteCatalogMatches(readSqliteCatalog(connection), expectedSqliteCatalog(V8_SCHEMA_MANIFEST, { kind: "drizzle", journalLength: journalRows.length }))) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Official Drizzle catalog is not canonical");
+    }
     const journal = journalRows.at(-1)!;
     if (String(control.last_migration_id) !== DRIZZLE_GST_MIGRATION_ID
       || String(control.last_migration_checksum) !== String(journal.hash)
@@ -588,6 +599,50 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
       || integer(control.required_writer_protocol) !== 1 || integer(control.revision) !== 7 || integer(control.generation) !== 1
       || String(control.state) !== "READY" || control.recovery_reason != null) {
       throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Fresh Drizzle control metadata is not ready");
+    }
+    return { readerCompatibilityMin: 1, readerCompatibilityMax: 1, requiredWriterProtocol: 1 };
+  }
+
+  private validateBridgedDatabase(
+    connection: BunDatabase,
+    controlMetadata: TableMetadata,
+    journalMetadata: TableMetadata,
+    legacyMetadata: TableMetadata,
+  ): GateRecord {
+    if (DatabaseControlService.validateDrizzleDatabaseControlTableSchema(controlMetadata)) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Bridged control schema is not canonical");
+    }
+    if (journalMetadata.kind !== "TABLE" || journalMetadata.columns.map((column) => column.name).join(",") !== "id,hash,created_at") {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Official Drizzle journal schema is not canonical");
+    }
+    if (legacyMetadata.kind !== "TABLE" || normalizeDdl(legacyMetadata.ddl ?? "") !== normalizeDdl(MIGRATION_SCHEMA_SQLITE) || !MigrationService.isCurrentMigrationSchema(legacyMetadata)) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Legacy migration schema is not canonical");
+    }
+    const journalRows = connection.prepare(`SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`).all() as Array<Record<string, unknown>>;
+    try { validateOfficialDrizzleJournal(journalRows); } catch { throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Official Drizzle migration journal is not canonical"); }
+    if (journalRows.length !== officialDrizzleJournal().length) throw new DomainError("UPDATE_REQUIRED", "Database update is required before business work");
+    const migrationRows = connection.prepare("SELECT id, dialect, checksum, status FROM schema_migrations ORDER BY rowid").all() as Array<Record<string, unknown>>;
+    if (migrationRows.length !== V8_SCHEMA_MANIFEST.migrations.length || migrationRows.some((row, index) => {
+      const expected = V8_SCHEMA_MANIFEST.migrations[index];
+      return !expected || row.id !== expected.id || row.dialect !== expected.dialect || row.checksum !== expected.checksum || row.status !== expected.status;
+    })) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Legacy migration history is not canonical");
+    if (!sqliteCatalogMatches(readSqliteCatalog(connection), expectedSqliteCatalog(V8_SCHEMA_MANIFEST, { kind: "bridged", journalLength: journalRows.length }))) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Bridged database catalog is not canonical");
+    }
+    const rows = connection.prepare("SELECT * FROM database_control").all() as Array<Record<string, unknown>>;
+    if (rows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control row cardinality is invalid");
+    const control = rows[0]!;
+    const integer = (value: unknown): number => {
+      const number = typeof value === "bigint" ? Number(value) : Number(value);
+      if (!Number.isSafeInteger(number)) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Bridged control integer metadata is malformed");
+      return number;
+    };
+    if (integer(control.id) !== 1 || integer(control.schema_version) !== 8 || integer(control.data_format_version) !== 1
+      || integer(control.reader_compatibility_min) !== 1 || integer(control.reader_compatibility_max) !== 1
+      || integer(control.required_writer_protocol) !== 1 || integer(control.revision) !== 7 || integer(control.generation) !== 1
+      || String(control.state) !== "READY" || String(control.last_migration_id) !== DRIZZLE_GST_MIGRATION_ID
+      || String(control.last_migration_checksum) !== DRIZZLE_GST_HASH || control.recovery_reason != null) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Bridged control metadata is not ready");
     }
     return { readerCompatibilityMin: 1, readerCompatibilityMax: 1, requiredWriterProtocol: 1 };
   }

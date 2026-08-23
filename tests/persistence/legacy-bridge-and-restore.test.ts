@@ -24,7 +24,7 @@ import { DatabaseControlService } from "../../src/infrastructure/services/databa
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
 import { detectLegacyState, inspectLegacyDatabase } from "../../src/infrastructure/services/legacy-bridge-service.ts";
 import { MIGRATION_CATALOG, KNOWN_SCHEMA_MANIFESTS } from "../../src/infrastructure/schema/migration-catalog.ts";
-import { DRIZZLE_FIXED_ASSETS_HASH, DRIZZLE_FX_V1_HASH, DRIZZLE_GST_V1_HASH, DRIZZLE_TDS_TCS_HASH, DRIZZLE_PAYROLL_V1_HASH, DRIZZLE_EXPENSE_CLAIMS_V1_HASH, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_CLOSE_PACK_V1_HASH, DRIZZLE_FIXED_ASSETS_HASH, DRIZZLE_FX_V1_HASH, DRIZZLE_GST_V1_HASH, DRIZZLE_TDS_TCS_HASH, DRIZZLE_PAYROLL_V1_HASH, DRIZZLE_EXPENSE_CLAIMS_V1_HASH, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
 
 async function createLegacyFixture(path: string, schemaVersion: number): Promise<void> {
   const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === schemaVersion)!;
@@ -227,6 +227,16 @@ describe("Legacy Bridge and Restore", () => {
     before.close();
     await upgradeSqliteDatabase(path, { backupDestinationPath: backup, cliVersion: "test", buildId: "custom-v8" });
     await upgradeSqliteDatabase(path, { backupDestinationPath: `${backup}.second`, cliVersion: "test", buildId: "custom-v8-rerun" });
+    const bridgedBackup = `${backup}.verified`;
+    const bridgedRestore = `${backup}.restored`;
+    const bridgedBackupService = new BackupService(path);
+    await bridgedBackupService.createBackup(bridgedBackup);
+    expect(await bridgedBackupService.verifyBackup(bridgedBackup)).toBe(true);
+    expect(await bridgedBackupService.restoreFromBackup(bridgedBackup, bridgedRestore)).toBe(true);
+    const restored = new BunDatabase(bridgedRestore, { readonly: true, safeIntegers: true });
+    expect(detectDatabaseState(restored).state).toBe("DRIZZLE_BRIDGED");
+    expect(restored.query("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 8n });
+    restored.close();
     const db = new BunDatabase(path, { readonly: true, safeIntegers: true });
     try {
       expect(detectDatabaseState(db).state).toBe("DRIZZLE_BRIDGED");
@@ -243,6 +253,7 @@ describe("Legacy Bridge and Restore", () => {
         { id: null, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH },
         { id: null, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH },
         { id: null, hash: DRIZZLE_TENANT_PAN_V1_HASH },
+        { id: null, hash: DRIZZLE_CLOSE_PACK_V1_HASH },
       ]);
     } finally { db.close(); }
   });

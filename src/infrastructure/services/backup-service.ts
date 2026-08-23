@@ -24,6 +24,7 @@ import { DatabaseControlService, type DatabaseControlRecord } from "./database-c
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
+import { expectedSqliteCatalog, sqliteCatalogMatches } from "./sqlite-catalog-validator.ts";
 import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_MIGRATION_ID, DRIZZLE_TENANT_PAN_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
@@ -346,7 +347,7 @@ export class BackupService implements BackupServicePort {
 
       const actual = await captureExpectation(db, expectedSourceManifest);
       if (expected) {
-        validateExactCatalogMatch(actual.catalogRows, expected.catalogRows);
+        if (!sqliteCatalogMatches(actual.catalogRows, expected.catalogRows)) throw new DomainError("BACKUP_VERIFICATION_FAILED", "SQLite snapshot catalog does not match the source");
         if (actual.history !== expected.history || actual.catalog !== expected.catalog || !sameControl(actual.control, expected.control)) {
           throw new DomainError("BACKUP_VERIFICATION_FAILED", "SQLite snapshot metadata does not match the source");
         }
@@ -397,7 +398,7 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
       // A valid but changed READY row must still be captured so the second
       // snapshot comparison can report BACKUP_CONTROL_CHANGED. Malformed rows
       // remain unavailable and fail closed.
-      if (control.reason !== "ROW_DATA_INVALID") throw new DomainError("BACKUP_SOURCE_UNAVAILABLE", "Database control is unavailable");
+      if (control.reason !== "ROW_DATA_INVALID" && control.reason !== "CATALOG_MISMATCH") throw new DomainError("BACKUP_SOURCE_UNAVAILABLE", "Database control is unavailable");
       controlRecord = looseControlRecord(db);
       const expectedLast = manifest.migrations.at(-1);
       if (controlRecord.schemaVersion !== manifest.schemaVersion
@@ -425,11 +426,7 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
   `);
   const drizzleManaged = state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED";
   const drizzleJournalCount = drizzleManaged ? queryRows<Record<string, unknown>>(db, `SELECT id FROM ${DRIZZLE_MIGRATIONS_TABLE}`).length : 0;
-  const drizzleCurrent = drizzleManaged && drizzleJournalCount === officialDrizzleJournal().length;
-  const drizzlePriorCurrent = drizzleManaged && drizzleJournalCount === officialDrizzleJournal().length - 1;
-  const drizzlePreviousPriorCurrent = drizzleManaged && drizzleJournalCount === officialDrizzleJournal().length - 2;
-  const drizzleLegacyPriorCurrent = drizzleManaged && drizzleJournalCount === 8;
-  validateCanonicalSchema(catalogRows, manifest, drizzleManaged, drizzleCurrent ? true : drizzlePriorCurrent ? "prior" : drizzlePreviousPriorCurrent ? "previous-prior" : drizzleLegacyPriorCurrent ? "legacy-prior" : false);
+  validateCanonicalSchema(catalogRows, manifest, drizzleManaged ? (state.state === "DRIZZLE_BRIDGED" ? "bridged" : "drizzle") : false, drizzleJournalCount);
 
   return {
     control: controlRecord,
@@ -537,90 +534,16 @@ function validateMigrationHistory(rows: MigrationRow[], expectedManifest: Sqlite
   }
 }
 
-function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false, current: boolean | "prior" | "previous-prior" | "legacy-prior" = true): void {
-  const expected = expectedCatalog(expectedManifest, drizzle, current);
-  validateExactCatalogMatch(catalog, expected);
-}
-
-function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[]): void {
-  if (actual.length !== expected.length) {
-    throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
-  }
-  const expectedCanonical = expected.map(canonicalJson);
-  const actualCanonical = actual.map(canonicalJson);
-  for (let i = 0; i < expectedCanonical.length; i++) {
-    if (expectedCanonical[i] !== actualCanonical[i]) {
-      throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
-    }
-  }
-}
-
-const cachedExpectedCatalog = new Map<string, CatalogRow[]>();
-function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST, drizzle = false, current: boolean | "prior" | "previous-prior" | "legacy-prior" = true): CatalogRow[] {
-  const mode = current === true ? "current" : current === "prior" ? "prior" : current === "previous-prior" ? "previous-prior" : current === "legacy-prior" ? "legacy-prior" : "baseline";
-  const key = `${drizzle ? "drizzle" : "legacy"}:${expectedManifest.schemaVersion}:${expectedManifest.revision}:${mode}`;
-  const cached = cachedExpectedCatalog.get(key);
-  if (cached) return cached;
-  const db = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
-  try {
-    db.exec("PRAGMA foreign_keys = ON");
-    if (drizzle) {
-      db.exec(DRIZZLE_JOURNAL_DDL);
-      const baseline = readFileSync(join(import.meta.dir, "../../..", "drizzle", "0009_drizzle_v8_baseline.sql"), "utf8");
-      for (const statement of baseline.split("--> statement-breakpoint")) db.exec(statement);
-      if (current) {
-        const gstV1 = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_V1_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of gstV1.split("--> statement-breakpoint")) db.exec(statement);
-        const tdsTcs = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_TDS_TCS_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of tdsTcs.split("--> statement-breakpoint")) db.exec(statement);
-        const fixedAssets = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_FIXED_ASSETS_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of fixedAssets.split("--> statement-breakpoint")) db.exec(statement);
-        const fx = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_FX_V1_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of fx.split("--> statement-breakpoint")) db.exec(statement);
-        const payroll = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_PAYROLL_V1_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of payroll.split("--> statement-breakpoint")) db.exec(statement);
-        const expenseClaims = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of expenseClaims.split("--> statement-breakpoint")) db.exec(statement);
-        const gstReturnReadiness = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of gstReturnReadiness.split("--> statement-breakpoint")) db.exec(statement);
-        if (current === true || current === "prior" || current === "previous-prior") {
-          const complianceObligations = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID}.sql`), "utf8");
-          for (const statement of complianceObligations.split("--> statement-breakpoint")) db.exec(statement);
-          const periodClose = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID}.sql`), "utf8");
-          for (const statement of periodClose.split("--> statement-breakpoint")) db.exec(statement);
-          if (current === true || current === "prior") {
-            const tenantPan = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_TENANT_PAN_V1_MIGRATION_ID}.sql`), "utf8");
-            for (const statement of tenantPan.split("--> statement-breakpoint")) db.exec(statement);
-          }
-          if (current === true) {
-            const closePack = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID}.sql`), "utf8");
-            for (const statement of closePack.split("--> statement-breakpoint")) db.exec(statement);
-          }
-        }
-      }
-    } else {
-      db.exec(MIGRATION_SCHEMA_SQLITE);
-      db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
-      db.exec(MIGRATION_CATALOG[0].sqlite);
-      db.exec(MIGRATION_CATALOG[1].sqlite);
-    }
-    // The expected catalog is the actual production schema for the requested
-    // history, not the v2 source catalog. Apply the immutable sequence through
-    // the requested target so a v4 history cannot pass with missing 0004
-    // objects or triggers.
-    const expectedIds = new Set(expectedManifest.migrations.map((migration) => migration.id));
-    if (!drizzle) for (const entry of MIGRATION_CATALOG.slice(2)) if (expectedIds.has(entry.id)) db.exec(entry.sqlite);
-    const catalog = queryRows<CatalogRow>(db, `
-      SELECT type, name, tbl_name, sql
-      FROM sqlite_schema
-      WHERE name NOT LIKE 'sqlite_%'
-      ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
-    `);
-    cachedExpectedCatalog.set(key, catalog);
-    return catalog;
-  } finally {
-    db.close();
-  }
+function validateCanonicalSchema(
+  catalog: CatalogRow[],
+  expectedManifest: SqliteSchemaManifest,
+  mode: false | "drizzle" | "bridged" = false,
+  journalLength = 0,
+): void {
+  const expected = mode === false
+    ? expectedSqliteCatalog(expectedManifest, { kind: "legacy" })
+    : expectedSqliteCatalog(expectedManifest, { kind: mode, journalLength });
+  if (!sqliteCatalogMatches(catalog, expected)) throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
 }
 
 function openReadonly(path: string): BunDatabase {

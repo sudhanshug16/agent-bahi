@@ -43,9 +43,9 @@ describe("SQLite migration catalog", () => {
   });
 
   it("generates exact ordered prefixes and preserves every migration checksum", () => {
-    expect(HISTORICAL_SCHEMA_MANIFESTS.map((manifest) => manifest.migrations.length)).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(HISTORICAL_SCHEMA_MANIFESTS.map((manifest) => manifest.migrations.length)).toEqual([2, 3, 4, 5, 6, 7, 8]);
     expect(CURRENT_SCHEMA_MANIFEST).toEqual(HISTORICAL_SCHEMA_MANIFESTS.at(-1)!);
-    expect(ORDERED_UPGRADE_STEPS).toHaveLength(7);
+    expect(ORDERED_UPGRADE_STEPS).toHaveLength(6);
     for (let index = 1; index < HISTORICAL_SCHEMA_MANIFESTS.length; index += 1) {
       const source = HISTORICAL_SCHEMA_MANIFESTS[index - 1];
       const target = HISTORICAL_SCHEMA_MANIFESTS[index];

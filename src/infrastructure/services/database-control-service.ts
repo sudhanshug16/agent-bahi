@@ -5,6 +5,7 @@ import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { DRIZZLE_CLOSE_PACK_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { expectedSqliteCatalog, sqliteCatalogMatches, type SqliteCatalogRow } from "./sqlite-catalog-validator.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -39,6 +40,7 @@ export type DatabaseControlInspectionReason =
   | "MIGRATION_HISTORY_MISMATCH"
   | "TABLE_EMPTY"
   | "ROW_COUNT_MISMATCH"
+  | "CATALOG_MISMATCH"
   | "ROW_DATA_INVALID"
   | "INSPECTION_FAILED";
 
@@ -144,8 +146,44 @@ export class DatabaseControlService {
         try {
           validateOfficialDrizzleJournal(journal.rows);
           if (journal.rowCount !== officialDrizzleJournal().length) return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+          const catalog = await this.readSqliteCatalog();
+          if (!sqliteCatalogMatches(catalog, expectedSqliteCatalog(KNOWN_SCHEMA_MANIFESTS.find((manifest) => manifest.schemaVersion === 8)!, { kind: "drizzle", journalLength: journal.rowCount }))) {
+            return { status: "UNAVAILABLE", reason: "CATALOG_MISMATCH" };
+          }
           const drizzleManifest: SqliteSchemaManifest = {
             ...KNOWN_SCHEMA_MANIFESTS.find((manifest) => manifest.schemaVersion === 8)!,
+            migrations: Object.freeze([{
+              id: DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
+              checksum: DRIZZLE_CLOSE_PACK_V1_HASH,
+              dialect: "sqlite",
+              status: "APPLIED",
+            }]),
+          };
+          const rows = await this.db.query("SELECT * FROM database_control WHERE id = 1");
+          if (rows.rowCount !== 1) return { status: rows.rowCount === 0 ? "UNINITIALIZED" : "UNAVAILABLE", reason: rows.rowCount === 0 ? "TABLE_EMPTY" : "ROW_COUNT_MISMATCH" };
+          const validation = this.validateAndParseRecord(rows.rows[0]!, drizzleManifest);
+          return validation.error ? { status: "UNAVAILABLE", reason: "ROW_DATA_INVALID" } : { status: "AVAILABLE", record: validation.record };
+        } catch {
+          return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+        }
+      }
+
+      // A legacy table plus the official journal is accepted only for the
+      // exact sanctioned v8 bridge. Arbitrary hybrids never reach row checks.
+      if (drizzleTable.rowCount === 1 && legacyTable.rowCount === 1) {
+        const journal = await this.db.query("SELECT id, hash, created_at FROM __drizzle_migrations ORDER BY created_at ASC, id ASC");
+        try {
+          validateOfficialDrizzleJournal(journal.rows);
+          if (journal.rowCount !== officialDrizzleJournal().length) return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+          const migrationHistory = await this.db.query("SELECT id, dialect, checksum, status FROM schema_migrations ORDER BY rowid");
+          const expectedManifest = this.manifestForHistory(migrationHistory.rows);
+          if (!expectedManifest || expectedManifest.schemaVersion !== 8) return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+          const catalog = await this.readSqliteCatalog();
+          if (!sqliteCatalogMatches(catalog, expectedSqliteCatalog(expectedManifest, { kind: "bridged", journalLength: journal.rowCount }))) {
+            return { status: "UNAVAILABLE", reason: "CATALOG_MISMATCH" };
+          }
+          const drizzleManifest: SqliteSchemaManifest = {
+            ...expectedManifest,
             migrations: Object.freeze([{
               id: DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
               checksum: DRIZZLE_CLOSE_PACK_V1_HASH,
@@ -174,6 +212,10 @@ export class DatabaseControlService {
         return !actual || actual.id !== expected.id || actual.dialect !== expected.dialect || actual.checksum !== expected.checksum || actual.status !== expected.status;
       })) {
         return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+      }
+      const legacyCatalog = await this.readSqliteCatalog();
+      if (!sqliteCatalogMatches(legacyCatalog, expectedSqliteCatalog(expectedManifest, { kind: "legacy" }))) {
+        return { status: "UNAVAILABLE", reason: "CATALOG_MISMATCH" };
       }
 
       // Query the table contents
@@ -244,6 +286,16 @@ export class DatabaseControlService {
     });
 
     return { name: "database_control", kind, columns, checks: [], ddl: object.sql == null ? undefined : String(object.sql) };
+  }
+
+  private async readSqliteCatalog(): Promise<SqliteCatalogRow[]> {
+    const result = await this.db.query(`
+      SELECT type, name, tbl_name, sql
+      FROM sqlite_schema
+      WHERE name NOT LIKE 'sqlite_%'
+      ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
+    `);
+    return result.rows as SqliteCatalogRow[];
   }
 
   /**

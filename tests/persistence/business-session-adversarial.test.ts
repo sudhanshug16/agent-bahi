@@ -8,7 +8,7 @@ import { BusinessSessionFactory } from "../../src/infrastructure/adapters/busine
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL, DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { V2_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/current-manifest.ts";
-import { MIGRATION_SCHEMA_SQLITE } from "../../src/infrastructure/services/migration-service.ts";
+import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "../../src/infrastructure/services/migration-service.ts";
 
 const dbControlMigrationChecksum = checksum(DATABASE_CONTROL_MIGRATIONS.sqlite);
 const coreMigrationChecksum = checksum(CORE_MIGRATIONS.sqlite);
@@ -34,7 +34,9 @@ async function createCanonicalFixture(options: FixtureOptions = {}): Promise<{ d
   const path = join(directory, "database.sqlite");
   const db = new BunDatabase(path, { create: true, safeIntegers: true });
   try {
+    db.exec(CORE_MIGRATIONS.sqlite);
     db.exec(options.migrationDdl ?? MIGRATION_SCHEMA_SQLITE);
+    db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
     db.exec(options.controlDdl ?? DATABASE_CONTROL_TABLE_DDL);
     if (options.seedMigrations !== false) {
       const insertMigration = db.prepare(
@@ -170,7 +172,6 @@ describe("BusinessSession adversarial compatibility gate", () => {
 describe("BusinessSession adversarial SQL policy", () => {
   test("rejects non-business read tables, quoted identifiers, comments, and subqueries", async () => {
     await withFixture(async (path) => {
-      await mutate(path, "CREATE TABLE secret_data (value TEXT NOT NULL)");
       const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       const attempts = [
         "SELECT value FROM secret_data",
@@ -192,12 +193,11 @@ describe("BusinessSession adversarial SQL policy", () => {
 
   test("rejects write-side subqueries, returning, CTE, metadata, attach, and quoted identifiers", async () => {
     await withFixture(async (path) => {
-      await mutate(path, "CREATE TABLE secret_data (value TEXT NOT NULL)");
       const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST);
       const attempts = [
-        "INSERT INTO tenants (id) SELECT value FROM secret_data",
+        "INSERT INTO tenants (id) SELECT id FROM tenants",
         "INSERT INTO tenants (id) VALUES (?) RETURNING id",
-        "WITH copied AS (SELECT value FROM secret_data) INSERT INTO tenants (id) SELECT value FROM copied",
+        "WITH copied AS (SELECT id FROM tenants) INSERT INTO tenants (id) SELECT id FROM copied",
         "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
         "CREATE TABLE secret_created (id TEXT)",
         "PRAGMA user_version = 99",
@@ -217,7 +217,6 @@ describe("BusinessSession adversarial SQL policy", () => {
 describe("BusinessSession concurrency, lifetime, and cleanup", () => {
   test("enables query_only only after the compatibility gate and before the read callback", async () => {
     await withFixture(async (path) => {
-      await mutate(path, "CREATE TABLE tenants (id TEXT PRIMARY KEY)");
       const runner = BusinessSessionFactory.createSessionRunner(path, "sqlite", 1, 1, V2_SCHEMA_MANIFEST) as any;
       const statements: string[] = [];
       const originalOpen = runner.openConnection.bind(runner);

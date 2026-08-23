@@ -90,6 +90,22 @@ describe("Neutral CA Close Pack V1", () => {
     db.close();
   });
 
+  it("rejects impossible Gregorian dates before any Close Pack writes", async () => {
+    const { app, dbPath, tenant } = await fixture();
+    const invalidPayloads = [
+      { periodStart: "2026-02-31", periodEnd: "2026-03-31", asOfDate: "2026-03-31", basis: "ACCRUAL" },
+      { periodStart: "2026-02-01", periodEnd: "2026-02-29", asOfDate: "2026-03-01", basis: "ACCRUAL" },
+      { periodStart: "2026-01-01", periodEnd: "2026-01-31", asOfDate: "2026-13-01", basis: "ACCRUAL" },
+    ];
+    for (const payload of invalidPayloads) {
+      await expect(app.closePack.export({ ...envelope(tenant), payload })).rejects.toMatchObject({ code: "INVALID_DATE" });
+    }
+    const db = new Database(dbPath, { readonly: true });
+    expect(db.query("SELECT COUNT(*) AS count FROM close_pack_manifests").get()).toEqual({ count: 0 });
+    expect(db.query("SELECT COUNT(*) AS count FROM audit_records WHERE action = 'CLOSE_PACK_EXPORT'").get()).toEqual({ count: 0 });
+    db.close();
+  });
+
   it("preserves actor, source, reason, and one-row idempotent audit/export replay", async () => {
     const { app, dbPath, tenant } = await fixture();
     const first = await app.closePack.export(envelope(tenant, "close-replay"));

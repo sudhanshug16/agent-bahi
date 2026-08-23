@@ -33,6 +33,7 @@ export {
   V6_SCHEMA_MANIFEST,
   V6_SCHEMA_VERSION,
   V7_SCHEMA_MANIFEST,
+  V8_SCHEMA_MANIFEST,
   canonicalManifestJson,
   computeSqliteMigrationChecksum,
   hashSchemaManifest,

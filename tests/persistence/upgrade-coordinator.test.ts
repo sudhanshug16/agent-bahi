@@ -173,7 +173,9 @@ describe("SQLite UpgradeCoordinator", () => {
       context: { currentSchemaVersion: 3, requiredSchemaVersion: 8 },
     });
     const v3Reader = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", 1, 1, plan.targetManifest);
-    await expect(v3Reader.withBusinessSession("read", async (session) => session.querySingle("SELECT id FROM tenants LIMIT 1"))).resolves.toBeNull();
+    // The synthetic marker migration intentionally is not a canonical
+    // production v3 catalog, so the full-catalog gate must fail closed.
+    await expect(v3Reader.withBusinessSession("read", async (session) => session.querySingle("SELECT id FROM tenants LIMIT 1"))).rejects.toMatchObject({ code: "DATABASE_CONTROL_UNAVAILABLE" });
   });
 
   it("invalidates captured migration sessions after the lease callback", async () => {
