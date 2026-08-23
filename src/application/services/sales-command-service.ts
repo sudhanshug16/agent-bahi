@@ -7,6 +7,7 @@ import { canonicalJson, computeCommandHash, computeResultHash } from "../command
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
 import { postJournalInSession, type JournalLinePayload } from "./journal-command-service.ts";
 import { prepareGstPosting, persistGstSnapshot, type GstDocumentBlock, type GstLineFact } from "./gst-service.ts";
+import { prepareWithholding, persistWithholdingEvent, type WithholdingBlock } from "./tds-tcs-service.ts";
 
 export type PartyRole = "CUSTOMER" | "VENDOR" | "BOTH";
 export interface PartyCreatePayload { displayName: string; email?: string; phone?: string; role?: PartyRole; partyType?: PartyRole; }
@@ -22,7 +23,7 @@ export interface InvoiceCreatePayload {
   gst?: GstDocumentBlock;
 }
 export interface InvoiceCreateResult { invoiceId: string; invoiceNumber: string; totalMinor: number; status: "DRAFT"; }
-export interface InvoicePostPayload { invoiceId: string; receivableAccountId: string; gst?: GstDocumentBlock; }
+export interface InvoicePostPayload { invoiceId: string; receivableAccountId: string; gst?: GstDocumentBlock; withholding?: WithholdingBlock; }
 export interface InvoicePostResult { invoiceId: string; journalId: string; totalMinor: number; status: "POSTED"; }
 export interface ReceiptAllocationPayload { invoiceId: string; amountMinor: number; }
 export interface ReceiptRecordPayload {
@@ -202,7 +203,10 @@ export async function executeInvoicePost(sessionRunner: BusinessSessionRunner, e
     if (lineRows.rows.length === 0) throw new DomainError("INVALID_INVOICE_LINES", "invoice must contain at least one line");
     const gstBlock = envelope.payload.gst ?? (invoice.gst_input_json == null ? undefined : JSON.parse(String(invoice.gst_input_json)) as GstDocumentBlock);
     const gstPlan = gstBlock ? await prepareGstPosting(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, partyId: String(invoice.customer_id), documentDate: String(invoice.issue_date), documentType: "SALE", block: gstBlock, lines: lineRows.rows.map((row) => ({ id: String(row.id), lineNumber: Number(row.line_number), amountMinor: Number(row.amount_minor), description: String(row.description) })) }) : undefined;
-    const lines: JournalLinePayload[] = [{ accountId: brandAccountId(receivableAccountId), description: `Invoice ${invoiceId}`, debitMinor: gstPlan?.grossMinor ?? Number(invoice.total_minor) }];
+    const invoiceGrossMinor = gstPlan?.grossMinor ?? Number(invoice.total_minor);
+    const withholdingPlan = envelope.payload.withholding ? await prepareWithholding(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "SALE", documentId: invoiceId, eventDate: String(invoice.issue_date), block: envelope.payload.withholding, documentBaseMinor: lineRows.rows.reduce((sum, row) => sum + Number(row.amount_minor), 0) }) : undefined;
+    const invoiceTotalMinor = invoiceGrossMinor + (withholdingPlan?.taxAmountMinor ?? 0);
+    const lines: JournalLinePayload[] = [{ accountId: brandAccountId(receivableAccountId), description: `Invoice ${invoiceId}`, debitMinor: invoiceTotalMinor }];
     for (const row of lineRows.rows) {
       const revenueAccountId = String(row.revenue_account_id);
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, revenueAccountId, "INCOME", "revenueAccountId");
@@ -212,11 +216,13 @@ export async function executeInvoicePost(sessionRunner: BusinessSessionRunner, e
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, component.accountId!, "LIABILITY", `${component.component} output account`);
       lines.push({ accountId: brandAccountId(component.accountId!), description: `${component.component} GST ${component.line.lineNumber}`, creditMinor: component.taxMinor });
     }
+    if (withholdingPlan) lines.push({ accountId: brandAccountId(withholdingPlan.liabilityAccountId), description: `TCS ${invoiceId}`, creditMinor: withholdingPlan.taxAmountMinor });
     const journalId = await postJournalInSession(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, postingDate: String(invoice.issue_date), reference: invoiceId, narration: invoice.narration === null ? undefined : String(invoice.narration), lines });
     const now = new Date().toISOString();
     if (gstPlan) await persistGstSnapshot(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "SALE", documentId: invoiceId, plan: gstPlan, now });
-    await session.execute("UPDATE sales_invoices SET status = 'POSTED', total_minor = ?, receivable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [gstPlan?.grossMinor ?? Number(invoice.total_minor), receivableAccountId, journalId, now, now, invoiceId, envelope.tenantId, envelope.bookSetId]);
-    const totalMinor = gstPlan?.grossMinor ?? Number(invoice.total_minor);
+    if (withholdingPlan) await persistWithholdingEvent(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "SALE", documentId: invoiceId, plan: withholdingPlan, journalId, now });
+    await session.execute("UPDATE sales_invoices SET status = 'POSTED', total_minor = ?, receivable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [invoiceTotalMinor, receivableAccountId, journalId, now, now, invoiceId, envelope.tenantId, envelope.bookSetId]);
+    const totalMinor = invoiceTotalMinor;
     return finishCommand(session, envelope, "invoice.post", requestHash, { invoiceId, journalId, totalMinor, status: "POSTED" }, "sales_invoice", invoiceId, now);
   });
 }

@@ -24,7 +24,7 @@ import { DatabaseControlService } from "../../src/infrastructure/services/databa
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
 import { detectLegacyState, inspectLegacyDatabase } from "../../src/infrastructure/services/legacy-bridge-service.ts";
 import { MIGRATION_CATALOG, KNOWN_SCHEMA_MANIFESTS } from "../../src/infrastructure/schema/migration-catalog.ts";
-import { DRIZZLE_GST_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_GST_HASH, DRIZZLE_GST_V1_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
 
 async function createLegacyFixture(path: string, schemaVersion: number): Promise<void> {
   const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === schemaVersion)!;
@@ -233,6 +233,7 @@ describe("Legacy Bridge and Restore", () => {
       expect(db.query("SELECT id, name FROM tenants").all()).toEqual(beforeTenant);
       expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([
         { id: null, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" },
+        { id: null, hash: DRIZZLE_GST_V1_HASH },
         { id: null, hash: DRIZZLE_GST_HASH },
       ]);
     } finally { db.close(); }

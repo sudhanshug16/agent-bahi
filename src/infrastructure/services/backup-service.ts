@@ -24,7 +24,7 @@ import { DatabaseControlService, type DatabaseControlRecord } from "./database-c
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
-import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -567,8 +567,10 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
       const baseline = readFileSync(join(import.meta.dir, "../../..", "drizzle", "0009_drizzle_v8_baseline.sql"), "utf8");
       for (const statement of baseline.split("--> statement-breakpoint")) db.exec(statement);
       if (current) {
-        const gst = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`), "utf8");
-        for (const statement of gst.split("--> statement-breakpoint")) db.exec(statement);
+        const gstV1 = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_V1_MIGRATION_ID}.sql`), "utf8");
+        for (const statement of gstV1.split("--> statement-breakpoint")) db.exec(statement);
+        const tdsTcs = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`), "utf8");
+        for (const statement of tdsTcs.split("--> statement-breakpoint")) db.exec(statement);
       }
     } else {
       db.exec(MIGRATION_SCHEMA_SQLITE);

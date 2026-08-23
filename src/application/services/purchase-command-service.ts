@@ -7,6 +7,7 @@ import { canonicalJson, computeCommandHash, computeResultHash } from "../command
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
 import { postJournalInSession, type JournalLinePayload } from "./journal-command-service.ts";
 import { prepareGstPosting, persistGstSnapshot, type GstDocumentBlock, type GstLineFact } from "./gst-service.ts";
+import { prepareWithholding, persistWithholdingEvent, type WithholdingBlock } from "./tds-tcs-service.ts";
 
 export interface BillLinePayload { description: string; expenseAccountId: string; amountMinor: number; gst?: GstLineFact; }
 export interface BillCreatePayload {
@@ -19,7 +20,7 @@ export interface BillCreatePayload {
   gst?: GstDocumentBlock;
 }
 export interface BillCreateResult { billId: string; billNumber: string; totalMinor: number; status: "DRAFT"; }
-export interface BillPostPayload { billId: string; payableAccountId: string; gst?: GstDocumentBlock; }
+export interface BillPostPayload { billId: string; payableAccountId: string; gst?: GstDocumentBlock; withholding?: WithholdingBlock; }
 export interface BillPostResult { billId: string; journalId: string; totalMinor: number; status: "POSTED"; }
 export interface VendorPaymentAllocationPayload { billId: string; amountMinor: number; }
 export interface VendorPaymentRecordPayload {
@@ -187,12 +188,17 @@ export async function executeBillPost(sessionRunner: BusinessSessionRunner, enve
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, component.accountId!, "ASSET", `${component.component} input account`);
       lines.push({ accountId: brandAccountId(component.accountId!), description: `${component.component} input GST ${component.line.lineNumber}`, debitMinor: component.taxMinor });
     }
-    lines.push({ accountId: brandAccountId(payableAccountId), description: `Bill ${billId}`, creditMinor: gstPlan?.grossMinor ?? Number(bill.total_minor) });
+    const billGrossMinor = gstPlan?.grossMinor ?? Number(bill.total_minor);
+    const withholdingPlan = envelope.payload.withholding ? await prepareWithholding(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, eventDate: String(bill.bill_date), block: envelope.payload.withholding, documentBaseMinor: lineRows.rows.reduce((sum, row) => sum + Number(row.amount_minor), 0) }) : undefined;
+    if (withholdingPlan && withholdingPlan.taxAmountMinor >= billGrossMinor) throw new DomainError("TAX_AMOUNT_EXCEEDS_DOCUMENT", "withholding must be less than the bill gross amount");
+    lines.push({ accountId: brandAccountId(payableAccountId), description: `Bill ${billId}`, creditMinor: billGrossMinor - (withholdingPlan?.taxAmountMinor ?? 0) });
+    if (withholdingPlan) lines.push({ accountId: brandAccountId(withholdingPlan.liabilityAccountId), description: `TDS ${billId}`, creditMinor: withholdingPlan.taxAmountMinor });
     const journalId = await postJournalInSession(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, postingDate: String(bill.bill_date), reference: billId, narration: bill.narration === null ? undefined : String(bill.narration), lines });
     const now = new Date().toISOString();
     if (gstPlan) await persistGstSnapshot(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, plan: gstPlan, now });
-    await session.execute("UPDATE vendor_bills SET status = 'POSTED', total_minor = ?, payable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [gstPlan?.grossMinor ?? Number(bill.total_minor), payableAccountId, journalId, now, now, billId, envelope.tenantId, envelope.bookSetId]);
-    const totalMinor = gstPlan?.grossMinor ?? Number(bill.total_minor);
+    if (withholdingPlan) await persistWithholdingEvent(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, plan: withholdingPlan, journalId, now });
+    await session.execute("UPDATE vendor_bills SET status = 'POSTED', total_minor = ?, withholding_minor = ?, payable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [billGrossMinor, withholdingPlan?.taxAmountMinor ?? 0, payableAccountId, journalId, now, now, billId, envelope.tenantId, envelope.bookSetId]);
+    const totalMinor = billGrossMinor;
     return finishCommand(session, envelope, "bill.post", requestHash, { billId, journalId, totalMinor, status: "POSTED" }, "vendor_bill", billId, now);
   });
 }
@@ -222,14 +228,15 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
     const journalLines: JournalLinePayload[] = [];
     const billUpdates: Array<{ billId: string; paidMinor: number; status: "PARTIALLY_PAID" | "PAID" }> = [];
     for (const allocation of envelope.payload.allocations) {
-      const bill = await session.querySingle("SELECT id, vendor_id, status, total_minor, paid_minor, payable_account_id FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [allocation.billId, envelope.tenantId, envelope.bookSetId]);
+      const bill = await session.querySingle("SELECT id, vendor_id, status, total_minor, paid_minor, withholding_minor, payable_account_id FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [allocation.billId, envelope.tenantId, envelope.bookSetId]);
       if (!bill) throw new DomainError("BILL_SCOPE_MISMATCH", "allocated bill does not belong to tenant and BookSet");
       if (String(bill.vendor_id) !== vendorId) throw new DomainError("VENDOR_MISMATCH", "bill vendor does not match payment vendor");
       if (!["POSTED", "PARTIALLY_PAID"].includes(String(bill.status))) throw new DomainError("BILL_NOT_PAYABLE", "only posted unpaid bills can receive allocations");
       const total = Number(bill.total_minor);
       const paid = Number(bill.paid_minor);
+      const withheld = Number(bill.withholding_minor ?? 0);
       const allocationMinor = positiveMinor(allocation.amountMinor, "allocation amount");
-      if (allocationMinor > total - paid) throw new DomainError("OVER_ALLOCATION", "allocation exceeds bill outstanding amount");
+      if (allocationMinor > total - paid - withheld) throw new DomainError("OVER_ALLOCATION", "allocation exceeds bill outstanding amount");
       if (bill.payable_account_id === null || bill.payable_account_id === undefined) throw new DomainError("BILL_PAYABLE_MISSING", "posted bill has no payable account");
       const payableAccountId = String(bill.payable_account_id);
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, payableAccountId, "LIABILITY", "bill payable account");
@@ -249,12 +256,13 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
 }
 
 async function loadBill(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, billId: string): Promise<BillView> {
-  const row = await session.querySingle("SELECT id, bill_number, vendor_id, bill_date, due_date, narration, status, total_minor, paid_minor, payable_account_id FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [billId, tenantId, bookSetId]);
+  const row = await session.querySingle("SELECT id, bill_number, vendor_id, bill_date, due_date, narration, status, total_minor, paid_minor, withholding_minor, payable_account_id FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [billId, tenantId, bookSetId]);
   if (!row) throw new DomainError("BILL_SCOPE_MISMATCH", "bill does not belong to tenant and BookSet");
   const lineRows = await session.query("SELECT description, expense_account_id, amount_minor FROM vendor_bill_lines WHERE bill_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY line_number", [billId, tenantId, bookSetId]);
   const totalMinor = Number(row.total_minor);
   const paidMinor = Number(row.paid_minor);
-  return { billId: String(row.id), billNumber: String(row.bill_number), vendorId: String(row.vendor_id), billDate: String(row.bill_date), ...(row.due_date === null ? {} : { dueDate: String(row.due_date) }), ...(row.narration === null ? {} : { narration: String(row.narration) }), totalMinor, paidMinor, outstandingMinor: totalMinor - paidMinor, status: String(row.status) as BillStatus, ...(row.payable_account_id === null ? {} : { payableAccountId: String(row.payable_account_id) }), lines: lineRows.rows.map((line) => ({ description: String(line.description), expenseAccountId: String(line.expense_account_id), amountMinor: Number(line.amount_minor) })) };
+  const withheldMinor = Number(row.withholding_minor ?? 0);
+  return { billId: String(row.id), billNumber: String(row.bill_number), vendorId: String(row.vendor_id), billDate: String(row.bill_date), ...(row.due_date === null ? {} : { dueDate: String(row.due_date) }), ...(row.narration === null ? {} : { narration: String(row.narration) }), totalMinor, paidMinor, outstandingMinor: totalMinor - paidMinor - withheldMinor, status: String(row.status) as BillStatus, ...(row.payable_account_id === null ? {} : { payableAccountId: String(row.payable_account_id) }), lines: lineRows.rows.map((line) => ({ description: String(line.description), expenseAccountId: String(line.expense_account_id), amountMinor: Number(line.amount_minor) })) };
 }
 
 export async function getBill(sessionRunner: BusinessSessionRunner, tenantId: TenantId, bookSetId: BookSetId, billId: string): Promise<BillView> {

@@ -24,6 +24,7 @@ import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill
 import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
 import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
 import type { CompanyStatusInput, CompanyStatusResult, CompanyStatusService } from "./services/company-status-service.ts";
+import { executeDeductorProfileCreate, executePartyTaxProfileCreate, executeTaxRuleSnapshotCreate, executeWithholdingDeposit, listDeductorProfiles, listPartyTaxProfiles, listWithholdingRegister, type DeductorProfilePayload, type PartyTaxProfilePayload, type TaxRuleSnapshotPayload, type WithholdingDepositPayload, type WithholdingEventRow, type TaxKind } from "./services/tds-tcs-service.ts";
 
 /**
  * Read-only tenant operations
@@ -128,6 +129,13 @@ export interface GstRegisterOperations {
   purchases(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
 }
 export interface CompanyStatusOperations { status(input?: CompanyStatusInput): Promise<CompanyStatusResult>; }
+export interface TaxOperations {
+  deductorProfile: { create(envelope: CommandEnvelope<DeductorProfilePayload>): Promise<CommandResult<unknown>>; list(tenantId: TenantId, date?: string): Promise<Record<string, unknown>[]> };
+  partyProfile: { create(envelope: SalesCommandEnvelope<PartyTaxProfilePayload>): Promise<CommandResult<unknown>>; list(tenantId: TenantId, bookSetId: BookSetId, partyId: string, date?: string): Promise<Record<string, unknown>[]> };
+  ruleSnapshot: { create(envelope: CommandEnvelope<TaxRuleSnapshotPayload>): Promise<CommandResult<unknown>> };
+  deposit(envelope: SalesCommandEnvelope<WithholdingDepositPayload>): Promise<CommandResult<unknown>>;
+  register(tenantId: TenantId, bookSetId: BookSetId, taxKind: TaxKind): Promise<WithholdingEventRow[]>;
+}
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -149,6 +157,7 @@ export type PublicApplicationFacade = {
   bankMatch: BankMatchCommands;
   bankReconciliation: BankReconciliationOperations;
   gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations };
+  tax: TaxOperations;
   company: CompanyStatusOperations;
 };
 
@@ -230,6 +239,13 @@ export function createPublicFacade(
       },
     },
     company: { status: (input) => companyStatusService.status(input) },
+    tax: {
+      deductorProfile: { create: (envelope) => executeDeductorProfileCreate(sessionRunner, envelope), list: (tenantId, date) => listDeductorProfiles(sessionRunner, tenantId, date) },
+      partyProfile: { create: (envelope) => executePartyTaxProfileCreate(sessionRunner, envelope), list: (tenantId, bookSetId, partyId, date) => listPartyTaxProfiles(sessionRunner, tenantId, bookSetId, partyId, date) },
+      ruleSnapshot: { create: (envelope) => executeTaxRuleSnapshotCreate(sessionRunner, envelope) },
+      deposit: (envelope) => executeWithholdingDeposit(sessionRunner, envelope),
+      register: (tenantId, bookSetId, taxKind) => listWithholdingRegister(sessionRunner, tenantId, bookSetId, taxKind),
+    },
   };
   // Keep the historical enumerable facade surface stable for CLI consumers;
   // GST is still a typed public property and is directly accessible.

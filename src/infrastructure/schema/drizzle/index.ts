@@ -32,3 +32,14 @@ export { bankStatements, bankStatementLines, bankMatches } from "./bank-reconcil
 
 // GST v1 schema
 export { partyGstProfiles, gstTaxSnapshots, gstTaxComponents } from "./gst-schema";
+
+// TDS/TCS bookkeeping V1
+export {
+  tenantDeductorProfiles,
+  partyTaxProfiles,
+  taxRuleSnapshots,
+  withholdingEvents,
+  withholdingDeposits,
+  withholdingDepositAllocations,
+  withholdingComplianceCases,
+} from "./tds-tcs-schema";

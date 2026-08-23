@@ -89,6 +89,14 @@ export interface CompanyStatusBookSetSummary {
       risk: "NONE" | "REVIEW_REQUIRED";
     };
   };
+  tdsTcs: {
+    unverifiedProfileCount: number;
+    unverifiedRuleCount: number;
+    undepositedLiabilityCount: number;
+    undepositedLiabilityMinor: number;
+    rejectedCaseCount: number;
+    unsubmittedCaseCount: number;
+  };
   cashBank: {
     status: "UNAVAILABLE";
     reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE";
@@ -365,6 +373,20 @@ async function gstStatus(session: BusinessSession, tenantId: string, bookSetId: 
   };
 }
 
+async function tdsTcsStatus(session: BusinessSession, tenantId: string, bookSetId: string, asOfDate: string): Promise<CompanyStatusBookSetSummary["tdsTcs"]> {
+  const profiles = await session.query("SELECT id FROM party_tax_profiles WHERE tenant_id = ? AND book_set_id = ? AND verification_status <> 'VERIFIED'", [tenantId, bookSetId]);
+  const deductors = await session.query("SELECT id FROM tenant_deductor_profiles WHERE tenant_id = ? AND verification_status <> 'VERIFIED'", [tenantId]);
+  const rules = await session.query("SELECT id, effective_from, effective_to FROM tax_rule_snapshots WHERE tenant_id = ? AND source_verified = 0", [tenantId]);
+  const liabilities = await session.query("SELECT id, tax_amount_minor FROM withholding_events WHERE tenant_id = ? AND book_set_id = ? AND event_date <= ? AND status = 'POSTED'", [tenantId, bookSetId, asOfDate]);
+  let undepositedLiabilityCount = 0; let undepositedLiabilityMinor = 0;
+  for (const row of liabilities.rows) { const allocations = await session.query("SELECT amount_minor FROM withholding_deposit_allocations WHERE tenant_id = ? AND book_set_id = ? AND event_id = ?", [tenantId, bookSetId, String(row.id)]); const deposited = allocations.rows.reduce((sum, item) => sum + numeric(item.amount_minor, "TDS/TCS deposit"), 0); const outstanding = numeric(row.tax_amount_minor, "TDS/TCS liability") - deposited; if (outstanding > 0) { undepositedLiabilityCount += 1; undepositedLiabilityMinor = add(undepositedLiabilityMinor, outstanding, "TDS/TCS liability total"); } }
+  const cases = await session.query("SELECT state FROM withholding_compliance_cases WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  let rejectedCaseCount = 0; let unsubmittedCaseCount = 0;
+  for (const row of cases.rows) { if (String(row.state) === "REJECTED") rejectedCaseCount += 1; if (["PREPARED", "EXPORTED"].includes(String(row.state))) unsubmittedCaseCount += 1; }
+  const effectiveUnverifiedRules = rules.rows.filter((row) => String(row.effective_from) <= asOfDate && (row.effective_to === null || row.effective_to === undefined || String(row.effective_to) >= asOfDate)).length;
+  return { unverifiedProfileCount: profiles.rows.length + deductors.rows.length, unverifiedRuleCount: effectiveUnverifiedRules, undepositedLiabilityCount, undepositedLiabilityMinor, rejectedCaseCount, unsubmittedCaseCount };
+}
+
 function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   const issues: CompanyStatusIssue[] = [];
   if (!summary.ledger.isBalanced) issues.push({ severity: "BLOCKED", code: "LEDGER_UNBALANCED", bookSetId: summary.bookSet.bookSetId, amountMinor: Math.abs(summary.ledger.totalDebitMinor - summary.ledger.totalCreditMinor) });
@@ -374,6 +396,11 @@ function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
     if (!bank.isReconciled) issues.push({ severity: "HIGH", code: "BANK_RECONCILIATION_REVIEW", bookSetId: summary.bookSet.bookSetId, count: bank.unmatchedCount, amountMinor: bank.differenceMinor });
   }
   if (summary.gst.pendingReviewItc.count > 0) issues.push({ severity: "MEDIUM", code: "GST_ITC_PENDING_REVIEW", bookSetId: summary.bookSet.bookSetId, count: summary.gst.pendingReviewItc.count, amountMinor: summary.gst.pendingReviewItc.amountMinor });
+  if (summary.tdsTcs.unverifiedProfileCount > 0) issues.push({ severity: "HIGH", code: "TDS_TCS_PROFILE_UNVERIFIED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.unverifiedProfileCount });
+  if (summary.tdsTcs.unverifiedRuleCount > 0) issues.push({ severity: "HIGH", code: "TDS_TCS_RULE_UNVERIFIED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.unverifiedRuleCount });
+  if (summary.tdsTcs.undepositedLiabilityCount > 0) issues.push({ severity: "HIGH", code: "TDS_TCS_LIABILITY_UNDEPOSITED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.undepositedLiabilityCount, amountMinor: summary.tdsTcs.undepositedLiabilityMinor });
+  if (summary.tdsTcs.rejectedCaseCount > 0) issues.push({ severity: "HIGH", code: "TDS_TCS_CASE_REJECTED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.rejectedCaseCount });
+  if (summary.tdsTcs.unsubmittedCaseCount > 0) issues.push({ severity: "MEDIUM", code: "TDS_TCS_CASE_UNSUBMITTED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.unsubmittedCaseCount });
   issues.push({ severity: "INFO", code: "CASH_BANK_UNAVAILABLE", bookSetId: summary.bookSet.bookSetId });
   return issues;
 }
@@ -425,6 +452,7 @@ export class CompanyStatusService {
           drafts: await draftCounts(session, tenantId, bookSetId),
           bankReconciliation: await bankReconciliation(session, tenantId, bookSetId),
           gst: await gstStatus(session, tenantId, bookSetId, asOfDate),
+          tdsTcs: await tdsTcsStatus(session, tenantId, bookSetId, asOfDate),
           cashBank: { status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" },
         };
         summaries.push(summary);

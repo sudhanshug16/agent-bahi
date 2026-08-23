@@ -36,6 +36,13 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "party_gst_profiles",
   "gst_tax_snapshots",
   "gst_tax_components",
+  "tenant_deductor_profiles",
+  "party_tax_profiles",
+  "tax_rule_snapshots",
+  "withholding_events",
+  "withholding_deposits",
+  "withholding_deposit_allocations",
+  "withholding_compliance_cases",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([
