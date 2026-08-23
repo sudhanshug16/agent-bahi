@@ -230,7 +230,10 @@ describe("Legacy Bridge and Restore", () => {
     try {
       expect(detectDatabaseState(db).state).toBe("DRIZZLE_BRIDGED");
       expect(db.query("SELECT id, name FROM tenants").all()).toEqual(beforeTenant);
-      expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([{ id: null, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" }]);
+      expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([
+        { id: null, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" },
+        { id: null, hash: "5033e76e739bf92015cf305c485ea2e63d619e07abed72a1edd82a9bca76ddf9" },
+      ]);
     } finally { db.close(); }
   });
 

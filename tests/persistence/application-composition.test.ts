@@ -48,8 +48,8 @@ test("bootstrap applies the journal migration and scope resolution is active-onl
       buildId: "bootstrap-test",
     });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0009_drizzle_v8_baseline" });
-    expect(native.query("SELECT hash FROM __drizzle_migrations ORDER BY created_at").all()).toHaveLength(1);
+    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0010_gst_v1" });
+    expect(native.query("SELECT hash FROM __drizzle_migrations ORDER BY created_at").all()).toHaveLength(2);
     native.close();
 
     const createRequestId = randomUUID();
