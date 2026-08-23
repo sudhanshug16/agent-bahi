@@ -24,7 +24,7 @@ import { DatabaseControlService, type DatabaseControlRecord } from "./database-c
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
-import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_MIGRATION_ID, DRIZZLE_TENANT_PAN_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -373,9 +373,10 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
     const journalRows = queryRows<Record<string, unknown>>(db, `SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`);
     try { validateOfficialDrizzleJournal(journalRows); } catch { throw new DomainError("BACKUP_HISTORY_MISMATCH", "Official Drizzle migration journal is not exact"); }
     const current = journalRows.length === officialDrizzleJournal().length;
-    const priorCurrent = journalRows.length === officialDrizzleJournal().length - 1 && String(journalRows.at(-1)?.hash) === DRIZZLE_PERIOD_CLOSE_V1_HASH;
+    const priorCurrent = journalRows.length === officialDrizzleJournal().length - 1 && String(journalRows.at(-1)?.hash) === DRIZZLE_TENANT_PAN_V1_HASH;
+    const previousPriorCurrent = journalRows.length === officialDrizzleJournal().length - 2 && String(journalRows.at(-1)?.hash) === DRIZZLE_PERIOD_CLOSE_V1_HASH;
     const legacyPriorCurrent = journalRows.length === 8 && String(journalRows.at(-1)?.hash) === DRIZZLE_GST_RETURN_READINESS_V1_HASH;
-    controlRecord = drizzleControlRecord(db, current, state.state === "DRIZZLE_BRIDGED", priorCurrent, legacyPriorCurrent);
+    controlRecord = drizzleControlRecord(db, current, state.state === "DRIZZLE_BRIDGED", priorCurrent, legacyPriorCurrent, previousPriorCurrent);
     history = canonicalHash(journalRows);
   } else {
     const port = readonlyPort(db);
@@ -426,8 +427,9 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
   const drizzleJournalCount = drizzleManaged ? queryRows<Record<string, unknown>>(db, `SELECT id FROM ${DRIZZLE_MIGRATIONS_TABLE}`).length : 0;
   const drizzleCurrent = drizzleManaged && drizzleJournalCount === officialDrizzleJournal().length;
   const drizzlePriorCurrent = drizzleManaged && drizzleJournalCount === officialDrizzleJournal().length - 1;
+  const drizzlePreviousPriorCurrent = drizzleManaged && drizzleJournalCount === officialDrizzleJournal().length - 2;
   const drizzleLegacyPriorCurrent = drizzleManaged && drizzleJournalCount === 8;
-  validateCanonicalSchema(catalogRows, manifest, drizzleManaged, drizzleCurrent ? true : drizzlePriorCurrent ? "prior" : drizzleLegacyPriorCurrent ? "legacy-prior" : false);
+  validateCanonicalSchema(catalogRows, manifest, drizzleManaged, drizzleCurrent ? true : drizzlePriorCurrent ? "prior" : drizzlePreviousPriorCurrent ? "previous-prior" : drizzleLegacyPriorCurrent ? "legacy-prior" : false);
 
   return {
     control: controlRecord,
@@ -473,22 +475,22 @@ function looseControlRecord(db: BunDatabase): DatabaseControlRecord {
   };
 }
 
-function drizzleControlRecord(db: BunDatabase, current = true, bridged = false, priorCurrent = false, legacyPriorCurrent = false): DatabaseControlRecord {
+function drizzleControlRecord(db: BunDatabase, current = true, bridged = false, priorCurrent = false, legacyPriorCurrent = false, previousPriorCurrent = false): DatabaseControlRecord {
   const row = db.prepare(`SELECT schema_version, data_format_version,
     reader_compatibility_min, reader_compatibility_max, required_writer_protocol,
     state, revision, generation, last_migration_id, last_migration_checksum,
     last_writer_cli_version, last_writer_build_id, last_writer_at, created_at,
     updated_at, recovery_reason FROM database_control WHERE id = 1`).get() as Record<string, unknown> | undefined;
   const legacyLast = CURRENT_SCHEMA_MANIFEST.migrations.at(-1)!;
-  const expectedId = priorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID : current ? DRIZZLE_GST_MIGRATION_ID : bridged ? legacyLast.id : DRIZZLE_BASELINE_MIGRATION_ID;
-  const expectedHash = priorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_HASH : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_HASH : current ? DRIZZLE_GST_HASH : bridged ? legacyLast.checksum : DRIZZLE_BASELINE_HASH;
-  if (!row || safeInteger(row.schema_version) !== CURRENT_SCHEMA_MANIFEST.schemaVersion
-    || safeInteger(row.data_format_version) !== CURRENT_SCHEMA_MANIFEST.dataFormatVersion
-    || safeInteger(row.reader_compatibility_min) !== CURRENT_SCHEMA_MANIFEST.readerCompatibilityMin
-    || safeInteger(row.reader_compatibility_max) !== CURRENT_SCHEMA_MANIFEST.readerCompatibilityMax
-    || safeInteger(row.required_writer_protocol) !== CURRENT_SCHEMA_MANIFEST.writerProtocol
-    || safeInteger(row.revision) !== CURRENT_SCHEMA_MANIFEST.revision
-    || safeInteger(row.generation) !== CURRENT_SCHEMA_MANIFEST.generation
+  const expectedId = priorCurrent ? DRIZZLE_TENANT_PAN_V1_MIGRATION_ID : previousPriorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID : current ? DRIZZLE_GST_MIGRATION_ID : bridged ? legacyLast.id : DRIZZLE_BASELINE_MIGRATION_ID;
+  const expectedHash = priorCurrent ? DRIZZLE_TENANT_PAN_V1_HASH : previousPriorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_HASH : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_HASH : current ? DRIZZLE_GST_HASH : bridged ? legacyLast.checksum : DRIZZLE_BASELINE_HASH;
+  if (!row || safeInteger(row.schema_version) !== 8
+    || safeInteger(row.data_format_version) !== 1
+    || safeInteger(row.reader_compatibility_min) !== 1
+    || safeInteger(row.reader_compatibility_max) !== 1
+    || safeInteger(row.required_writer_protocol) !== 1
+    || safeInteger(row.revision) !== 7
+    || safeInteger(row.generation) !== 1
     || row.state !== "READY" || row.last_migration_id !== expectedId
     || row.last_migration_checksum !== expectedHash
     || typeof row.last_writer_cli_version !== "string" || typeof row.last_writer_build_id !== "string"
@@ -497,14 +499,14 @@ function drizzleControlRecord(db: BunDatabase, current = true, bridged = false, 
     throw new DomainError("BACKUP_SOURCE_NOT_READY", "Drizzle control metadata is unavailable");
   }
   return {
-    schemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
-    dataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
-    readerCompatibilityMin: CURRENT_SCHEMA_MANIFEST.readerCompatibilityMin,
-    readerCompatibilityMax: CURRENT_SCHEMA_MANIFEST.readerCompatibilityMax,
-    requiredWriterProtocol: CURRENT_SCHEMA_MANIFEST.writerProtocol,
+    schemaVersion: 8,
+    dataFormatVersion: 1,
+    readerCompatibilityMin: 1,
+    readerCompatibilityMax: 1,
+    requiredWriterProtocol: 1,
     state: "READY",
-    revision: CURRENT_SCHEMA_MANIFEST.revision,
-    generation: CURRENT_SCHEMA_MANIFEST.generation,
+    revision: 7,
+    generation: 1,
     lastMigrationId: expectedId,
     lastMigrationChecksum: expectedHash,
     lastWriterCliVersion: row.last_writer_cli_version as string,
@@ -535,7 +537,7 @@ function validateMigrationHistory(rows: MigrationRow[], expectedManifest: Sqlite
   }
 }
 
-function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false, current: boolean | "prior" | "legacy-prior" = true): void {
+function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false, current: boolean | "prior" | "previous-prior" | "legacy-prior" = true): void {
   const expected = expectedCatalog(expectedManifest, drizzle, current);
   validateExactCatalogMatch(catalog, expected);
 }
@@ -554,8 +556,8 @@ function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[])
 }
 
 const cachedExpectedCatalog = new Map<string, CatalogRow[]>();
-function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST, drizzle = false, current: boolean | "prior" | "legacy-prior" = true): CatalogRow[] {
-  const mode = current === true ? "current" : current === "prior" ? "prior" : current === "legacy-prior" ? "legacy-prior" : "baseline";
+function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST, drizzle = false, current: boolean | "prior" | "previous-prior" | "legacy-prior" = true): CatalogRow[] {
+  const mode = current === true ? "current" : current === "prior" ? "prior" : current === "previous-prior" ? "previous-prior" : current === "legacy-prior" ? "legacy-prior" : "baseline";
   const key = `${drizzle ? "drizzle" : "legacy"}:${expectedManifest.schemaVersion}:${expectedManifest.revision}:${mode}`;
   const cached = cachedExpectedCatalog.get(key);
   if (cached) return cached;
@@ -581,14 +583,18 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
         for (const statement of expenseClaims.split("--> statement-breakpoint")) db.exec(statement);
         const gstReturnReadiness = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`), "utf8");
         for (const statement of gstReturnReadiness.split("--> statement-breakpoint")) db.exec(statement);
-        if (current === true || current === "prior") {
+        if (current === true || current === "prior" || current === "previous-prior") {
           const complianceObligations = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID}.sql`), "utf8");
           for (const statement of complianceObligations.split("--> statement-breakpoint")) db.exec(statement);
           const periodClose = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID}.sql`), "utf8");
           for (const statement of periodClose.split("--> statement-breakpoint")) db.exec(statement);
-          if (current === true) {
+          if (current === true || current === "prior") {
             const tenantPan = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_TENANT_PAN_V1_MIGRATION_ID}.sql`), "utf8");
             for (const statement of tenantPan.split("--> statement-breakpoint")) db.exec(statement);
+          }
+          if (current === true) {
+            const closePack = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID}.sql`), "utf8");
+            for (const statement of closePack.split("--> statement-breakpoint")) db.exec(statement);
           }
         }
       }

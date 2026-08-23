@@ -42,6 +42,34 @@ describe("shared CLI and stdio MCP transport", () => {
     }
   });
 
+  it("exposes all Close Pack operations through the shared CLI and MCP catalogs", async () => {
+    const ids = ["report.close-pack.export", "report.close-pack.get", "report.close-pack.section"];
+    for (const id of ids) {
+      const operation = findOperation(id);
+      expect(operation).toBeDefined();
+      expect(operation?.requiredScope).toBe("bookSet");
+      expect(operation?.examples.length).toBeGreaterThan(0);
+      expect(operation?.remediation.length).toBeGreaterThan(0);
+    }
+    const dir = mkdtempSync(join(tmpdir(), "agent-bahi-close-pack-transport-"));
+    const db = join(dir, "books.sqlite");
+    let transport: StdioClientTransport | undefined;
+    try {
+      const listed = await cli(db, ["operations", "list", "--json"]);
+      expect(listed.code).toBe(0);
+      expect(JSON.stringify(json(listed.stdout))).toEqual(expect.stringContaining("report.close-pack.export"));
+      transport = new StdioClientTransport({ command: process.execPath, args: [join(root, "src/mcp.ts"), "--database", db], cwd: root, stderr: "pipe" });
+      const client = new Client({ name: "agent-bahi-close-pack-catalog", version: "1" }, { capabilities: {} });
+      await client.connect(transport);
+      const tools = await client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(ids));
+      await client.close();
+    } finally {
+      await transport?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("exposes tenant PAN through CLI/MCP with masked default, explicit reveal, and sensitive-output help", async () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-bahi-pan-transport-"));
     const db = join(dir, "books.sqlite");

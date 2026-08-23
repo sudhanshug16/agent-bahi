@@ -33,7 +33,7 @@ describe("pending official Drizzle GST upgrade", () => {
 
       await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "current.backup") });
       const current = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-      expect(current.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 11n });
+      expect(current.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 12n });
       current.close();
     } finally {
       await rm(directory, { recursive: true, force: true });

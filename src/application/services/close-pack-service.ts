@@ -246,8 +246,8 @@ async function generateComplianceReadinessSummaryCSV(session: BusinessSession, t
     `SELECT COUNT(*) as cnt, SUM(CASE WHEN grv.readiness_status = 'READY' THEN 1 ELSE 0 END) as resolved
      FROM gst_return_validations grv
      JOIN gst_returns gr ON gr.id = grv.return_id AND gr.tenant_id = grv.tenant_id AND gr.book_set_id = grv.book_set_id
-     WHERE grv.tenant_id = ? AND grv.book_set_id = ? AND gr.tax_period_from >= ? AND gr.tax_period_to <= ?`,
-    [tenantId, bookSetId, periodStart, periodEnd],
+     WHERE grv.tenant_id = ? AND grv.book_set_id = ? AND gr.tax_period_from <= ? AND gr.tax_period_to >= ?`,
+    [tenantId, bookSetId, periodEnd, periodStart],
   );
   const gstCount = Number(gstReturns.rows?.[0]?.cnt ?? 0);
   const gstResolved = Number(gstReturns.rows?.[0]?.resolved ?? 0);
@@ -257,8 +257,8 @@ async function generateComplianceReadinessSummaryCSV(session: BusinessSession, t
   const tdsEvents = await session.query(
     `SELECT COUNT(*) as cnt, SUM(CASE WHEN wcc.state = 'ACCEPTED' THEN 1 ELSE 0 END) as resolved
      FROM withholding_compliance_cases wcc
-     WHERE wcc.tenant_id = ? AND wcc.book_set_id = ? AND wcc.effective_date >= ? AND wcc.effective_date <= ?`,
-    [tenantId, bookSetId, periodStart, periodEnd],
+     WHERE wcc.tenant_id = ? AND wcc.book_set_id = ? AND wcc.period_start <= ? AND wcc.period_end >= ?`,
+    [tenantId, bookSetId, periodEnd, periodStart],
   );
   const tdsCount = Number(tdsEvents.rows?.[0]?.cnt ?? 0);
   const tdsResolved = Number(tdsEvents.rows?.[0]?.resolved ?? 0);
@@ -267,8 +267,8 @@ async function generateComplianceReadinessSummaryCSV(session: BusinessSession, t
 
   const obligations = await session.query(
     `SELECT COUNT(*) as cnt FROM compliance_obligations
-     WHERE tenant_id = ? AND book_set_id = ? AND effective_date >= ? AND effective_date <= ?`,
-    [tenantId, bookSetId, periodStart, periodEnd],
+     WHERE tenant_id = ? AND book_set_id = ? AND period_start <= ? AND period_end >= ?`,
+    [tenantId, bookSetId, periodEnd, periodStart],
   );
   const obligationCount = Number(obligations.rows?.[0]?.cnt ?? 0);
   const obligStatus = obligationCount === 0 ? "NOT_AVAILABLE" : "REVIEW_REQUIRED";
@@ -285,10 +285,19 @@ async function generatePeriodCloseChecklistCSV(session: BusinessSession, tenantI
   lines.push(rowToCSV(["Trial Balance Balanced", ledger.trialBalance.isBalanced ? "✓" : "✗", ""]));
   lines.push(rowToCSV(["Balance Sheet Balanced", ledger.balanceSheet.isBalanced ? "✓" : "✗", ""]));
 
-  const gst = await session.query("SELECT COUNT(*) as cnt FROM gst_return_validations WHERE tenant_id = ? AND book_set_id = ? AND readiness_status <> 'READY'", [tenantId, bookSetId]);
+  const gst = await session.query(
+    `SELECT COUNT(*) as cnt
+     FROM gst_return_validations grv
+     JOIN gst_returns gr ON gr.id = grv.return_id AND gr.tenant_id = grv.tenant_id AND gr.book_set_id = grv.book_set_id
+     WHERE grv.tenant_id = ? AND grv.book_set_id = ? AND gr.tax_period_from <= ? AND gr.tax_period_to >= ? AND grv.readiness_status <> 'READY'`,
+    [tenantId, bookSetId, periodEnd, periodStart],
+  );
   lines.push(rowToCSV(["GST Returns Resolved", Number(gst.rows[0].cnt) === 0 ? "✓" : "✗", gst.rows[0].cnt]));
 
-  const tds = await session.query("SELECT COUNT(*) as cnt FROM withholding_compliance_cases WHERE tenant_id = ? AND book_set_id = ? AND state <> 'ACCEPTED'", [tenantId, bookSetId]);
+  const tds = await session.query(
+    "SELECT COUNT(*) as cnt FROM withholding_compliance_cases WHERE tenant_id = ? AND book_set_id = ? AND period_start <= ? AND period_end >= ? AND state <> 'ACCEPTED'",
+    [tenantId, bookSetId, periodEnd, periodStart],
+  );
   lines.push(rowToCSV(["TDS/TCS Cases Resolved", Number(tds.rows[0].cnt) === 0 ? "✓" : "✗", tds.rows[0].cnt]));
 
   return lines.join("\r\n");
@@ -332,6 +341,7 @@ export class ClosePackService {
     isoDate(payload.periodEnd, "periodEnd");
     isoDate(payload.asOfDate, "asOfDate");
     if (payload.periodStart > payload.periodEnd) throw new DomainError("INVALID_PERIOD_RANGE", "periodStart must not be after periodEnd");
+    if (payload.asOfDate < payload.periodEnd) throw new DomainError("INVALID_AS_OF_DATE", "asOfDate must be on or after periodEnd");
     if (payload.basis !== "ACCRUAL") throw new DomainError("INVALID_BASIS", "basis must be ACCRUAL");
 
     const requestHash = computeCommandHash("report.close-pack.export", envelope, payload);
@@ -390,7 +400,7 @@ export class ClosePackService {
 
       await session.execute(
         "INSERT INTO audit_records (id, tenant_id, book_set_id, occurred_at, action, actor_type, actor_id, request_id, entity_type, entity_id, source, reason, command, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [randomUUID(), envelope.tenantId, envelope.bookSetId, now, "CLOSE_PACK_EXPORT", "SYSTEM", null, envelope.requestId, "CLOSE_PACK", manifestId, "REPORT_API", "Period close pack generation", "report.close-pack.export", now],
+        [randomUUID(), envelope.tenantId, envelope.bookSetId, now, "CLOSE_PACK_EXPORT", envelope.actor.kind, envelope.actor.id, envelope.requestId, "CLOSE_PACK", manifestId, envelope.source, envelope.reason, "report.close-pack.export", now],
       );
 
       return { resultJson, resultHash };

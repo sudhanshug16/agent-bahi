@@ -4,6 +4,17 @@ import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
+import { DRIZZLE_CLOSE_PACK_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const DRIZZLE_DATABASE_CONTROL_DDL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", "0009_drizzle_v8_baseline.sql"),
+  "utf8",
+).split("--> statement-breakpoint")
+  .find((statement) => statement.includes("CREATE TABLE `database_control`"))
+  ?.replace(/;\s*$/, "")
+  .trim() ?? "";
 
 /**
  * Database control inspection status.
@@ -120,6 +131,37 @@ export class DatabaseControlService {
       // empty object is unavailable; emptiness is not an escape hatch.
       const tableMetadata = await this.readDatabaseControlMetadata();
       if (!tableMetadata) return { status: "UNINITIALIZED", reason: "TABLE_MISSING" };
+
+      // Fresh official Drizzle databases intentionally do not have the legacy
+      // schema_migrations table. Their exact compatibility identity is the
+      // complete official journal plus the v8 control row finalized by 0020.
+      const drizzleTable = await this.db.query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = '__drizzle_migrations'");
+      const legacyTable = await this.db.query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'");
+      if (drizzleTable.rowCount === 1 && legacyTable.rowCount === 0) {
+        const drizzleSchemaError = DatabaseControlService.validateDrizzleDatabaseControlTableSchema(tableMetadata);
+        if (drizzleSchemaError) return { status: "UNAVAILABLE", reason: drizzleSchemaError };
+        const journal = await this.db.query("SELECT id, hash, created_at FROM __drizzle_migrations ORDER BY created_at ASC, id ASC");
+        try {
+          validateOfficialDrizzleJournal(journal.rows);
+          if (journal.rowCount !== officialDrizzleJournal().length) return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+          const drizzleManifest: SqliteSchemaManifest = {
+            ...KNOWN_SCHEMA_MANIFESTS.find((manifest) => manifest.schemaVersion === 8)!,
+            migrations: Object.freeze([{
+              id: DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
+              checksum: DRIZZLE_CLOSE_PACK_V1_HASH,
+              dialect: "sqlite",
+              status: "APPLIED",
+            }]),
+          };
+          const rows = await this.db.query("SELECT * FROM database_control WHERE id = 1");
+          if (rows.rowCount !== 1) return { status: rows.rowCount === 0 ? "UNINITIALIZED" : "UNAVAILABLE", reason: rows.rowCount === 0 ? "TABLE_EMPTY" : "ROW_COUNT_MISMATCH" };
+          const validation = this.validateAndParseRecord(rows.rows[0]!, drizzleManifest);
+          return validation.error ? { status: "UNAVAILABLE", reason: "ROW_DATA_INVALID" } : { status: "AVAILABLE", record: validation.record };
+        } catch {
+          return { status: "UNAVAILABLE", reason: "MIGRATION_HISTORY_MISMATCH" };
+        }
+      }
+
       const schemaError = DatabaseControlService.validateDatabaseControlTableSchema(tableMetadata);
       if (schemaError) return { status: "UNAVAILABLE", reason: schemaError };
 
@@ -544,6 +586,38 @@ export class DatabaseControlService {
       return "TABLE_DDL_MISMATCH";
     }
 
+    return undefined;
+  }
+
+  /** Validate the Drizzle-owned v8 table without applying legacy DDL rules. */
+  static validateDrizzleDatabaseControlTableSchema(metadata: TableMetadata): DatabaseControlInspectionReason | undefined {
+    if (metadata.kind !== "TABLE") return "TABLE_KIND_MISMATCH";
+    const columns = metadata.columns ?? [];
+    if (columns.length !== 17) return "TABLE_COLUMN_COUNT_MISMATCH";
+    const expectedNames = [
+      "id", "schema_version", "data_format_version", "reader_compatibility_min",
+      "reader_compatibility_max", "required_writer_protocol", "state", "revision",
+      "generation", "last_migration_id", "last_migration_checksum", "last_writer_cli_version",
+      "last_writer_build_id", "last_writer_at", "created_at", "updated_at", "recovery_reason",
+    ];
+    const expectedTypes = [
+      "INTEGER", "INTEGER", "INTEGER", "INTEGER", "INTEGER", "INTEGER", "TEXT", "INTEGER",
+      "INTEGER", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT", "TEXT",
+    ];
+    for (const [index, column] of columns.entries()) {
+      if (column.cid !== index) return "TABLE_COLUMN_CID_MISMATCH";
+      if (column.name !== expectedNames[index]) return "TABLE_COLUMN_NAME_MISMATCH";
+      if (String(column.type).toUpperCase() !== expectedTypes[index]) return "TABLE_COLUMN_TYPE_MISMATCH";
+      const primaryKey = index === 0;
+      const notnull = index === 16 ? 0 : 1;
+      if (column.primaryKey !== primaryKey) return "TABLE_COLUMN_PRIMARY_KEY_MISMATCH";
+      if ((column.pk ?? 0) !== (primaryKey ? 1 : 0)) return "TABLE_COLUMN_PK_FIELD_MISMATCH";
+      if ((column.notnull ?? 0) !== notnull) return "TABLE_COLUMN_NOTNULL_FIELD_MISMATCH";
+      if (column.nullable !== (index === 16)) return "TABLE_COLUMN_NULLABILITY_MISMATCH";
+      if ((column.hidden ?? 0) !== 0) return "TABLE_COLUMN_HIDDEN_FIELD_MISMATCH";
+      if (column.dflt_value !== null) return "TABLE_COLUMN_DEFAULT_MISMATCH";
+    }
+    if ((metadata.ddl ?? "").trim() !== DRIZZLE_DATABASE_CONTROL_DDL) return "TABLE_DDL_MISMATCH";
     return undefined;
   }
 

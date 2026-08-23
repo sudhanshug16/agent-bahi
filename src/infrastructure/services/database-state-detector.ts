@@ -28,6 +28,8 @@ import {
   DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID,
   DRIZZLE_PERIOD_CLOSE_V1_HASH,
   DRIZZLE_TENANT_PAN_V1_MIGRATION_ID,
+  DRIZZLE_TENANT_PAN_V1_HASH,
+  DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
   DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH,
   DRIZZLE_GST_RETURN_READINESS_V1_HASH,
   DRIZZLE_JOURNAL_DDL,
@@ -105,6 +107,10 @@ const DRIZZLE_TENANT_PAN_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_TENANT_PAN_V1_MIGRATION_ID}.sql`),
   "utf8",
 );
+const DRIZZLE_CLOSE_PACK_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID}.sql`),
+  "utf8",
+);
 
 function normalizeDdl(sql: string | null | undefined): string {
   return String(sql ?? "")
@@ -165,6 +171,9 @@ function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, curre
         for (const statement of DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_PERIOD_CLOSE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_TENANT_PAN_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        if (current === true) {
+          for (const statement of DRIZZLE_CLOSE_PACK_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        }
       }
     } else {
       memory.exec(MIGRATION_SCHEMA_SQLITE);
@@ -241,7 +250,7 @@ function exactDrizzleJournal(db: BunDatabase): boolean {
 }
 
 function exactFreshDrizzle(db: BunDatabase, current = false): boolean {
-  const manifest = KNOWN_SCHEMA_MANIFESTS.at(-1)!;
+  const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === 8)!;
   if (!exactDrizzleJournal(db)) return false;
   const expected = expectedCatalog(manifest, true, current);
   const expectedControl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
@@ -252,7 +261,7 @@ function exactFreshDrizzle(db: BunDatabase, current = false): boolean {
 }
 
 function exactPriorCurrentDrizzle(db: BunDatabase): boolean {
-  const manifest = KNOWN_SCHEMA_MANIFESTS.at(-1)!;
+  const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === 8)!;
   if (!exactDrizzleJournal(db)) return false;
   const memory = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
@@ -270,9 +279,28 @@ function exactPriorCurrentDrizzle(db: BunDatabase): boolean {
   } finally { memory.close(); }
 }
 
-/** Recognize the immediately previous official journal before Tenant PAN V1. */
+/** Recognize the exact official journal immediately before Close Pack V1. */
 function exactPreviousCurrentDrizzle(db: BunDatabase): boolean {
-  const manifest = KNOWN_SCHEMA_MANIFESTS.at(-1)!;
+  const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === 8)!;
+  if (!exactDrizzleJournal(db)) return false;
+  const memory = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
+  try {
+    memory.exec("PRAGMA foreign_keys = ON");
+    memory.exec(DRIZZLE_JOURNAL_DDL);
+    for (const statement of DRIZZLE_BASELINE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+    for (const sql of [DRIZZLE_GST_V1_SQL, DRIZZLE_TDS_TCS_SQL, DRIZZLE_FIXED_ASSETS_SQL, DRIZZLE_FX_SQL, DRIZZLE_PAYROLL_SQL, DRIZZLE_EXPENSE_CLAIMS_SQL, DRIZZLE_GST_RETURN_READINESS_SQL, DRIZZLE_COMPLIANCE_OBLIGATIONS_SQL, DRIZZLE_PERIOD_CLOSE_SQL, DRIZZLE_TENANT_PAN_SQL]) {
+      for (const statement of sql.split("--> statement-breakpoint")) memory.exec(statement);
+    }
+    const expected = catalog(memory);
+    const expectedDdl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
+    if (!exactControl(db, manifest, DRIZZLE_TENANT_PAN_V1_MIGRATION_ID, DRIZZLE_TENANT_PAN_V1_HASH, expectedDdl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
+    return sameCatalog(catalog(db), expected);
+  } finally { memory.close(); }
+}
+
+/** Recognize the exact official journal immediately before Tenant PAN V1. */
+function exactPeriodCloseCurrentDrizzle(db: BunDatabase): boolean {
+  const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === 8)!;
   if (!exactDrizzleJournal(db)) return false;
   const memory = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
@@ -368,7 +396,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
       return state ? { state, schemaVersion: manifest.schemaVersion, hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount } : { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount };
     }
 
-    if (hasDrizzleMigrations && hasControl && (exactFreshDrizzle(db) || exactFreshDrizzle(db, true) || exactPriorCurrentDrizzle(db) || exactPreviousCurrentDrizzle(db))) {
+    if (hasDrizzleMigrations && hasControl && (exactFreshDrizzle(db) || exactFreshDrizzle(db, true) || exactPriorCurrentDrizzle(db) || exactPeriodCloseCurrentDrizzle(db) || exactPreviousCurrentDrizzle(db))) {
       return { state: "DRIZZLE_MANAGED", schemaVersion: 8, hasLegacyMigrations: false, hasDrizzleMigrations: true, drizzleMigrationCount };
     }
     return { state: "UNKNOWN", hasLegacyMigrations: false, hasDrizzleMigrations, drizzleMigrationCount };

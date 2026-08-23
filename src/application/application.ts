@@ -308,11 +308,14 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
   currentDataFormatVersion?: number;
   requiredDataFormatVersion: number;
 }> {
+  // The official Drizzle journal (including 0020) remains the v8 data format;
+  // CURRENT_SCHEMA_MANIFEST is the separate legacy bridge manifest.
+  const requiredSchemaVersion = 8;
   const canonicalPath = assertSafeSqlitePath(dbPath);
   if (!(await Bun.file(canonicalPath).exists())) {
     return {
       status: "UNINITIALIZED",
-      requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+      requiredSchemaVersion,
       requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
     };
   }
@@ -322,7 +325,7 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
     if (state.state === "EMPTY") {
       return {
         status: "UNINITIALIZED",
-        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredSchemaVersion,
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
     }
@@ -333,14 +336,14 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
       if (!control) {
         return {
           status: state.state as any,
-          requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+          requiredSchemaVersion,
           requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
         };
       }
       return {
         status: state.state as any,
         currentSchemaVersion: Number(control.schema_version),
-        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredSchemaVersion,
         currentDataFormatVersion: Number(control.data_format_version),
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
@@ -352,14 +355,14 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
       if (!control) {
         return {
           status: "CUSTOM_V8",
-          requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+          requiredSchemaVersion,
           requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
         };
       }
       return {
         status: "CUSTOM_V8",
         currentSchemaVersion: Number(control.schema_version),
-        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredSchemaVersion,
         currentDataFormatVersion: Number(control.data_format_version),
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
@@ -371,7 +374,7 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
       return {
         status: ready ? "READY" : "UPDATE_REQUIRED",
         currentSchemaVersion: 8,
-        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredSchemaVersion,
         currentDataFormatVersion: 1,
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
@@ -384,7 +387,7 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
       if (!journal || !control) {
         return {
           status: "UNAVAILABLE",
-          requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+          requiredSchemaVersion,
           requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
         };
       }
@@ -396,7 +399,7 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
       return {
         status: ready ? "READY" : "UPDATE_REQUIRED",
         currentSchemaVersion: Number(control.schema_version),
-        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredSchemaVersion,
         currentDataFormatVersion: Number(control.data_format_version),
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
@@ -405,7 +408,7 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
     // Unknown or hybrid
     return {
       status: "UNAVAILABLE",
-      requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+      requiredSchemaVersion,
       requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
     };
   } finally {
