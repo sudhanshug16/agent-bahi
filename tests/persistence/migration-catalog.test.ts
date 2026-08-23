@@ -82,7 +82,7 @@ describe("SQLite migration catalog", () => {
       expect(() => native.query("SELECT COUNT(*) as count FROM schema_migrations").get()).toThrow();
       // Should have the official Drizzle migration journal
       expect(native.query("SELECT COUNT(*) as count FROM __drizzle_migrations").get()).toEqual({
-        count: 4n,
+        count: 5n,
       });
       expect(native.query("SELECT schema_version FROM database_control").get()).toEqual({ schema_version: 8n });
       native.close();

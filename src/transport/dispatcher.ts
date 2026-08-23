@@ -88,6 +88,12 @@ const handlers: Record<string, Handler> = {
   "asset.depreciation.report": (facade, input) => facade.fixedAssets.reports.depreciation(tenantId(input), bookSetId(input), text(input, "periodStart"), text(input, "periodEnd")),
   "asset.tax.report": (facade, input) => facade.fixedAssets.reports.tax(tenantId(input), bookSetId(input), text(input, "periodStart"), text(input, "periodEnd")),
   "asset.reconciliation.report": (facade, input) => facade.fixedAssets.reports.reconciliation(tenantId(input), bookSetId(input), text(input, "periodStart"), text(input, "periodEnd")),
+  "currency.register": (facade, input) => facade.fx.currency.register(input as never),
+  "fx.rate.create": (facade, input) => facade.fx.rate.create(input as never),
+  "fx.exposure.report": (facade, input) => facade.fx.exposure(tenantId(input), bookSetId(input)),
+  "fx.revaluation-policy.create": (facade, input) => facade.fx.revaluation.policy(input as never),
+  "fx.revaluation.post": (facade, input) => facade.fx.revaluation.post(input as never),
+  "fx.revaluation.reverse": (facade, input) => facade.fx.revaluation.reverse(input as never),
   "company.status": (facade, input) => facade.company.status({
     ...(optionalText(input, "tenantId") ? { tenantId: brandTenantId(optionalText(input, "tenantId")!) } : {}),
     ...(optionalText(input, "bookSetId") ? { bookSetId: brandBookSetId(optionalText(input, "bookSetId")!) } : {}),

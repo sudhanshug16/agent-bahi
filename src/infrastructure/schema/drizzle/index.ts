@@ -57,3 +57,18 @@ export {
   assetTaxRunLines,
   assetDisposals,
 } from "./fixed-assets-schema";
+
+// Foreign currency V1
+export {
+  tenantCurrencies,
+  fxRateSnapshots,
+  fxDocumentFacts,
+  fxDocumentLineAmounts,
+  fxAllocationFacts,
+  fxRevaluationPolicies,
+  fxRevaluationRuns,
+  fxRevaluationLines,
+  fxRevaluationReversals,
+  bankAccountCurrencies,
+  bankStatementLineCurrencies,
+} from "./fx-schema";

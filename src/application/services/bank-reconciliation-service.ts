@@ -12,7 +12,9 @@ export interface BankStatementRowPayload {
   description: string;
   reference?: string;
   signedAmountMinor: number;
+  statementMinorAmount?: number;
 }
+export interface BankStatementCurrencyPayload { currencyCode: string; exponent: number; }
 export interface BankStatementImportPayload {
   bankAccountId: string;
   externalStatementId: string;
@@ -21,6 +23,7 @@ export interface BankStatementImportPayload {
   openingBalanceMinor: number;
   closingBalanceMinor: number;
   rows: BankStatementRowPayload[];
+  currency?: BankStatementCurrencyPayload;
 }
 export type BankStatementEnvelope = CommandEnvelope<BankStatementImportPayload> & { bookSetId: BookSetId };
 export interface BankStatementImportResult { statementId: string; externalStatementId: string; lineIds: string[]; status: "IMPORTED"; }
@@ -102,6 +105,7 @@ async function finish<T>(session: BusinessSession, envelope: ScopedEnvelope<unkn
 function validateImport(payload: BankStatementImportPayload): void {
   text(payload.bankAccountId, "bankAccountId"); text(payload.externalStatementId, "externalStatementId"); date(payload.periodStart, "periodStart"); date(payload.periodEnd, "periodEnd");
   if (payload.periodStart > payload.periodEnd) throw new DomainError("INVALID_DATE_RANGE", "periodStart must not be after periodEnd");
+  if (payload.currency && (!/^[A-Z]{3}$/.test(payload.currency.currencyCode) || !Number.isSafeInteger(payload.currency.exponent) || payload.currency.exponent < 0 || payload.currency.exponent > 6)) throw new DomainError("INVALID_CURRENCY", "statement currency must be an uppercase three-letter code with exponent 0 through 6");
   safeInteger(payload.openingBalanceMinor, "openingBalanceMinor"); safeInteger(payload.closingBalanceMinor, "closingBalanceMinor");
   if (!Array.isArray(payload.rows) || payload.rows.length === 0) throw new DomainError("INVALID_STATEMENT_ROWS", "statement must contain at least one row");
   let sum = 0; let previous = 0;
@@ -132,7 +136,7 @@ export async function executeBankStatementImport(sessionRunner: BusinessSessionR
     }
     const statementId = randomUUID(); const lineIds: string[] = []; const now = new Date().toISOString();
     await session.execute("INSERT INTO bank_statements (id, tenant_id, book_set_id, bank_account_id, external_statement_id, period_start, period_end, opening_balance_minor, closing_balance_minor, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [statementId, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId, envelope.payload.externalStatementId, envelope.payload.periodStart, envelope.payload.periodEnd, envelope.payload.openingBalanceMinor, envelope.payload.closingBalanceMinor, contentHash, now]);
-    for (const row of envelope.payload.rows) { const lineId = randomUUID(); lineIds.push(lineId); await session.execute("INSERT INTO bank_statement_lines (id, tenant_id, book_set_id, statement_id, line_number, transaction_date, description, reference, signed_amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [lineId, envelope.tenantId, envelope.bookSetId, statementId, row.lineNumber, row.transactionDate, row.description, row.reference ?? null, row.signedAmountMinor]); }
+    for (const row of envelope.payload.rows) { const lineId = randomUUID(); lineIds.push(lineId); await session.execute("INSERT INTO bank_statement_lines (id, tenant_id, book_set_id, statement_id, line_number, transaction_date, description, reference, signed_amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [lineId, envelope.tenantId, envelope.bookSetId, statementId, row.lineNumber, row.transactionDate, row.description, row.reference ?? null, row.signedAmountMinor]); if (envelope.payload.currency) await session.execute("INSERT INTO bank_statement_line_currencies (id, tenant_id, book_set_id, statement_line_id, account_id, currency_code, exponent, statement_minor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, lineId, envelope.payload.bankAccountId, envelope.payload.currency.currencyCode, envelope.payload.currency.exponent, row.statementMinorAmount ?? row.signedAmountMinor, now]); }
     return finish(session, envelope, "bankStatement.import", requestHash, { statementId, externalStatementId: envelope.payload.externalStatementId, lineIds, status: "IMPORTED" }, "bank_statement", statementId, now);
   });
 }

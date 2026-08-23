@@ -8,8 +8,10 @@ import { validateCommandEnvelope } from "./bookset-command-service.ts";
 import { postJournalInSession, type JournalLinePayload } from "./journal-command-service.ts";
 import { prepareGstPosting, persistGstSnapshot, type GstDocumentBlock, type GstLineFact } from "./gst-service.ts";
 import { prepareWithholding, persistWithholdingEvent, type WithholdingBlock } from "./tds-tcs-service.ts";
+import { convertFxLines, assertNoUnreversedRevaluation, loadRate, type FxAllocationBlock, type FxDocumentBlock } from "./fx-service.ts";
+import { convertForeignMinor, proportionalCarryingBase, safeNumber } from "./fx-math.ts";
 
-export interface BillLinePayload { description: string; expenseAccountId: string; amountMinor: number; gst?: GstLineFact; }
+export interface BillLinePayload { description: string; expenseAccountId: string; amountMinor: number; foreignAmountMinor?: number; gst?: GstLineFact; }
 export interface BillCreatePayload {
   billNumber: string;
   vendorId: string;
@@ -18,11 +20,12 @@ export interface BillCreatePayload {
   narration?: string;
   lines: BillLinePayload[];
   gst?: GstDocumentBlock;
+  fx?: FxDocumentBlock;
 }
 export interface BillCreateResult { billId: string; billNumber: string; totalMinor: number; status: "DRAFT"; }
 export interface BillPostPayload { billId: string; payableAccountId: string; gst?: GstDocumentBlock; withholding?: WithholdingBlock; }
 export interface BillPostResult { billId: string; journalId: string; totalMinor: number; status: "POSTED" | "PARTIALLY_PAID" | "PAID"; }
-export interface VendorPaymentAllocationPayload { billId: string; amountMinor: number; }
+export interface VendorPaymentAllocationPayload { billId: string; amountMinor: number; fx?: FxAllocationBlock; }
 export interface VendorPaymentRecordPayload {
   vendorId: string;
   paymentDate: string;
@@ -161,12 +164,21 @@ export async function executeBillCreate(sessionRunner: BusinessSessionRunner, en
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
     await assertVendor(session, envelope.tenantId, envelope.bookSetId, vendorId);
     for (const line of envelope.payload.lines) await assertBillInputAccount(session, envelope.tenantId, envelope.bookSetId, line.expenseAccountId, "expenseAccountId");
+    const fxLines = envelope.payload.fx
+      ? await convertFxLines(session, envelope.tenantId, envelope.bookSetId, envelope.payload.fx, envelope.payload.lines.map((line) => line.foreignAmountMinor ?? line.amountMinor))
+      : undefined;
+    if (fxLines) totalMinor = fxLines.totalBaseMinor;
     const billId = randomUUID();
     const now = new Date().toISOString();
     const gstInput = envelope.payload.gst ? { ...envelope.payload.gst, lines: envelope.payload.gst.lines ?? envelope.payload.gst.lineFacts ?? envelope.payload.lines.map((line, index) => line.gst ? { ...line.gst, lineNumber: index + 1 } : undefined).filter(Boolean) as GstLineFact[] } : undefined;
     await session.execute("INSERT INTO vendor_bills (id, tenant_id, book_set_id, bill_number, vendor_id, bill_date, due_date, narration, status, total_minor, paid_minor, gst_input_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?)", [billId, envelope.tenantId, envelope.bookSetId, billNumber, vendorId, envelope.payload.billDate, envelope.payload.dueDate ?? null, envelope.payload.narration ?? null, totalMinor, gstInput ? JSON.stringify(gstInput) : null, now, now]);
-    for (const [index, line] of envelope.payload.lines.entries()) await session.execute("INSERT INTO vendor_bill_lines (id, tenant_id, book_set_id, bill_id, line_number, description, expense_account_id, amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, billId, index + 1, line.description, line.expenseAccountId, line.amountMinor]);
-    return finishCommand(session, envelope, "bill.create", requestHash, { billId, billNumber, totalMinor, status: "DRAFT" }, "vendor_bill", billId, now);
+    for (const [index, line] of envelope.payload.lines.entries()) {
+      const lineId = randomUUID();
+      await session.execute("INSERT INTO vendor_bill_lines (id, tenant_id, book_set_id, bill_id, line_number, description, expense_account_id, amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [lineId, envelope.tenantId, envelope.bookSetId, billId, index + 1, line.description, line.expenseAccountId, fxLines?.baseLines[index] ?? line.amountMinor]);
+      if (fxLines) await session.execute("INSERT INTO fx_document_line_amounts (id, tenant_id, book_set_id, document_type, document_id, line_id, line_number, foreign_minor, base_minor, created_at) VALUES (?, ?, ?, 'VENDOR_BILL', ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, billId, lineId, index + 1, fxLines.foreignLines[index], fxLines.baseLines[index], now]);
+    }
+    if (fxLines) await session.execute("INSERT INTO fx_document_facts (id, tenant_id, book_set_id, document_type, document_id, currency_code, exponent, rate_snapshot_id, rounding_policy, total_foreign_minor, total_base_minor, created_at) VALUES (?, ?, ?, 'VENDOR_BILL', ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, billId, fxLines.currencyCode, fxLines.exponent, fxLines.rateId, fxLines.roundingPolicy, fxLines.totalForeignMinor, fxLines.totalBaseMinor, now]);
+    return finishCommand(session, envelope, "bill.create", requestHash, { billId, billNumber, totalMinor, status: "DRAFT", ...(fxLines ? { currencyCode: fxLines.currencyCode, totalForeignMinor: fxLines.totalForeignMinor } : {}) }, "vendor_bill", billId, now);
   });
 }
 
@@ -232,7 +244,7 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
     const billId = nonblank(allocation?.billId, `allocations[${index}].billId`);
     if (seen.has(billId)) throw new DomainError("DUPLICATE_ALLOCATION", "a bill may appear only once per payment");
     seen.add(billId);
-    amountMinor = safeAdd(amountMinor, positiveMinor(allocation?.amountMinor, `allocations[${index}].amountMinor`));
+    amountMinor = safeAdd(amountMinor, allocation?.fx ? positiveMinor(allocation.fx.actualBankBaseMinor, `allocations[${index}].fx.actualBankBaseMinor`) : positiveMinor(allocation?.amountMinor, `allocations[${index}].amountMinor`));
   }
   const requestHash = computeCommandHash("vendorPayment.record", envelope, envelope.payload);
   return sessionRunner.withBusinessSession("write", async (session) => {
@@ -243,6 +255,7 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
     await assertAccount(session, envelope.tenantId, envelope.bookSetId, bankAccountId, "ASSET", "bankAccountId");
     const journalLines: JournalLinePayload[] = [];
     const billUpdates: Array<{ billId: string; paidMinor: number; status: "PARTIALLY_PAID" | "PAID" }> = [];
+    const carryingByBill = new Map<string, number>();
     for (const allocation of envelope.payload.allocations) {
       const bill = await session.querySingle("SELECT id, vendor_id, status, total_minor, paid_minor, withholding_minor, payable_account_id FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [allocation.billId, envelope.tenantId, envelope.bookSetId]);
       if (!bill) throw new DomainError("BILL_SCOPE_MISMATCH", "allocated bill does not belong to tenant and BookSet");
@@ -251,13 +264,35 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
       const total = Number(bill.total_minor);
       const paid = Number(bill.paid_minor);
       const withheld = Number(bill.withholding_minor ?? 0);
-      const allocationMinor = positiveMinor(allocation.amountMinor, "allocation amount");
-      if (allocationMinor > total - paid - withheld) throw new DomainError("OVER_ALLOCATION", "allocation exceeds bill outstanding amount");
+      const allocationMinor = allocation.fx ? positiveMinor(allocation.fx.actualBankBaseMinor, "FX actual bank amount") : positiveMinor(allocation.amountMinor, "allocation amount");
+      let carryingRelief = allocationMinor;
+      let realizedGainLoss = 0;
+      if (allocation.fx) {
+        await assertNoUnreversedRevaluation(session, envelope.tenantId, envelope.bookSetId, "VENDOR_BILL", allocation.billId);
+        const fact = await session.querySingle("SELECT currency_code, exponent, total_foreign_minor, total_base_minor FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'VENDOR_BILL' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.billId]);
+        if (!fact) throw new DomainError("FX_DOCUMENT_REQUIRED", "foreign allocation requires a foreign-currency bill");
+        const foreignMinor = positiveMinor(allocation.fx.foreignAmountMinor, "foreign allocation amount");
+        const priorRows = await session.query("SELECT foreign_minor FROM fx_allocation_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'VENDOR_BILL' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.billId]);
+        const priorForeign = priorRows.rows.reduce((sum, row) => sum + Number(row.foreign_minor), 0);
+        const totalForeign = Number(fact.total_foreign_minor);
+        if (foreignMinor > totalForeign - priorForeign) throw new DomainError("OVER_ALLOCATION", "foreign allocation exceeds bill outstanding amount");
+        const rate = await loadRate(session, envelope.tenantId, envelope.bookSetId, allocation.fx.settlementRateSnapshotId, "SETTLEMENT", String(fact.currency_code));
+        if (rate.exponent !== Number(fact.exponent)) throw new DomainError("CURRENCY_EXPONENT_MISMATCH", "settlement rate exponent does not match bill");
+        const calculated = safeNumber(convertForeignMinor(BigInt(foreignMinor), rate.rate, "HALF_UP", 2, rate.exponent), "calculated bank amount");
+        if (calculated !== allocation.fx.actualBankBaseMinor) throw new DomainError("FX_BANK_AMOUNT_MISMATCH", "actual bank amount does not equal the supplied settlement rate calculation");
+        carryingRelief = safeNumber(proportionalCarryingBase(BigInt(String(fact.total_base_minor)), BigInt(totalForeign), BigInt(priorForeign), BigInt(foreignMinor)), "carrying relief");
+        if (carryingRelief > total - paid - withheld) throw new DomainError("OVER_ALLOCATION", "FX carrying allocation exceeds bill outstanding amount");
+        realizedGainLoss = carryingRelief - allocation.fx.actualBankBaseMinor;
+        await assertAccount(session, envelope.tenantId, envelope.bookSetId, allocation.fx.realizedGainLossAccountId, "EXPENSE", "realizedGainLossAccountId");
+      }
+      if (carryingRelief > total - paid - withheld) throw new DomainError("OVER_ALLOCATION", "allocation exceeds bill outstanding amount");
       if (bill.payable_account_id === null || bill.payable_account_id === undefined) throw new DomainError("BILL_PAYABLE_MISSING", "posted bill has no payable account");
       const payableAccountId = String(bill.payable_account_id);
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, payableAccountId, "LIABILITY", "bill payable account");
-      journalLines.push({ accountId: brandAccountId(payableAccountId), description: `Vendor payment allocation ${allocation.billId}`, debitMinor: allocationMinor });
-      const newPaid = paid + allocationMinor;
+      journalLines.push({ accountId: brandAccountId(payableAccountId), description: `Vendor payment allocation ${allocation.billId}`, debitMinor: carryingRelief });
+      if (allocation.fx && realizedGainLoss !== 0) journalLines.push({ accountId: brandAccountId(allocation.fx.realizedGainLossAccountId), description: realizedGainLoss > 0 ? "Realized FX gain" : "Realized FX loss", ...(realizedGainLoss > 0 ? { creditMinor: realizedGainLoss } : { debitMinor: -realizedGainLoss }) });
+      const newPaid = paid + carryingRelief;
+      carryingByBill.set(allocation.billId, carryingRelief);
       billUpdates.push({ billId: allocation.billId, paidMinor: newPaid, status: billSettlementStatus(total, newPaid, withheld) === "PAID" ? "PAID" : "PARTIALLY_PAID" });
     }
     journalLines.push({ accountId: brandAccountId(bankAccountId), description: envelope.payload.reference, creditMinor: amountMinor });
@@ -265,7 +300,17 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
     const paymentId = randomUUID();
     const now = new Date().toISOString();
     await session.execute("INSERT INTO vendor_payments (id, tenant_id, book_set_id, vendor_id, payment_date, bank_account_id, reference, amount_minor, journal_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [paymentId, envelope.tenantId, envelope.bookSetId, vendorId, envelope.payload.paymentDate, bankAccountId, envelope.payload.reference ?? null, amountMinor, journalId, now]);
-    for (const allocation of envelope.payload.allocations) await session.execute("INSERT INTO vendor_payment_allocations (id, tenant_id, book_set_id, payment_id, bill_id, amount_minor) VALUES (?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, paymentId, allocation.billId, allocation.amountMinor]);
+    for (const allocation of envelope.payload.allocations) {
+      const allocationId = randomUUID();
+      await session.execute("INSERT INTO vendor_payment_allocations (id, tenant_id, book_set_id, payment_id, bill_id, amount_minor) VALUES (?, ?, ?, ?, ?, ?)", [allocationId, envelope.tenantId, envelope.bookSetId, paymentId, allocation.billId, carryingByBill.get(allocation.billId) ?? allocation.amountMinor]);
+      if (allocation.fx) {
+        const fact = await session.querySingle("SELECT total_foreign_minor, total_base_minor FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'VENDOR_BILL' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.billId]);
+        const priorRows = await session.query("SELECT foreign_minor FROM fx_allocation_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'VENDOR_BILL' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.billId]);
+        const priorForeign = priorRows.rows.reduce((sum, row) => sum + Number(row.foreign_minor), 0);
+        const carryingBaseMinor = safeNumber(proportionalCarryingBase(BigInt(String(fact!.total_base_minor)), BigInt(String(fact!.total_foreign_minor)), BigInt(priorForeign), BigInt(allocation.fx.foreignAmountMinor)), "carrying relief");
+        await session.execute("INSERT INTO fx_allocation_facts (id, tenant_id, book_set_id, allocation_type, allocation_id, document_type, document_id, foreign_minor, carrying_base_minor, actual_bank_base_minor, rate_snapshot_id, realized_gain_loss_minor, gain_loss_account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, "VENDOR_PAYMENT", allocationId, "VENDOR_BILL", allocation.billId, allocation.fx.foreignAmountMinor, carryingBaseMinor, allocation.fx.actualBankBaseMinor, allocation.fx.settlementRateSnapshotId, carryingBaseMinor - allocation.fx.actualBankBaseMinor, allocation.fx.realizedGainLossAccountId, now]);
+      }
+    }
     for (const update of billUpdates) await session.execute("UPDATE vendor_bills SET paid_minor = ?, status = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [update.paidMinor, update.status, now, update.billId, envelope.tenantId, envelope.bookSetId]);
     return finishCommand(session, envelope, "vendorPayment.record", requestHash, { paymentId, journalId, amountMinor, status: "POSTED" }, "vendor_payment", paymentId, now);
   });

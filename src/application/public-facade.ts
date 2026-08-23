@@ -26,6 +26,7 @@ import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations,
 import type { CompanyStatusInput, CompanyStatusResult, CompanyStatusService } from "./services/company-status-service.ts";
 import { executeDeductorProfileCreate, executePartyTaxProfileCreate, executeTaxRuleSnapshotCreate, executeWithholdingDeposit, listDeductorProfiles, listPartyTaxProfiles, listWithholdingRegister, type DeductorProfilePayload, type PartyTaxProfilePayload, type TaxRuleSnapshotPayload, type WithholdingDepositPayload, type WithholdingEventRow, type TaxKind } from "./services/tds-tcs-service.ts";
 import { executeAssetRegister, executeDepreciation, executeAssetTaxRule, executeTaxBlock, executeTaxCompute, executeAssetDispose, listAssetRegister, listBookDepreciation, listTaxSchedule, bookTaxReconciliation, type AssetRegisterPayload, type AssetRegisterResult, type DepreciationPreviewPayload, type DepreciationResult, type AssetTaxRulePayload, type TaxRuleResult, type TaxBlockPayload, type TaxBlockResult, type TaxComputePayload, type TaxRunResult, type AssetDisposePayload, type AssetDisposeResult, type AssetRegisterRow, type DepreciationLineResult, type TaxLineResult } from "./services/fixed-assets-service.ts";
+import { registerCurrency, createFxRateSnapshot, registerFxPolicy, postFxRevaluation, fxOutstanding, type CurrencyRegisterPayload, type FxRateSnapshotPayload, type FxPolicyPayload, type FxRevaluationPayload, type FxReportRow } from "./services/fx-service.ts";
 
 /**
  * Read-only tenant operations
@@ -130,6 +131,12 @@ export interface GstRegisterOperations {
   purchases(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
 }
 export interface CompanyStatusOperations { status(input?: CompanyStatusInput): Promise<CompanyStatusResult>; }
+export interface FxOperations {
+  currency: { register(envelope: CommandEnvelope<CurrencyRegisterPayload>): Promise<CommandResult<unknown>> };
+  rate: { create(envelope: SalesCommandEnvelope<FxRateSnapshotPayload>): Promise<CommandResult<unknown>> };
+  revaluation: { policy(envelope: SalesCommandEnvelope<FxPolicyPayload>): Promise<CommandResult<unknown>>; post(envelope: SalesCommandEnvelope<FxRevaluationPayload>): Promise<CommandResult<unknown>>; reverse(envelope: SalesCommandEnvelope<FxRevaluationPayload>): Promise<CommandResult<unknown>> };
+  exposure(tenantId: TenantId, bookSetId: BookSetId): Promise<FxReportRow[]>;
+}
 export interface TaxOperations {
   deductorProfile: { create(envelope: CommandEnvelope<DeductorProfilePayload>): Promise<CommandResult<unknown>>; list(tenantId: TenantId, date?: string): Promise<Record<string, unknown>[]> };
   partyProfile: { create(envelope: SalesCommandEnvelope<PartyTaxProfilePayload>): Promise<CommandResult<unknown>>; list(tenantId: TenantId, bookSetId: BookSetId, partyId: string, date?: string): Promise<Record<string, unknown>[]> };
@@ -169,6 +176,7 @@ export type PublicApplicationFacade = {
   gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations };
   tax: TaxOperations;
   fixedAssets: FixedAssetOperations;
+  fx: FxOperations;
   company: CompanyStatusOperations;
 };
 
@@ -250,6 +258,12 @@ export function createPublicFacade(
       },
     },
     company: { status: (input) => companyStatusService.status(input) },
+    fx: {
+      currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },
+      rate: { create: (envelope) => createFxRateSnapshot(sessionRunner, envelope) },
+      revaluation: { policy: (envelope) => registerFxPolicy(sessionRunner, envelope), post: (envelope) => postFxRevaluation(sessionRunner, envelope), reverse: (envelope) => postFxRevaluation(sessionRunner, envelope, true) },
+      exposure: (tenantId, bookSetId) => fxOutstanding(sessionRunner, tenantId, bookSetId),
+    },
     tax: {
       deductorProfile: { create: (envelope) => executeDeductorProfileCreate(sessionRunner, envelope), list: (tenantId, date) => listDeductorProfiles(sessionRunner, tenantId, date) },
       partyProfile: { create: (envelope) => executePartyTaxProfileCreate(sessionRunner, envelope), list: (tenantId, bookSetId, partyId, date) => listPartyTaxProfiles(sessionRunner, tenantId, bookSetId, partyId, date) },
@@ -270,5 +284,6 @@ export function createPublicFacade(
   // Keep the historical enumerable facade surface stable for CLI consumers;
   // GST is still a typed public property and is directly accessible.
   Object.defineProperty(facade, "gst", { value: facade.gst, enumerable: false, writable: false, configurable: false });
+  Object.defineProperty(facade, "fx", { value: facade.fx, enumerable: false, writable: false, configurable: false });
   return facade;
 }

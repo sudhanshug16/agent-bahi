@@ -16,6 +16,8 @@ import {
   DRIZZLE_BASELINE_CREATED_AT,
   DRIZZLE_BASELINE_MIGRATION_ID,
   DRIZZLE_GST_HASH,
+  DRIZZLE_FIXED_ASSETS_MIGRATION_ID,
+  DRIZZLE_FX_V1_MIGRATION_ID,
   DRIZZLE_GST_MIGRATION_ID,
   DRIZZLE_GST_V1_MIGRATION_ID,
   DRIZZLE_TDS_TCS_MIGRATION_ID,
@@ -54,8 +56,12 @@ const DRIZZLE_BASELINE_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_BASELINE_MIGRATION_ID}.sql`),
   "utf8",
 );
-const DRIZZLE_GST_SQL = readFileSync(
-  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`),
+const DRIZZLE_FIXED_ASSETS_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_FIXED_ASSETS_MIGRATION_ID}.sql`),
+  "utf8",
+);
+const DRIZZLE_FX_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_FX_V1_MIGRATION_ID}.sql`),
   "utf8",
 );
 const DRIZZLE_GST_V1_SQL = readFileSync(
@@ -118,7 +124,8 @@ function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, curre
       if (current) {
         for (const statement of DRIZZLE_GST_V1_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_TDS_TCS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
-        for (const statement of DRIZZLE_GST_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        for (const statement of DRIZZLE_FIXED_ASSETS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        for (const statement of DRIZZLE_FX_SQL.split("--> statement-breakpoint")) memory.exec(statement);
       }
     } else {
       memory.exec(MIGRATION_SCHEMA_SQLITE);

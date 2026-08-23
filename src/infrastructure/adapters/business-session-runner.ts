@@ -53,6 +53,17 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "asset_tax_runs",
   "asset_tax_run_lines",
   "asset_disposals",
+  "tenant_currencies",
+  "fx_rate_snapshots",
+  "fx_document_facts",
+  "fx_document_line_amounts",
+  "fx_allocation_facts",
+  "fx_revaluation_policies",
+  "fx_revaluation_runs",
+  "fx_revaluation_lines",
+  "fx_revaluation_reversals",
+  "bank_account_currencies",
+  "bank_statement_line_currencies",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

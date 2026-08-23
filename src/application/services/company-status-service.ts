@@ -104,6 +104,12 @@ export interface CompanyStatusBookSetSummary {
     taxUnrunCount: number;
     disposedOpenAnomalyCount: number;
   };
+  fx: {
+    foreignOpenItemCount: number;
+    missingOrUnverifiedRateCount: number;
+    unreversedRevaluationCount: number;
+    settlementMismatchCount: number;
+  };
   cashBank: {
     status: "UNAVAILABLE";
     reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE";
@@ -411,6 +417,25 @@ async function assetStatus(session: BusinessSession, tenantId: string, bookSetId
   return { manualEvidenceCount: manual.rows.length, previewNeededCount, taxRuleMissingCount: missingRuleCount, taxUnrunCount, disposedOpenAnomalyCount: anomalies.rows.length };
 }
 
+async function fxStatus(session: BusinessSession, tenantId: string, bookSetId: string): Promise<CompanyStatusBookSetSummary["fx"]> {
+  const documents = await session.query("SELECT document_type, document_id, total_foreign_minor FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? ORDER BY document_type, document_id", [tenantId, bookSetId]);
+  let foreignOpenItemCount = 0;
+  for (const document of documents.rows) {
+    const allocations = await session.query("SELECT foreign_minor FROM fx_allocation_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = ? AND document_id = ?", [tenantId, bookSetId, document.document_type, document.document_id]);
+    const settled = allocations.rows.reduce((total, row) => total + Number(row.foreign_minor), 0);
+    if (settled < Number(document.total_foreign_minor)) foreignOpenItemCount += 1;
+  }
+  const documentRates = await session.query("SELECT rate_snapshot_id FROM fx_document_facts WHERE tenant_id=? AND book_set_id=? ORDER BY document_id", [tenantId, bookSetId]);
+  let missingOrUnverifiedRateCount = 0;
+  for (const document of documentRates.rows) {
+    const rate = await session.querySingle("SELECT id, verified FROM fx_rate_snapshots WHERE id=? AND tenant_id=? AND book_set_id=?", [document.rate_snapshot_id, tenantId, bookSetId]);
+    if (!rate || Number(rate.verified) !== 1) missingOrUnverifiedRateCount += 1;
+  }
+  const unreversed = await session.query("SELECT DISTINCT r.id FROM fx_revaluation_runs r JOIN fx_revaluation_lines l ON l.run_id=r.id AND l.tenant_id=r.tenant_id AND l.book_set_id=r.book_set_id LEFT JOIN fx_revaluation_reversals x ON x.run_id=r.id AND x.tenant_id=r.tenant_id AND x.book_set_id=r.book_set_id WHERE r.tenant_id=? AND r.book_set_id=? AND r.status='POSTED' AND x.id IS NULL", [tenantId, bookSetId]);
+  const mismatches = await session.query("SELECT id FROM fx_allocation_facts WHERE tenant_id=? AND book_set_id=? AND actual_bank_base_minor <= 0", [tenantId, bookSetId]);
+  return { foreignOpenItemCount, missingOrUnverifiedRateCount, unreversedRevaluationCount: unreversed.rows.length, settlementMismatchCount: mismatches.rows.length };
+}
+
 function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   const issues: CompanyStatusIssue[] = [];
   if (!summary.ledger.isBalanced) issues.push({ severity: "BLOCKED", code: "LEDGER_UNBALANCED", bookSetId: summary.bookSet.bookSetId, amountMinor: Math.abs(summary.ledger.totalDebitMinor - summary.ledger.totalCreditMinor) });
@@ -430,6 +455,10 @@ function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   if (summary.assets.taxRuleMissingCount > 0) issues.push({ severity: "HIGH", code: "FIXED_ASSET_TAX_RULE_MISSING", bookSetId: summary.bookSet.bookSetId, count: summary.assets.taxRuleMissingCount });
   if (summary.assets.taxUnrunCount > 0) issues.push({ severity: "MEDIUM", code: "FIXED_ASSET_TAX_UNRUN", bookSetId: summary.bookSet.bookSetId, count: summary.assets.taxUnrunCount });
   if (summary.assets.disposedOpenAnomalyCount > 0) issues.push({ severity: "BLOCKED", code: "FIXED_ASSET_DISPOSAL_ANOMALY", bookSetId: summary.bookSet.bookSetId, count: summary.assets.disposedOpenAnomalyCount });
+  if (summary.fx.missingOrUnverifiedRateCount > 0) issues.push({ severity: "HIGH", code: "FX_RATE_MISSING_OR_UNVERIFIED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.missingOrUnverifiedRateCount });
+  if (summary.fx.foreignOpenItemCount > 0) issues.push({ severity: "INFO", code: "FX_FOREIGN_OPEN_ITEMS", bookSetId: summary.bookSet.bookSetId, count: summary.fx.foreignOpenItemCount });
+  if (summary.fx.unreversedRevaluationCount > 0) issues.push({ severity: "HIGH", code: "FX_REVALUATION_UNREVERSED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.unreversedRevaluationCount });
+  if (summary.fx.settlementMismatchCount > 0) issues.push({ severity: "BLOCKED", code: "FX_SETTLEMENT_MISMATCH", bookSetId: summary.bookSet.bookSetId, count: summary.fx.settlementMismatchCount });
   issues.push({ severity: "INFO", code: "CASH_BANK_UNAVAILABLE", bookSetId: summary.bookSet.bookSetId });
   return issues;
 }
@@ -486,6 +515,7 @@ export class CompanyStatusService {
           gst: await gstStatus(session, tenantId, bookSetId, asOfDate),
           tdsTcs: await tdsTcsStatus(session, tenantId, bookSetId, asOfDate),
           assets: await assetStatus(session, tenantId, bookSetId, asOfDate),
+          fx: await fxStatus(session, tenantId, bookSetId),
           cashBank: { status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" },
         };
         summaries.push(summary);
