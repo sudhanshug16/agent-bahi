@@ -112,3 +112,6 @@ export {
 
 // Period Close V1
 export { periodCloseEvents } from "./period-close-schema";
+
+// Close Pack V1
+export { closePackManifests, closePackSections, closePackBodies } from "./close-pack-schema";

@@ -78,6 +78,13 @@
       "when": 1787486259302,
       "tag": "0019_tenant_pan_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1724433600000,
+      "tag": "0020_close_pack_v1",
+      "breakpoints": true
     }
   ]
 }

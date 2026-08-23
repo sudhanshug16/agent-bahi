@@ -32,6 +32,7 @@ import { createEmployee, getEmployee, listEmployees, createEmployeeProfile, crea
 import { createClaimant, getClaimant, listClaimants, createClaim as createExpenseClaim, submitClaim, reviewClaim as reviewExpenseClaim, postClaim, getClaim as getExpenseClaim, listClaims as listExpenseClaims, issueAdvance, getAdvance, listAdvances, repayAdvance, recordReimbursement, expenseRegister, expenseOpenItems, evidenceExceptions, type ClaimantCreatePayload, type ClaimantView, type ExpenseClaimCreatePayload, type ExpenseClaimSubmitPayload, type ExpenseClaimReviewPayload, type ExpenseClaimPostPayload, type ExpenseClaimView, type ExpenseAdvanceIssuePayload, type ExpenseAdvanceRepayPayload, type ExpenseAdvanceView, type ExpenseReimbursementPayload, type ExpenseRegisterRow, type ExpenseOpenItems, type ExpenseEvidenceException } from "./services/expense-claims-service.ts";
 import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot as createComplianceRuleSnapshot, getRuleSnapshot, listRuleSnapshots, createDeadlineSnapshot, getDeadlineSnapshot, listDeadlineSnapshots, createRulePredecessor, evaluateApplicability, getApplicabilityDecision, listApplicabilityDecisions, generateObligation, getObligation, listObligations, calendar, attachArtifact, recordObligationEvent, complianceStatus, type ComplianceEnvelope, type ComplianceFactProfileCreatePayload, type ComplianceRuleCreatePayload, type ComplianceDeadlineCreatePayload, type CompliancePredecessorCreatePayload, type ComplianceApplicabilityPayload, type ComplianceGeneratePayload, type ComplianceArtifactAttachPayload, type ComplianceEventPayload, type ObligationStatus } from "./services/compliance-obligations-service.ts";
 import { PeriodCloseService, type PeriodClosePayload, type PeriodReopenPayload, type PeriodPlan, type PeriodEventResult } from "./services/period-close-service.ts";
+import { ClosePackService, type ClosePackExportPayload, type ClosePackExportResult, type ClosePackManifest } from "./services/close-pack-service.ts";
 import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
 
 /**
@@ -209,6 +210,12 @@ export interface PeriodCloseOperations {
   status(tenantId: TenantId, bookSetId: BookSetId): Promise<Array<Record<string, unknown>>>;
 }
 
+export interface ClosePackOperations {
+  export(envelope: CommandEnvelope<ClosePackExportPayload> & { bookSetId: BookSetId }): Promise<CommandResult<ClosePackExportResult>>;
+  getManifest(tenantId: TenantId, bookSetId: BookSetId, manifestId: string): Promise<ClosePackManifest | null>;
+  getSection(tenantId: TenantId, bookSetId: BookSetId, manifestId: string, sectionName: string): Promise<string | null>;
+}
+
 /**
  * Public application facade: typed read and command interfaces.
  * No raw service mutators or persistence handles escape.
@@ -237,6 +244,7 @@ export type PublicApplicationFacade = {
   expense: ExpenseOperations;
   compliance: ComplianceOperations;
   periodClose: PeriodCloseOperations;
+  closePack: ClosePackOperations;
 };
 
 /**
@@ -253,6 +261,7 @@ export function createPublicFacade(
   companyStatusService: CompanyStatusService,
 ): PublicApplicationFacade {
   const periodCloseService = new PeriodCloseService(sessionRunner);
+  const closePackService = new ClosePackService(sessionRunner);
   const facade: PublicApplicationFacade = {
     tenant: {
       getTenant: (tenantId: TenantId) => tenantService.getTenant(tenantId),
@@ -376,6 +385,11 @@ export function createPublicFacade(
       reopenPreview: (tenantId, bookSetId, periodStart, periodEnd) => periodCloseService.reopenPreview(tenantId, bookSetId, periodStart, periodEnd),
       reopen: (envelope) => periodCloseService.reopen(envelope),
       status: (tenantId, bookSetId) => periodCloseService.status(tenantId, bookSetId),
+    },
+    closePack: {
+      export: (envelope) => closePackService.export(envelope),
+      getManifest: (tenantId, bookSetId, manifestId) => closePackService.getManifest(tenantId, bookSetId, manifestId),
+      getSection: (tenantId, bookSetId, manifestId, sectionName) => closePackService.getSection(tenantId, bookSetId, manifestId, sectionName),
     },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },
