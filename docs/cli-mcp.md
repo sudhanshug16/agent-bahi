@@ -72,11 +72,34 @@ unexpected internal failure.
 
 The MCP server uses the official `@modelcontextprotocol/sdk@1.30.0` split
 server and stdio transport. Every business catalog entry is a tool. Database
-operator actions are deliberately absent from `tools/list`; closing stdin is a
-clean server shutdown. MCP tool results contain the same typed JSON envelope in
+CLI-only database mutations are deliberately absent from `tools/list`; read-only
+database inspection remains available. Closing stdin is a clean server shutdown.
+MCP tool results contain the same typed JSON envelope in
 both text content and `structuredContent`, with `isError: true` for failures.
 
 For a container deployment, see `Dockerfile` and `docker-compose.yml`. The
 image runs the compiled Bun binary as a non-root user, keeps SQLite and backup
 writes under `/data`, supports a read-only root filesystem, and leaves TLS and
 secret provisioning to the deployment layer.
+
+V1 database operations use the version and db aliases:
+
+    agent-bahi version --json
+    agent-bahi --database /absolute/books.sqlite db status --json
+    agent-bahi --database /absolute/books.sqlite db backup list --json
+    agent-bahi --database /absolute/books.sqlite db backup create --request-id req-1 --actor-id human-1 --yes --json
+    agent-bahi --database /absolute/books.sqlite db upgrade preview --json
+    agent-bahi --database /absolute/books.sqlite db upgrade apply --request-id req-2 --actor-id human-1 --yes --json
+
+db backup restore creates and verifies a pre-restore safety backup before
+atomic promotion. Upgrade apply reviews ordered migration IDs/checksums,
+creates and verifies a backup before migration, and records an adjacent
+append-only receipt containing hashes, timing, outcome, and recovery. If
+recovery fails, the process must not continue business work. The receipt and
+retained backup are not silently deleted.
+
+The binary is updated by the operator first; the explicit CLI upgrade follows.
+MCP exposes inspection operations only. Calling a CLI-only mutation through
+MCP returns CLI_REQUIRED and never applies a migration or changes a binary.
+SQLite data-format/schema versions are independent from CLI semver. V1 makes
+no self-updater, download-installer, signing, or notarization claim.

@@ -14,22 +14,25 @@ export const EXIT_CODES = {
 
 function help(): string {
   return [
-    "agent-bahi — agent-first SQLite accounting transport",
+    "agent-bahi 1.0.0 — agent-first SQLite accounting transport",
     "",
     "Usage:",
     "  agent-bahi [--database PATH] skills list|show <id>|check [id] [--json]",
     "  agent-bahi [--database PATH] operations list|show <operation-id> [--json]",
     "  agent-bahi [--database PATH] operations describe OPERATION [--json]",
     "  agent-bahi [--database PATH] operations run OPERATION [--input FILE|-] [--json]",
-    "  agent-bahi [--database PATH] database.status|database.init",
-    "  agent-bahi [--database PATH] database.upgrade --backup ABS_PATH",
+    "  agent-bahi version [--json]",
+    "  agent-bahi [--database PATH] db status|backup list|backup show|backup verify|upgrade preview|upgrade status",
+    "  agent-bahi [--database PATH] db backup create|restore|upgrade apply --request-id ID --actor-id ID --yes",
+    "  agent-bahi [--database PATH] database.compatibility|database.upgrade.preview|database.upgrade.status",
     "  agent-bahi [--database PATH] status [--tenant-id ID] [--book-set-id ID] [--as-of-date YYYY-MM-DD] [--json]",
     "  agent-bahi [--database PATH|sqlite:///URL] mcp",
     "  agent-bahi [--database PATH|sqlite:///URL] mcp serve [--host HOST] [--port PORT] [--allow-remote] [--token-file PATH] [--allow-insecure-no-auth] [--allowed-host HOST]",
     "  Local stdio MCP: agent-bahi-mcp (database updates remain CLI-owned).",
     "  Remote MCP: mcp serve speaks HTTP on loopback by default; use a TLS proxy/Tailscale for HTTPS.",
     "",
-    "Normal business operations never initialize, upgrade, or mutate database schema.",
+    "Update the binary first, then run an explicit CLI database upgrade. MCP is inspection-only and never migrates.",
+    "Database mutations require an explicit database path, requestId, HUMAN actor, and --yes.",
     "Use --input - (or a file path) for deterministic JSON operation input.",
   ].join("\n");
 }
@@ -104,10 +107,17 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
   const args = [...argv];
   const json = args.includes("--json");
   if (json) args.splice(args.indexOf("--json"), 1);
+  const explicitDatabase = args.includes("--database");
   const databasePath = takeFlag(args, "--database") ?? process.env.AGENT_BAHI_DATABASE ?? `${process.cwd()}/agent-bahi.sqlite`;
   if (args.includes("--help") || args.includes("-h") || args[0] === "help" || args.length === 0) {
     printHuman(help());
     return EXIT_CODES.SUCCESS;
+  }
+
+  if (args[0] === "version") {
+    const result = await new OperationDispatcher({ databasePath, allowOperatorOperations: false, source: "CLI" }).dispatch("system.version", {});
+    if (json) printJson(result); else printHuman(result.ok ? result.result : result);
+    return errorExitCode(result);
   }
   if (args[0] === "mcp") {
     if (args[1] !== "serve") {
@@ -186,6 +196,46 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     } catch (error) {
       result = { ok: false, operationId, error: { code: "INVALID_INPUT", message: error instanceof Error ? error.message : String(error) } };
     }
+  } else if (args[0] === "db") {
+    const group = args[1];
+    const action = args[2];
+    const operationId = group === "status" ? "database.compatibility"
+      : group === "backup" && action === "list" ? "database.backup.list"
+        : group === "backup" && action === "show" ? "database.backup.show"
+          : group === "backup" && action === "verify" ? "database.backup.verify"
+            : group === "backup" && action === "create" ? "database.backup.create"
+              : group === "backup" && action === "restore" ? "database.backup.restore"
+                : group === "upgrade" && action === "preview" ? "database.upgrade.preview"
+                  : group === "upgrade" && action === "status" ? "database.upgrade.status"
+                  : group === "upgrade" && action === "apply" ? "database.upgrade.apply" : undefined;
+    if (!operationId) {
+      const error: DispatchEnvelope = { ok: false, error: { code: "UNKNOWN_OPERATION", message: "Expected db status, db backup {create,list,show,verify,restore}, or db upgrade {preview,status,apply}" } };
+      if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
+      return EXIT_CODES.USAGE;
+    }
+    const mutating = ["database.backup.create", "database.backup.restore", "database.upgrade.apply"].includes(operationId);
+    if (mutating && !explicitDatabase) {
+      const error: DispatchEnvelope = { ok: false, error: { code: "INVALID_INPUT", message: "Database mutations require an explicit --database path" } };
+      if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
+      return EXIT_CODES.INPUT;
+    }
+    const requestId = takeFlag(args, "--request-id");
+    const actorId = takeFlag(args, "--actor-id");
+    const backupDestinationPath = takeFlag(args, "--destination") ?? takeFlag(args, "--backup") ?? takeFlag(args, "--backup-path");
+    const backupHash = takeFlag(args, "--backup-hash");
+    const targetPath = takeFlag(args, "--target");
+    const backupDirectory = takeFlag(args, "--backup-dir");
+    const input = {
+      ...(requestId ? { requestId } : {}),
+      ...(actorId ? { actor: { kind: "HUMAN", id: actorId } } : {}),
+      ...(args.includes("--yes") ? { yes: true } : {}),
+      ...(backupDestinationPath ? { ...(operationId === "database.backup.restore" || operationId === "database.backup.verify" || operationId === "database.backup.show" ? { backupPath: backupDestinationPath } : { destinationPath: backupDestinationPath, backupDestinationPath }) } : {}),
+      ...(backupHash ? { backupHash } : {}),
+      ...(targetPath ? { targetPath } : {}),
+      ...(backupDirectory ? { backupDirectory } : {}),
+    };
+    if (args.includes("--yes")) args.splice(args.indexOf("--yes"), 1);
+    result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else if (args[0].startsWith("database.")) {
     operationId = args[0];
     const backup = takeFlag(args, "--backup");

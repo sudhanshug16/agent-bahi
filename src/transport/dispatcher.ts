@@ -6,6 +6,7 @@ import { DomainError, brandAccountId, brandBookSetId, brandTenantId } from "../c
 import { BUSINESS_OPERATION_CATALOG, findOperation } from "./catalog.ts";
 import { SKILL_GUIDES, checkSkillGuide, findSkillGuide, listOperations, listSkillGuides, operationForDisplay } from "./skills.ts";
 import type { DispatchEnvelope } from "./types.ts";
+import { databaseOperation, operationActorInput } from "../infrastructure/services/database-operations-service.ts";
 
 type Input = Record<string, unknown>;
 type Handler = (facade: PublicApplicationFacade, input: Input) => Promise<unknown>;
@@ -317,8 +318,11 @@ export class OperationDispatcher {
   constructor(private readonly options: DispatcherOptions) {}
 
   async dispatch(operationId: string, rawInput: unknown): Promise<DispatchEnvelope> {
-    const entry = findOperation(operationId, this.options.allowOperatorOperations ?? true);
+    const entry = findOperation(operationId, true);
     if (!entry) return errorEnvelope(operationId, new DomainError("UNKNOWN_OPERATION", `Unknown or unavailable operation: ${operationId}`));
+    if (entry.operatorOnly && entry.transportPolicy === "CLI_ONLY" && this.options.source === "MCP") {
+      return errorEnvelope(operationId, new DomainError("CLI_REQUIRED", "This database mutation is CLI_ONLY; MCP inspection cannot execute it.", { transportPolicy: "CLI_ONLY", remediation: "Run the explicit agent-bahi CLI command after updating the binary and confirming with --yes." }));
+    }
     let input: Input;
     try {
       input = inputObject(rawInput);
@@ -348,8 +352,16 @@ export class OperationDispatcher {
   }
 
   private async dispatchOperator(operationId: string, input: Input): Promise<DispatchEnvelope> {
-    if (!(this.options.allowOperatorOperations ?? true)) return errorEnvelope(operationId, new DomainError("OPERATOR_OPERATION_FORBIDDEN", "Operator database operations are not available through MCP"));
     try {
+      if (["system.version", "database.compatibility", "database.status", "database.backup.list", "database.backup.show", "database.backup.verify", "database.upgrade.preview", "database.upgrade.status"].includes(operationId)) {
+        const result = await databaseOperation(operationId, this.options.databasePath, input);
+        return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
+      }
+      if (["database.backup.create", "database.backup.restore", "database.upgrade.apply"].includes(operationId)) {
+        const result = await databaseOperation(operationId, this.options.databasePath, operationActorInput(input));
+        return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
+      }
+      if (!(this.options.allowOperatorOperations ?? true)) return errorEnvelope(operationId, new DomainError("OPERATOR_OPERATION_FORBIDDEN", "Operator database operations are not available through MCP"));
       if (operationId === "database.status") {
         const result = await inspectSqliteApplicationCompatibility(this.options.databasePath);
         return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };

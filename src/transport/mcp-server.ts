@@ -1,10 +1,11 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { BUSINESS_OPERATION_CATALOG } from "./catalog.ts";
+import { MCP_OPERATION_CATALOG } from "./catalog.ts";
 import { OperationDispatcher } from "./dispatcher.ts";
 import type { DispatchEnvelope } from "./types.ts";
+import { CLI_VERSION } from "../release.ts";
 
-export const MCP_SERVER_VERSION = "0.0.0-gate0";
+export const MCP_SERVER_VERSION = CLI_VERSION;
 
 export function jsonSafe(value: unknown): unknown {
   if (typeof value === "bigint") return `${value}n`;
@@ -22,7 +23,7 @@ export function mcpToolResult(envelope: DispatchEnvelope): CallToolResult {
 }
 
 export function mcpTools() {
-  return BUSINESS_OPERATION_CATALOG.map((entry) => ({
+  return MCP_OPERATION_CATALOG.map((entry) => ({
     name: entry.id,
     description: `${entry.description} Side effect: ${entry.sideEffect}. Scope: ${entry.requiredScope}. Output: ${entry.outputDescription} Remediation: ${entry.remediation}`,
     inputSchema: entry.inputSchema,

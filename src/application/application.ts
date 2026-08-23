@@ -62,6 +62,7 @@ export interface SqliteDatabaseInitializationOptions {
 
 export interface SqliteDatabaseUpgradeOptions extends SqliteDatabaseInitializationOptions {
   backupDestinationPath: string;
+  requestId?: string;
   faults?: {
     beforeLegacyMigration?: () => void | Promise<void>;
     beforeBaselineSeed?: () => void | Promise<void>;
@@ -183,9 +184,11 @@ export async function upgradeSqliteDatabase(
       } finally { journal.close(); }
       if (pending) {
         const initialBackupService = new BackupService({ sourcePath: dbPath });
-        backup = await initialBackupService.createBackup(options.backupDestinationPath);
-        if (backup.status !== "SUCCESS" || !backup.path || !backup.manifest?.files[0]) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be created");
-        await initialBackupService.verifyBackup(backup.path);
+        await db.withMigrationLease(async () => {
+          backup = await initialBackupService.createBackup(options.backupDestinationPath);
+          if (backup.status !== "SUCCESS" || !backup.path || !backup.manifest?.files[0]) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be created");
+          await initialBackupService.verifyBackup(backup.path);
+        });
       }
       await options.faults?.beforeOfficialMigration?.();
       db.runFreshDrizzleMigrations();
@@ -205,10 +208,14 @@ export async function upgradeSqliteDatabase(
     if (!sourceManifest || version === undefined || version < 2 || version > 8) throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Database state is not an exact supported legacy manifest");
 
     const initialBackupService = new BackupService({ sourcePath: dbPath, expectedSourceManifest: sourceManifest });
-    backup = await initialBackupService.createBackup(options.backupDestinationPath, sourceManifest);
-    if (backup.status !== "SUCCESS" || !backup.path || !backup.manifest?.files[0]) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be created");
-    await initialBackupService.verifyBackup(backup.path, sourceManifest);
-    const reusedBackup = new ReusedVerifiedBackup(backup);
+    await db.withMigrationLease(async () => {
+      backup = await initialBackupService.createBackup(options.backupDestinationPath, sourceManifest);
+      if (backup.status !== "SUCCESS" || !backup.path || !backup.manifest?.files[0]) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be created");
+      await initialBackupService.verifyBackup(backup.path, sourceManifest);
+    });
+    const invocationBackup = backup;
+    if (!invocationBackup?.path) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be retained");
+    const reusedBackup = new ReusedVerifiedBackup(invocationBackup);
 
     let schemaVersion = version;
     await options.faults?.beforeLegacyMigration?.();
@@ -219,7 +226,7 @@ export async function upgradeSqliteDatabase(
       }
       await new UpgradeCoordinator(db, reusedBackup).upgrade({
         plan: step,
-        backupDestinationPath: backup.path,
+        backupDestinationPath: invocationBackup.path,
         cliVersion: options.cliVersion ?? "agent-bahi",
         buildId: options.buildId ?? "upgrade",
         now: options.now ?? new Date(),

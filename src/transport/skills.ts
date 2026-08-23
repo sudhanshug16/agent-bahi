@@ -1,4 +1,4 @@
-import { BUSINESS_OPERATION_CATALOG, findOperation, type RequiredScope } from "./catalog.ts";
+import { OPERATION_CATALOG, findOperation, type RequiredScope } from "./catalog.ts";
 import type { OperationCatalogEntry } from "./catalog.ts";
 
 export type SkillStepKind = "OPERATION" | "EXTERNAL" | "NOT_IMPLEMENTED";
@@ -271,8 +271,8 @@ export function listSkillGuides(): readonly Pick<SkillGuide, "id" | "version" | 
   return SKILL_GUIDES.map(({ id, version, title, summary, requiredScope }) => ({ id, version, title, summary, requiredScope }));
 }
 
-export function listOperations(): readonly Pick<OperationCatalogEntry, "id" | "description" | "sideEffect" | "requiredScope">[] {
-  return BUSINESS_OPERATION_CATALOG.map(({ id, description, sideEffect, requiredScope }) => ({ id, description, sideEffect, requiredScope }));
+export function listOperations(): readonly Pick<OperationCatalogEntry, "id" | "description" | "sideEffect" | "requiredScope" | "transportPolicy">[] {
+  return OPERATION_CATALOG.map(({ id, description, sideEffect, requiredScope, transportPolicy }) => ({ id, description, sideEffect, requiredScope, ...(transportPolicy ? { transportPolicy } : {}) }));
 }
 
-export function operationForDisplay(id: string): OperationCatalogEntry | undefined { return findOperation(id, false); }
+export function operationForDisplay(id: string): OperationCatalogEntry | undefined { return findOperation(id, true); }
