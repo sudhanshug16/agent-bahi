@@ -110,6 +110,13 @@ export interface CompanyStatusBookSetSummary {
     unreversedRevaluationCount: number;
     settlementMismatchCount: number;
   };
+  payroll: {
+    employeeCount: number;
+    preparedRunCount: number;
+    pendingClaimCount: number;
+    reviewRuleCount: number;
+    postedNetPayableMinor: number;
+  };
   cashBank: {
     status: "UNAVAILABLE";
     reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE";
@@ -436,6 +443,15 @@ async function fxStatus(session: BusinessSession, tenantId: string, bookSetId: s
   return { foreignOpenItemCount, missingOrUnverifiedRateCount, unreversedRevaluationCount: unreversed.rows.length, settlementMismatchCount: mismatches.rows.length };
 }
 
+async function payrollStatus(session: BusinessSession, tenantId: string, bookSetId: string): Promise<CompanyStatusBookSetSummary["payroll"]> {
+  const employees = await session.query("SELECT id FROM payroll_employees WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  const runs = await session.query("SELECT id FROM payroll_pay_runs WHERE tenant_id = ? AND book_set_id = ? AND status = 'PREPARED'", [tenantId, bookSetId]);
+  const claims = await session.query("SELECT id FROM payroll_claims WHERE tenant_id = ? AND book_set_id = ? AND status = 'PENDING'", [tenantId, bookSetId]);
+  const rules = await session.query("SELECT id FROM payroll_rule_snapshots WHERE tenant_id = ? AND book_set_id = ? AND status <> 'VERIFIED'", [tenantId, bookSetId]);
+  const payable = await session.query("SELECT net_minor FROM payroll_pay_run_employees WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  return { employeeCount: employees.rows.length, preparedRunCount: runs.rows.length, pendingClaimCount: claims.rows.length, reviewRuleCount: rules.rows.length, postedNetPayableMinor: payable.rows.reduce((total, row) => total + Number(row.net_minor ?? 0), 0) };
+}
+
 function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   const issues: CompanyStatusIssue[] = [];
   if (!summary.ledger.isBalanced) issues.push({ severity: "BLOCKED", code: "LEDGER_UNBALANCED", bookSetId: summary.bookSet.bookSetId, amountMinor: Math.abs(summary.ledger.totalDebitMinor - summary.ledger.totalCreditMinor) });
@@ -459,6 +475,9 @@ function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   if (summary.fx.foreignOpenItemCount > 0) issues.push({ severity: "INFO", code: "FX_FOREIGN_OPEN_ITEMS", bookSetId: summary.bookSet.bookSetId, count: summary.fx.foreignOpenItemCount });
   if (summary.fx.unreversedRevaluationCount > 0) issues.push({ severity: "HIGH", code: "FX_REVALUATION_UNREVERSED", bookSetId: summary.bookSet.bookSetId, count: summary.fx.unreversedRevaluationCount });
   if (summary.fx.settlementMismatchCount > 0) issues.push({ severity: "BLOCKED", code: "FX_SETTLEMENT_MISMATCH", bookSetId: summary.bookSet.bookSetId, count: summary.fx.settlementMismatchCount });
+  if (summary.payroll.pendingClaimCount > 0) issues.push({ severity: "HIGH", code: "PAYROLL_CLAIMS_PENDING", bookSetId: summary.bookSet.bookSetId, count: summary.payroll.pendingClaimCount });
+  if (summary.payroll.reviewRuleCount > 0) issues.push({ severity: "HIGH", code: "PAYROLL_RULE_REVIEW_REQUIRED", bookSetId: summary.bookSet.bookSetId, count: summary.payroll.reviewRuleCount });
+  if (summary.payroll.preparedRunCount > 0) issues.push({ severity: "MEDIUM", code: "PAYROLL_RUN_PENDING_APPROVAL", bookSetId: summary.bookSet.bookSetId, count: summary.payroll.preparedRunCount });
   issues.push({ severity: "INFO", code: "CASH_BANK_UNAVAILABLE", bookSetId: summary.bookSet.bookSetId });
   return issues;
 }
@@ -479,6 +498,8 @@ function drillDown(tenantId: string, bookSetId: string, asOfDate: string): Compa
     { operationId: "asset.register.report", inputTemplate: { tenantId, bookSetId, asOfDate } },
     { operationId: "asset.depreciation.report", inputTemplate: { tenantId, bookSetId, periodStart: "<YYYY-MM-DD>", periodEnd: asOfDate } },
     { operationId: "asset.tax.report", inputTemplate: { tenantId, bookSetId, periodStart: "<YYYY-MM-DD>", periodEnd: asOfDate } },
+    { operationId: "payroll.register", inputTemplate: { tenantId, bookSetId } },
+    { operationId: "payroll.payslip.list", inputTemplate: { tenantId, bookSetId } },
   ];
 }
 
@@ -516,6 +537,7 @@ export class CompanyStatusService {
           tdsTcs: await tdsTcsStatus(session, tenantId, bookSetId, asOfDate),
           assets: await assetStatus(session, tenantId, bookSetId, asOfDate),
           fx: await fxStatus(session, tenantId, bookSetId),
+          payroll: await payrollStatus(session, tenantId, bookSetId),
           cashBank: { status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" },
         };
         summaries.push(summary);

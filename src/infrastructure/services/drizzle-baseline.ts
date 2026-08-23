@@ -22,8 +22,9 @@ export const DRIZZLE_GST_V1_MIGRATION_ID = "0010_gst_v1" as const;
 export const DRIZZLE_TDS_TCS_MIGRATION_ID = "0011_tds_tcs_v1" as const;
 export const DRIZZLE_FIXED_ASSETS_MIGRATION_ID = "0012_fixed_assets_v1" as const;
 export const DRIZZLE_FX_V1_MIGRATION_ID = "0013_fx_v1" as const;
+export const DRIZZLE_PAYROLL_V1_MIGRATION_ID = "0014_payroll_v1" as const;
 /** Backwards-compatible name for the current official Drizzle migration. */
-export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_FX_V1_MIGRATION_ID;
+export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_PAYROLL_V1_MIGRATION_ID;
 
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -40,7 +41,8 @@ const gstEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_
 const tdsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_TDS_TCS_MIGRATION_ID);
 const currentEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_FIXED_ASSETS_MIGRATION_ID);
 const fxEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_FX_V1_MIGRATION_ID);
-if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when)) {
+const payrollEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_PAYROLL_V1_MIGRATION_ID);
+if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when) || !payrollEntry || !Number.isSafeInteger(payrollEntry.when)) {
   throw new Error("Official Drizzle baseline journal entry is missing or malformed");
 }
 if (!gstEntry || !Number.isSafeInteger(gstEntry.when) || !tdsEntry || !Number.isSafeInteger(tdsEntry.when) || !currentEntry || !Number.isSafeInteger(currentEntry.when)) {
@@ -66,8 +68,12 @@ export const DRIZZLE_FX_V1_HASH = createHash("sha256")
   .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_FX_V1_MIGRATION_ID}.sql`)))
   .digest("hex");
 export const DRIZZLE_FX_V1_CREATED_AT = fxEntry.when;
-export const DRIZZLE_GST_HASH = DRIZZLE_FX_V1_HASH;
-export const DRIZZLE_GST_CREATED_AT = DRIZZLE_FX_V1_CREATED_AT;
+export const DRIZZLE_PAYROLL_V1_HASH = createHash("sha256")
+  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_PAYROLL_V1_MIGRATION_ID}.sql`)))
+  .digest("hex");
+export const DRIZZLE_PAYROLL_V1_CREATED_AT = payrollEntry.when;
+export const DRIZZLE_GST_HASH = DRIZZLE_PAYROLL_V1_HASH;
+export const DRIZZLE_GST_CREATED_AT = DRIZZLE_PAYROLL_V1_CREATED_AT;
 
 export interface DrizzleControlInitializationOptions {
   readonly cliVersion: string;
@@ -90,6 +96,7 @@ export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
     { id: null, hash: DRIZZLE_TDS_TCS_HASH, createdAt: DRIZZLE_TDS_TCS_CREATED_AT },
     { id: null, hash: DRIZZLE_FIXED_ASSETS_HASH, createdAt: DRIZZLE_FIXED_ASSETS_CREATED_AT },
     { id: null, hash: DRIZZLE_FX_V1_HASH, createdAt: DRIZZLE_FX_V1_CREATED_AT },
+    { id: null, hash: DRIZZLE_PAYROLL_V1_HASH, createdAt: DRIZZLE_PAYROLL_V1_CREATED_AT },
   ];
 }
 
@@ -231,7 +238,7 @@ export async function synchronizeDrizzleControl(
   options: DrizzleControlInitializationOptions,
 ): Promise<void> {
   const journal = await readDrizzleJournal(session);
-  if (journal.hash !== DRIZZLE_GST_HASH) throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "GST migration is not the current official Drizzle journal entry");
+  if (journal.hash !== DRIZZLE_PAYROLL_V1_HASH) throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Payroll migration is not the current official Drizzle journal entry");
   const row = await session.executeSingle("SELECT schema_version, data_format_version, state, revision, generation FROM database_control WHERE id = 1");
   if (!row || Number(row.schema_version) !== 8 || Number(row.data_format_version) !== 1 || String(row.state) !== "READY" || Number(row.revision) !== 7 || Number(row.generation) !== 1) {
     throw new DomainError("DRIZZLE_CONTROL_MISMATCH", "Cannot advance non-canonical v8 compatibility metadata");

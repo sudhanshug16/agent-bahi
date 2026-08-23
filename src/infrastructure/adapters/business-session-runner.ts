@@ -64,6 +64,23 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "fx_revaluation_reversals",
   "bank_account_currencies",
   "bank_statement_line_currencies",
+  "payroll_employees",
+  "payroll_employee_profiles",
+  "payroll_salary_structures",
+  "payroll_salary_versions",
+  "payroll_salary_components",
+  "payroll_claims",
+  "payroll_rule_snapshots",
+  "payroll_pay_runs",
+  "payroll_pay_run_employees",
+  "payroll_component_lines",
+  "payroll_payslips",
+  "payroll_payment_batches",
+  "payroll_payment_allocations",
+  "payroll_bank_export_presets",
+  "payroll_bank_export_artifacts",
+  "payroll_remittances",
+  "payroll_remittance_allocations",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

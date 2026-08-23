@@ -27,6 +27,7 @@ import type { CompanyStatusInput, CompanyStatusResult, CompanyStatusService } fr
 import { executeDeductorProfileCreate, executePartyTaxProfileCreate, executeTaxRuleSnapshotCreate, executeWithholdingDeposit, listDeductorProfiles, listPartyTaxProfiles, listWithholdingRegister, type DeductorProfilePayload, type PartyTaxProfilePayload, type TaxRuleSnapshotPayload, type WithholdingDepositPayload, type WithholdingEventRow, type TaxKind } from "./services/tds-tcs-service.ts";
 import { executeAssetRegister, executeDepreciation, executeAssetTaxRule, executeTaxBlock, executeTaxCompute, executeAssetDispose, listAssetRegister, listBookDepreciation, listTaxSchedule, bookTaxReconciliation, type AssetRegisterPayload, type AssetRegisterResult, type DepreciationPreviewPayload, type DepreciationResult, type AssetTaxRulePayload, type TaxRuleResult, type TaxBlockPayload, type TaxBlockResult, type TaxComputePayload, type TaxRunResult, type AssetDisposePayload, type AssetDisposeResult, type AssetRegisterRow, type DepreciationLineResult, type TaxLineResult } from "./services/fixed-assets-service.ts";
 import { registerCurrency, createFxRateSnapshot, registerFxPolicy, postFxRevaluation, fxOutstanding, type CurrencyRegisterPayload, type FxRateSnapshotPayload, type FxPolicyPayload, type FxRevaluationPayload, type FxReportRow } from "./services/fx-service.ts";
+import { createEmployee, getEmployee, listEmployees, createEmployeeProfile, createSalaryStructure, createSalaryVersion, createRuleSnapshot, createClaim, reviewClaim, preparePayRun, approvePayRun, postPayRun, listPayslips, createPaymentBatch, exportBankCsv, createRemittance, updateRemittance, payrollRegister, type EmployeeCreatePayload, type EmployeeProfilePayload, type SalaryStructurePayload, type SalaryVersionPayload, type SalaryComponentInput, type RuleSnapshotPayload, type ClaimPayload, type ClaimReviewPayload, type PayRunPreparePayload, type PayRunActionPayload, type PayrollBankBatchPayload, type BankExportPayload, type RemittancePayload, type RemittanceActionPayload, type EmployeeResult } from "./services/payroll-service.ts";
 
 /**
  * Read-only tenant operations
@@ -153,6 +154,18 @@ export interface FixedAssetOperations {
   dispose(envelope: SalesCommandEnvelope<AssetDisposePayload>): Promise<CommandResult<AssetDisposeResult>>;
   reports: { register(tenantId: TenantId, bookSetId: BookSetId, asOfDate?: string): Promise<AssetRegisterRow[]>; depreciation(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<DepreciationLineResult[]>; tax(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<TaxLineResult[]>; reconciliation(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<Array<{ assetId: string; assetNumber: string; bookDepreciationMinor: number; taxDepreciationMinor: number; differenceMinor: number }>> };
 }
+export interface PayrollOperations {
+  employee: { create(envelope: CommandEnvelope<EmployeeCreatePayload> & { bookSetId: BookSetId }): Promise<CommandResult<EmployeeResult>>; get(tenantId: TenantId, bookSetId: BookSetId, employeeId: string): Promise<EmployeeResult>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<EmployeeResult[]> };
+  employeeProfile: { create(envelope: CommandEnvelope<EmployeeProfilePayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
+  salary: { structure(envelope: CommandEnvelope<SalaryStructurePayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; version(envelope: CommandEnvelope<SalaryVersionPayload> & { bookSetId: BookSetId }, components?: SalaryComponentInput[]): Promise<CommandResult<unknown>> };
+  ruleSnapshot: { create(envelope: CommandEnvelope<RuleSnapshotPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
+  claim: { create(envelope: CommandEnvelope<ClaimPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; review(envelope: CommandEnvelope<ClaimReviewPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
+  payRun: { prepare(envelope: CommandEnvelope<PayRunPreparePayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; approve(envelope: CommandEnvelope<PayRunActionPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; post(envelope: CommandEnvelope<PayRunActionPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
+  payslip: { list(tenantId: TenantId, bookSetId: BookSetId, payRunId?: string): Promise<Array<Record<string, unknown>>> };
+  paymentBatch: { create(envelope: CommandEnvelope<PayrollBankBatchPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; export(envelope: CommandEnvelope<BankExportPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
+  remittance: { create(envelope: CommandEnvelope<RemittancePayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>>; update(envelope: CommandEnvelope<RemittanceActionPayload> & { bookSetId: BookSetId }): Promise<CommandResult<unknown>> };
+  register(tenantId: TenantId, bookSetId: BookSetId, periodStart?: string, periodEnd?: string): Promise<Array<Record<string, unknown>>>;
+}
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -178,6 +191,7 @@ export type PublicApplicationFacade = {
   fixedAssets: FixedAssetOperations;
   fx: FxOperations;
   company: CompanyStatusOperations;
+  payroll: PayrollOperations;
 };
 
 /**
@@ -258,6 +272,18 @@ export function createPublicFacade(
       },
     },
     company: { status: (input) => companyStatusService.status(input) },
+    payroll: {
+      employee: { create: (envelope) => createEmployee(sessionRunner, envelope), get: (tenantId, bookSetId, employeeId) => getEmployee(sessionRunner, tenantId, bookSetId, employeeId), list: (tenantId, bookSetId) => listEmployees(sessionRunner, tenantId, bookSetId) },
+      employeeProfile: { create: (envelope) => createEmployeeProfile(sessionRunner, envelope) },
+      salary: { structure: (envelope) => createSalaryStructure(sessionRunner, envelope), version: (envelope, components) => createSalaryVersion(sessionRunner, envelope, components) },
+      ruleSnapshot: { create: (envelope) => createRuleSnapshot(sessionRunner, envelope) },
+      claim: { create: (envelope) => createClaim(sessionRunner, envelope), review: (envelope) => reviewClaim(sessionRunner, envelope) },
+      payRun: { prepare: (envelope) => preparePayRun(sessionRunner, envelope), approve: (envelope) => approvePayRun(sessionRunner, envelope), post: (envelope) => postPayRun(sessionRunner, envelope) },
+      payslip: { list: (tenantId, bookSetId, payRunId) => listPayslips(sessionRunner, tenantId, bookSetId, payRunId) },
+      paymentBatch: { create: (envelope) => createPaymentBatch(sessionRunner, envelope), export: (envelope) => exportBankCsv(sessionRunner, envelope) },
+      remittance: { create: (envelope) => createRemittance(sessionRunner, envelope), update: (envelope) => updateRemittance(sessionRunner, envelope) },
+      register: (tenantId, bookSetId, periodStart, periodEnd) => payrollRegister(sessionRunner, tenantId, bookSetId, periodStart, periodEnd),
+    },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },
       rate: { create: (envelope) => createFxRateSnapshot(sessionRunner, envelope) },
