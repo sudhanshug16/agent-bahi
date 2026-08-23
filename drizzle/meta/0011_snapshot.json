@@ -4356,17 +4356,21 @@
           "name": "chk_vendor_bill_paid",
           "value": "typeof(\"vendor_bills\".\"paid_minor\") = 'integer' AND \"vendor_bills\".\"paid_minor\" >= 0 AND \"vendor_bills\".\"paid_minor\" <= \"vendor_bills\".\"total_minor\""
         },
+        "chk_vendor_bill_withholding": {
+          "name": "chk_vendor_bill_withholding",
+          "value": "typeof(\"vendor_bills\".\"withholding_minor\") = 'integer' AND \"vendor_bills\".\"withholding_minor\" >= 0 AND \"vendor_bills\".\"withholding_minor\" <= \"vendor_bills\".\"total_minor\" - \"vendor_bills\".\"paid_minor\""
+        },
         "chk_vendor_bill_status": {
           "name": "chk_vendor_bill_status",
           "value": "\"vendor_bills\".\"status\" IN ('DRAFT', 'POSTED', 'PARTIALLY_PAID', 'PAID')"
         },
         "chk_vendor_bill_status_fields": {
           "name": "chk_vendor_bill_status_fields",
-          "value": "(\"vendor_bills\".\"status\" = 'DRAFT' AND \"vendor_bills\".\"payable_account_id\" IS NULL AND \"vendor_bills\".\"posted_journal_id\" IS NULL AND \"vendor_bills\".\"posted_at\" IS NULL AND \"vendor_bills\".\"paid_minor\" = 0) OR (\"vendor_bills\".\"status\" IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND \"vendor_bills\".\"payable_account_id\" IS NOT NULL AND \"vendor_bills\".\"posted_journal_id\" IS NOT NULL AND \"vendor_bills\".\"posted_at\" IS NOT NULL)"
+          "value": "(\"vendor_bills\".\"status\" = 'DRAFT' AND \"vendor_bills\".\"payable_account_id\" IS NULL AND \"vendor_bills\".\"posted_journal_id\" IS NULL AND \"vendor_bills\".\"posted_at\" IS NULL AND \"vendor_bills\".\"paid_minor\" = 0 AND \"vendor_bills\".\"withholding_minor\" = 0) OR (\"vendor_bills\".\"status\" IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND \"vendor_bills\".\"payable_account_id\" IS NOT NULL AND \"vendor_bills\".\"posted_journal_id\" IS NOT NULL AND \"vendor_bills\".\"posted_at\" IS NOT NULL)"
         },
         "chk_vendor_bill_paid_status": {
           "name": "chk_vendor_bill_paid_status",
-          "value": "(\"vendor_bills\".\"status\" = 'POSTED' AND \"vendor_bills\".\"paid_minor\" = 0) OR (\"vendor_bills\".\"status\" = 'PARTIALLY_PAID' AND \"vendor_bills\".\"paid_minor\" > 0 AND \"vendor_bills\".\"paid_minor\" < \"vendor_bills\".\"total_minor\") OR (\"vendor_bills\".\"status\" = 'PAID' AND \"vendor_bills\".\"paid_minor\" = \"vendor_bills\".\"total_minor\") OR \"vendor_bills\".\"status\" = 'DRAFT'"
+          "value": "(\"vendor_bills\".\"status\" = 'POSTED' AND \"vendor_bills\".\"paid_minor\" + \"vendor_bills\".\"withholding_minor\" = 0) OR (\"vendor_bills\".\"status\" = 'PARTIALLY_PAID' AND \"vendor_bills\".\"paid_minor\" + \"vendor_bills\".\"withholding_minor\" > 0 AND \"vendor_bills\".\"paid_minor\" + \"vendor_bills\".\"withholding_minor\" < \"vendor_bills\".\"total_minor\") OR (\"vendor_bills\".\"status\" = 'PAID' AND \"vendor_bills\".\"paid_minor\" + \"vendor_bills\".\"withholding_minor\" = \"vendor_bills\".\"total_minor\") OR \"vendor_bills\".\"status\" = 'DRAFT'"
         }
       }
     },

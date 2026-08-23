@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { Database as BunDatabase } from "bun:sqlite";
 import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 
 function scoped<T>(tenantId: string, bookSetId: string, payload: T, requestId = randomUUID()) {
@@ -17,7 +18,8 @@ describe("non-payroll TDS/TCS V1", () => {
 
   it("posts a source-verified TDS bill, preserves vendor outstanding, deposits, and registers", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-tds-"));
-    const app = await initializeAndUpgradeSqliteApplication(join(directory, "books.sqlite"), { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const dbPath = join(directory, "books.sqlite");
+    const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
     const tenantResult = await app.tenant.create({ schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "COMPANY", name: "TDS Co", baseCurrency: "INR" } });
     const data = JSON.parse(tenantResult.resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { expenses: string; liabilities: string; cash: string } };
     const vendor = JSON.parse((await app.party.create(scoped(data.tenantId, data.defaultBookSetId, { displayName: "Vendor", role: "VENDOR" }))).resultJson) as { partyId: string };
@@ -27,7 +29,11 @@ describe("non-payroll TDS/TCS V1", () => {
     expect(posted.totalMinor).toBe(100_000);
     expect(await app.bill.get(data.tenantId as any, data.defaultBookSetId as any, bill.billId)).toMatchObject({ totalMinor: 100_000, outstandingMinor: 90_000, paidMinor: 0 });
     await app.vendorPayment.record(scoped(data.tenantId, data.defaultBookSetId, { vendorId: vendor.partyId, paymentDate: "2026-08-23", bankAccountId: data.seedAccountIds.cash, allocations: [{ billId: bill.billId, amountMinor: 90_000 }] }));
-    expect(await app.bill.get(data.tenantId as any, data.defaultBookSetId as any, bill.billId)).toMatchObject({ outstandingMinor: 0, status: "PARTIALLY_PAID" });
+    expect(await app.bill.get(data.tenantId as any, data.defaultBookSetId as any, bill.billId)).toMatchObject({ outstandingMinor: 0, status: "PAID" });
+    expect(await app.bill.outstanding(data.tenantId as any, data.defaultBookSetId as any)).toEqual([]);
+    const native = new BunDatabase(dbPath);
+    expect(() => native.query("UPDATE vendor_bills SET status = 'POSTED' WHERE id = ?").run(bill.billId)).toThrow();
+    native.close();
     const registerBefore = await app.tax.register(data.tenantId as any, data.defaultBookSetId as any, "TDS");
     expect(registerBefore).toMatchObject([{ taxAmountMinor: 10_000, depositedMinor: 0, outstandingMinor: 10_000 }]);
     await app.tax.deposit(scoped(data.tenantId, data.defaultBookSetId, { taxKind: "TDS", liabilityAccountId: data.seedAccountIds.liabilities, bankAccountId: data.seedAccountIds.cash, depositDate: "2026-08-23", amountMinor: 10_000, allocations: [{ eventId: registerBefore[0]!.eventId, amountMinor: 10_000 }], cin: "CIN-1", evidenceReference: "evidence:challan" }));
@@ -77,5 +83,32 @@ describe("non-payroll TDS/TCS V1", () => {
     expect(await app.tax.partyProfile.list(data.tenantId as any, data.defaultBookSetId as any, party.partyId, "2026-08-23")).toMatchObject([{ pan: "****876L", verificationStatus: "VERIFIED" }]);
     await expect(app.tax.deductorProfile.create(tenant(data.tenantId, { pan: "ABCDE1234", effectiveFrom: "2027-01-01" }))).rejects.toMatchObject({ code: "INVALID_PAN" });
     await expect(app.tax.deductorProfile.create(tenant(data.tenantId, { effectiveFrom: "2026-06-01" }))).rejects.toBeDefined();
+  });
+
+  it("uses paid plus withholding for partial, fully withheld, and company payable settlement", async () => {
+    directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-tds-settlement-"));
+    const app = await initializeAndUpgradeSqliteApplication(join(directory, "books.sqlite"), { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const tenantResult = await app.tenant.create({ schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "create tenant", payload: { kind: "COMPANY", name: "Settlement Co" } });
+    const data = JSON.parse(tenantResult.resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { expenses: string; liabilities: string; cash: string } };
+    await app.tenant.activate({ schemaVersion: 1, tenantId: data.tenantId as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "activate tenant", payload: { defaultBookSetId: data.defaultBookSetId as any } });
+    const vendor = JSON.parse((await app.party.create(scoped(data.tenantId, data.defaultBookSetId, { displayName: "Settlement Vendor", role: "VENDOR" }))).resultJson) as { partyId: string };
+    const rule = JSON.parse((await app.tax.ruleSnapshot.create(tenant(data.tenantId, { taxKind: "TDS", sourceUrl: "https://www.incometaxindia.gov.in/w/section-393-5", sourceDocument: "Income-tax Act 2025", sourceVersion: "2026-04-01", sectionReference: "393", categoryCode: "PARTIAL", effectiveFrom: "2026-04-01", eventTiming: "CREDIT", rateBps: 1000, applicabilityFacts: { source: "fixture" }, tanRequired: true, tanExceptionAllowed: false, statementRoute: "REVIEW_ONLY", statementForm: "NOT_CLAIMED", roundingMode: "HALF_UP", sourceVerified: true }))).resultJson) as { ruleSnapshotId: string };
+    const fullRule = JSON.parse((await app.tax.ruleSnapshot.create(tenant(data.tenantId, { taxKind: "TDS", sourceUrl: "https://www.incometaxindia.gov.in/w/section-393-5", sourceDocument: "Income-tax Act 2025", sourceVersion: "2026-04-01", sectionReference: "393", categoryCode: "FULL", effectiveFrom: "2026-04-01", eventTiming: "CREDIT", rateBps: 10000, applicabilityFacts: { source: "fixture" }, tanRequired: true, tanExceptionAllowed: false, statementRoute: "REVIEW_ONLY", statementForm: "NOT_CLAIMED", roundingMode: "HALF_UP", sourceVerified: true }))).resultJson) as { ruleSnapshotId: string };
+    const postBill = async (billNumber: string, ruleSnapshotId: string, taxBaseMinor = 100_000) => {
+      const bill = JSON.parse((await app.bill.create(scoped(data.tenantId, data.defaultBookSetId, { billNumber, vendorId: vendor.partyId, billDate: "2026-08-23", dueDate: "2026-08-23", lines: [{ description: billNumber, expenseAccountId: data.seedAccountIds.expenses, amountMinor: taxBaseMinor }] }))).resultJson) as { billId: string };
+      await app.bill.post(scoped(data.tenantId, data.defaultBookSetId, { billId: bill.billId, payableAccountId: data.seedAccountIds.liabilities, withholding: { taxKind: "TDS", ruleSnapshotId, taxBaseMinor, thresholdApplicabilityEvidenceReferences: [`evidence:${billNumber}`], liabilityAccountId: data.seedAccountIds.liabilities, calculationFacts: { roundingMode: "HALF_UP", basis: "credit" } } }));
+      return bill.billId;
+    };
+    const partialBillId = await postBill("SETTLE-PARTIAL", rule.ruleSnapshotId);
+    await app.vendorPayment.record(scoped(data.tenantId, data.defaultBookSetId, { vendorId: vendor.partyId, paymentDate: "2026-08-23", bankAccountId: data.seedAccountIds.cash, allocations: [{ billId: partialBillId, amountMinor: 80_000 }] }));
+    expect(await app.bill.get(data.tenantId as any, data.defaultBookSetId as any, partialBillId)).toMatchObject({ status: "PARTIALLY_PAID", outstandingMinor: 10_000 });
+    const fullyWithheldBillId = await postBill("SETTLE-FULL", fullRule.ruleSnapshotId);
+    expect(await app.bill.get(data.tenantId as any, data.defaultBookSetId as any, fullyWithheldBillId)).toMatchObject({ status: "PAID", outstandingMinor: 0 });
+    expect((await app.bill.outstanding(data.tenantId as any, data.defaultBookSetId as any)).map((bill) => bill.billId)).toEqual([partialBillId]);
+    expect((await app.company.status({ tenantId: data.tenantId as any, bookSetId: data.defaultBookSetId as any, asOfDate: "2026-08-23" })).summaries[0]!.payables).toMatchObject({ count: 1, totalMinor: 10_000 });
+    await app.vendorPayment.record(scoped(data.tenantId, data.defaultBookSetId, { vendorId: vendor.partyId, paymentDate: "2026-08-23", bankAccountId: data.seedAccountIds.cash, allocations: [{ billId: partialBillId, amountMinor: 10_000 }] }));
+    expect(await app.bill.get(data.tenantId as any, data.defaultBookSetId as any, partialBillId)).toMatchObject({ status: "PAID", outstandingMinor: 0 });
+    expect(await app.bill.outstanding(data.tenantId as any, data.defaultBookSetId as any)).toEqual([]);
+    expect((await app.company.status({ tenantId: data.tenantId as any, bookSetId: data.defaultBookSetId as any, asOfDate: "2026-08-23" })).summaries[0]!.payables).toMatchObject({ count: 0, totalMinor: 0 });
   });
 });

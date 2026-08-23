@@ -21,7 +21,7 @@ export interface BillCreatePayload {
 }
 export interface BillCreateResult { billId: string; billNumber: string; totalMinor: number; status: "DRAFT"; }
 export interface BillPostPayload { billId: string; payableAccountId: string; gst?: GstDocumentBlock; withholding?: WithholdingBlock; }
-export interface BillPostResult { billId: string; journalId: string; totalMinor: number; status: "POSTED"; }
+export interface BillPostResult { billId: string; journalId: string; totalMinor: number; status: "POSTED" | "PARTIALLY_PAID" | "PAID"; }
 export interface VendorPaymentAllocationPayload { billId: string; amountMinor: number; }
 export interface VendorPaymentRecordPayload {
   vendorId: string;
@@ -65,6 +65,12 @@ function safeAdd(left: number, right: number): number {
   const result = left + right;
   if (!Number.isSafeInteger(result)) throw new DomainError("INVALID_AMOUNT", "amount total exceeds safe integer range");
   return result;
+}
+
+function billSettlementStatus(totalMinor: number, paidMinor: number, withholdingMinor: number): "POSTED" | "PARTIALLY_PAID" | "PAID" {
+  const settledMinor = safeAdd(paidMinor, withholdingMinor);
+  if (settledMinor >= totalMinor) return "PAID";
+  return settledMinor > 0 ? "PARTIALLY_PAID" : "POSTED";
 }
 
 function nonblank(value: unknown, field: string, max = 256): string {
@@ -190,16 +196,19 @@ export async function executeBillPost(sessionRunner: BusinessSessionRunner, enve
     }
     const billGrossMinor = gstPlan?.grossMinor ?? Number(bill.total_minor);
     const withholdingPlan = envelope.payload.withholding ? await prepareWithholding(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, eventDate: String(bill.bill_date), block: envelope.payload.withholding, documentBaseMinor: lineRows.rows.reduce((sum, row) => sum + Number(row.amount_minor), 0) }) : undefined;
-    if (withholdingPlan && withholdingPlan.taxAmountMinor >= billGrossMinor) throw new DomainError("TAX_AMOUNT_EXCEEDS_DOCUMENT", "withholding must be less than the bill gross amount");
-    lines.push({ accountId: brandAccountId(payableAccountId), description: `Bill ${billId}`, creditMinor: billGrossMinor - (withholdingPlan?.taxAmountMinor ?? 0) });
+    if (withholdingPlan && withholdingPlan.taxAmountMinor > billGrossMinor) throw new DomainError("TAX_AMOUNT_EXCEEDS_DOCUMENT", "withholding must not exceed the bill gross amount");
+    const payableMinor = billGrossMinor - (withholdingPlan?.taxAmountMinor ?? 0);
+    if (payableMinor > 0) lines.push({ accountId: brandAccountId(payableAccountId), description: `Bill ${billId}`, creditMinor: payableMinor });
     if (withholdingPlan) lines.push({ accountId: brandAccountId(withholdingPlan.liabilityAccountId), description: `TDS ${billId}`, creditMinor: withholdingPlan.taxAmountMinor });
     const journalId = await postJournalInSession(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, postingDate: String(bill.bill_date), reference: billId, narration: bill.narration === null ? undefined : String(bill.narration), lines });
     const now = new Date().toISOString();
     if (gstPlan) await persistGstSnapshot(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, plan: gstPlan, now });
     if (withholdingPlan) await persistWithholdingEvent(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, plan: withholdingPlan, journalId, now });
-    await session.execute("UPDATE vendor_bills SET status = 'POSTED', total_minor = ?, withholding_minor = ?, payable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [billGrossMinor, withholdingPlan?.taxAmountMinor ?? 0, payableAccountId, journalId, now, now, billId, envelope.tenantId, envelope.bookSetId]);
+    const withholdingMinor = withholdingPlan?.taxAmountMinor ?? 0;
+    const status = billSettlementStatus(billGrossMinor, 0, withholdingMinor);
+    await session.execute("UPDATE vendor_bills SET status = ?, total_minor = ?, withholding_minor = ?, payable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [status, billGrossMinor, withholdingMinor, payableAccountId, journalId, now, now, billId, envelope.tenantId, envelope.bookSetId]);
     const totalMinor = billGrossMinor;
-    return finishCommand(session, envelope, "bill.post", requestHash, { billId, journalId, totalMinor, status: "POSTED" }, "vendor_bill", billId, now);
+    return finishCommand(session, envelope, "bill.post", requestHash, { billId, journalId, totalMinor, status }, "vendor_bill", billId, now);
   });
 }
 
@@ -242,7 +251,7 @@ export async function executeVendorPaymentRecord(sessionRunner: BusinessSessionR
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, payableAccountId, "LIABILITY", "bill payable account");
       journalLines.push({ accountId: brandAccountId(payableAccountId), description: `Vendor payment allocation ${allocation.billId}`, debitMinor: allocationMinor });
       const newPaid = paid + allocationMinor;
-      billUpdates.push({ billId: allocation.billId, paidMinor: newPaid, status: newPaid === total ? "PAID" : "PARTIALLY_PAID" });
+      billUpdates.push({ billId: allocation.billId, paidMinor: newPaid, status: billSettlementStatus(total, newPaid, withheld) === "PAID" ? "PAID" : "PARTIALLY_PAID" });
     }
     journalLines.push({ accountId: brandAccountId(bankAccountId), description: envelope.payload.reference, creditMinor: amountMinor });
     const journalId = await postJournalInSession(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, postingDate: envelope.payload.paymentDate, reference: envelope.payload.reference, lines: journalLines });

@@ -41,9 +41,10 @@ export const vendorBills = sqliteTable(
     idxScopeStatus: index("idx_vendor_bills_scope_status_v7").on(table.tenantId, table.bookSetId, table.status, table.billDate, table.id),
     chkTotal: check("chk_vendor_bill_total", sql`typeof(${table.totalMinor}) = 'integer' AND ${table.totalMinor} > 0`),
     chkPaid: check("chk_vendor_bill_paid", sql`typeof(${table.paidMinor}) = 'integer' AND ${table.paidMinor} >= 0 AND ${table.paidMinor} <= ${table.totalMinor}`),
+    chkWithholding: check("chk_vendor_bill_withholding", sql`typeof(${table.withholdingMinor}) = 'integer' AND ${table.withholdingMinor} >= 0 AND ${table.withholdingMinor} <= ${table.totalMinor} - ${table.paidMinor}`),
     chkStatus: check("chk_vendor_bill_status", sql`${table.status} IN ('DRAFT', 'POSTED', 'PARTIALLY_PAID', 'PAID')`),
-    chkStatusFields: check("chk_vendor_bill_status_fields", sql`(${table.status} = 'DRAFT' AND ${table.payableAccountId} IS NULL AND ${table.postedJournalId} IS NULL AND ${table.postedAt} IS NULL AND ${table.paidMinor} = 0) OR (${table.status} IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND ${table.payableAccountId} IS NOT NULL AND ${table.postedJournalId} IS NOT NULL AND ${table.postedAt} IS NOT NULL)`),
-    chkPaidStatus: check("chk_vendor_bill_paid_status", sql`(${table.status} = 'POSTED' AND ${table.paidMinor} = 0) OR (${table.status} = 'PARTIALLY_PAID' AND ${table.paidMinor} > 0 AND ${table.paidMinor} < ${table.totalMinor}) OR (${table.status} = 'PAID' AND ${table.paidMinor} = ${table.totalMinor}) OR ${table.status} = 'DRAFT'`),
+    chkStatusFields: check("chk_vendor_bill_status_fields", sql`(${table.status} = 'DRAFT' AND ${table.payableAccountId} IS NULL AND ${table.postedJournalId} IS NULL AND ${table.postedAt} IS NULL AND ${table.paidMinor} = 0 AND ${table.withholdingMinor} = 0) OR (${table.status} IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND ${table.payableAccountId} IS NOT NULL AND ${table.postedJournalId} IS NOT NULL AND ${table.postedAt} IS NOT NULL)`),
+    chkPaidStatus: check("chk_vendor_bill_paid_status", sql`(${table.status} = 'POSTED' AND ${table.paidMinor} + ${table.withholdingMinor} = 0) OR (${table.status} = 'PARTIALLY_PAID' AND ${table.paidMinor} + ${table.withholdingMinor} > 0 AND ${table.paidMinor} + ${table.withholdingMinor} < ${table.totalMinor}) OR (${table.status} = 'PAID' AND ${table.paidMinor} + ${table.withholdingMinor} = ${table.totalMinor}) OR ${table.status} = 'DRAFT'`),
   })
 );
 

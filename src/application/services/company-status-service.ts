@@ -218,11 +218,13 @@ async function ledgerHealth(session: BusinessSession, tenantId: string, bookSetI
 }
 
 async function openBalance(session: BusinessSession, table: "sales_invoices" | "vendor_bills", dateColumn: "issue_date" | "bill_date", tenantId: string, bookSetId: string, asOfDate: string): Promise<CompanyStatusOpenBalance> {
+  const withholding = table === "vendor_bills" ? "withholding_minor" : "0";
+  const settled = table === "vendor_bills" ? "paid_minor + withholding_minor" : "paid_minor";
   const rows = await session.query(
-    `SELECT total_minor, paid_minor, due_date
+    `SELECT total_minor, paid_minor, ${withholding} AS withholding_minor, due_date
      FROM ${table}
-     WHERE tenant_id = ? AND book_set_id = ? AND status = 'POSTED' AND ${dateColumn} <= ? AND paid_minor < total_minor
-        OR tenant_id = ? AND book_set_id = ? AND status = 'PARTIALLY_PAID' AND ${dateColumn} <= ? AND paid_minor < total_minor
+     WHERE tenant_id = ? AND book_set_id = ? AND status = 'POSTED' AND ${dateColumn} <= ? AND ${settled} < total_minor
+        OR tenant_id = ? AND book_set_id = ? AND status = 'PARTIALLY_PAID' AND ${dateColumn} <= ? AND ${settled} < total_minor
       ORDER BY ${dateColumn}, id`,
     [tenantId, bookSetId, asOfDate, tenantId, bookSetId, asOfDate],
   );
@@ -230,7 +232,7 @@ async function openBalance(session: BusinessSession, table: "sales_invoices" | "
   let overdueCount = 0;
   let overdueMinor = 0;
   for (const row of rows.rows) {
-    const outstanding = numeric(row.total_minor, "open balance total") - numeric(row.paid_minor, "open balance paid");
+    const outstanding = numeric(row.total_minor, "open balance total") - numeric(row.paid_minor, "open balance paid") - numeric(row.withholding_minor, "open balance withholding");
     totalMinor = add(totalMinor, outstanding, "open balance total");
     if (row.due_date !== null && row.due_date !== undefined && String(row.due_date) < asOfDate) {
       overdueCount += 1;

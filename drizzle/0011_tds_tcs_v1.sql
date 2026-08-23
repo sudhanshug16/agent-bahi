@@ -1,3 +1,211 @@
+PRAGMA defer_foreign_keys = ON;
+--> statement-breakpoint
+CREATE TABLE `__agent_bahi_vendor_bills_backup` AS SELECT * FROM `vendor_bills`;
+--> statement-breakpoint
+CREATE TABLE `__agent_bahi_vendor_bill_lines_backup` AS SELECT * FROM `vendor_bill_lines`;
+--> statement-breakpoint
+CREATE TABLE `__agent_bahi_vendor_payment_allocations_backup` AS SELECT * FROM `vendor_payment_allocations`;
+--> statement-breakpoint
+CREATE TABLE `__agent_bahi_gst_tax_snapshots_backup` AS SELECT * FROM `gst_tax_snapshots`;
+--> statement-breakpoint
+CREATE TABLE `__agent_bahi_gst_tax_components_backup` AS SELECT * FROM `gst_tax_components`;
+--> statement-breakpoint
+DROP TABLE `gst_tax_components`;
+--> statement-breakpoint
+DROP TABLE `gst_tax_snapshots`;
+--> statement-breakpoint
+DROP TABLE `vendor_payment_allocations`;
+--> statement-breakpoint
+DROP TABLE `vendor_bill_lines`;
+--> statement-breakpoint
+DROP TABLE `vendor_bills`;
+--> statement-breakpoint
+CREATE TABLE `vendor_bills` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`book_set_id` text NOT NULL,
+	`bill_number` text NOT NULL,
+	`vendor_id` text NOT NULL,
+	`bill_date` text NOT NULL,
+	`due_date` text,
+	`narration` text,
+	`status` text NOT NULL,
+	`total_minor` integer NOT NULL,
+	`paid_minor` integer DEFAULT 0 NOT NULL,
+	`payable_account_id` text,
+	`posted_journal_id` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	`posted_at` text,
+	`gst_input_json` text,
+	`withholding_minor` integer DEFAULT 0 NOT NULL,
+	FOREIGN KEY (`book_set_id`,`tenant_id`) REFERENCES `book_sets`(`id`,`tenant_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`vendor_id`,`tenant_id`,`book_set_id`) REFERENCES `parties`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`payable_account_id`,`tenant_id`,`book_set_id`) REFERENCES `accounts`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`posted_journal_id`,`tenant_id`,`book_set_id`) REFERENCES `journal_entries`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "chk_vendor_bill_total" CHECK(typeof("vendor_bills"."total_minor") = 'integer' AND "vendor_bills"."total_minor" > 0),
+	CONSTRAINT "chk_vendor_bill_paid" CHECK(typeof("vendor_bills"."paid_minor") = 'integer' AND "vendor_bills"."paid_minor" >= 0 AND "vendor_bills"."paid_minor" <= "vendor_bills"."total_minor"),
+	CONSTRAINT "chk_vendor_bill_withholding" CHECK(typeof("vendor_bills"."withholding_minor") = 'integer' AND "vendor_bills"."withholding_minor" >= 0 AND "vendor_bills"."withholding_minor" <= "vendor_bills"."total_minor" - "vendor_bills"."paid_minor"),
+	CONSTRAINT "chk_vendor_bill_status" CHECK("vendor_bills"."status" IN ('DRAFT', 'POSTED', 'PARTIALLY_PAID', 'PAID')),
+	CONSTRAINT "chk_vendor_bill_status_fields" CHECK(("vendor_bills"."status" = 'DRAFT' AND "vendor_bills"."payable_account_id" IS NULL AND "vendor_bills"."posted_journal_id" IS NULL AND "vendor_bills"."posted_at" IS NULL AND "vendor_bills"."paid_minor" = 0 AND "vendor_bills"."withholding_minor" = 0) OR ("vendor_bills"."status" IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND "vendor_bills"."payable_account_id" IS NOT NULL AND "vendor_bills"."posted_journal_id" IS NOT NULL AND "vendor_bills"."posted_at" IS NOT NULL)),
+	CONSTRAINT "chk_vendor_bill_paid_status" CHECK(("vendor_bills"."status" = 'POSTED' AND "vendor_bills"."paid_minor" + "vendor_bills"."withholding_minor" = 0) OR ("vendor_bills"."status" = 'PARTIALLY_PAID' AND "vendor_bills"."paid_minor" + "vendor_bills"."withholding_minor" > 0 AND "vendor_bills"."paid_minor" + "vendor_bills"."withholding_minor" < "vendor_bills"."total_minor") OR ("vendor_bills"."status" = 'PAID' AND "vendor_bills"."paid_minor" + "vendor_bills"."withholding_minor" = "vendor_bills"."total_minor") OR "vendor_bills"."status" = 'DRAFT')
+);
+--> statement-breakpoint
+INSERT INTO `vendor_bills` (`id`, `tenant_id`, `book_set_id`, `bill_number`, `vendor_id`, `bill_date`, `due_date`, `narration`, `status`, `total_minor`, `paid_minor`, `payable_account_id`, `posted_journal_id`, `created_at`, `updated_at`, `posted_at`, `gst_input_json`, `withholding_minor`) SELECT `id`, `tenant_id`, `book_set_id`, `bill_number`, `vendor_id`, `bill_date`, `due_date`, `narration`, `status`, `total_minor`, `paid_minor`, `payable_account_id`, `posted_journal_id`, `created_at`, `updated_at`, `posted_at`, `gst_input_json`, 0 FROM `__agent_bahi_vendor_bills_backup`;
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_vendor_bill_number_scope` ON `vendor_bills` (`tenant_id`,`book_set_id`,`bill_number`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_vendor_bills_id_tenant_book_set_v7` ON `vendor_bills` (`id`,`tenant_id`,`book_set_id`);
+--> statement-breakpoint
+CREATE INDEX `idx_vendor_bills_scope_status_v7` ON `vendor_bills` (`tenant_id`,`book_set_id`,`status`,`bill_date`,`id`);
+--> statement-breakpoint
+CREATE TABLE `vendor_bill_lines` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`book_set_id` text NOT NULL,
+	`bill_id` text NOT NULL,
+	`line_number` integer NOT NULL,
+	`description` text NOT NULL,
+	`expense_account_id` text NOT NULL,
+	`amount_minor` integer NOT NULL,
+	FOREIGN KEY (`bill_id`,`tenant_id`,`book_set_id`) REFERENCES `vendor_bills`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`expense_account_id`,`tenant_id`,`book_set_id`) REFERENCES `accounts`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "chk_vendor_bill_line_number" CHECK(typeof("vendor_bill_lines"."line_number") = 'integer' AND "vendor_bill_lines"."line_number" > 0),
+	CONSTRAINT "chk_vendor_bill_line_description" CHECK(length("vendor_bill_lines"."description") > 0),
+	CONSTRAINT "chk_vendor_bill_line_amount" CHECK(typeof("vendor_bill_lines"."amount_minor") = 'integer' AND "vendor_bill_lines"."amount_minor" > 0)
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_vendor_bill_line_number` ON `vendor_bill_lines` (`bill_id`,`line_number`);
+--> statement-breakpoint
+CREATE INDEX `idx_vendor_bill_lines_bill_v7` ON `vendor_bill_lines` (`tenant_id`,`book_set_id`,`bill_id`,`line_number`);
+--> statement-breakpoint
+INSERT INTO `vendor_bill_lines` SELECT * FROM `__agent_bahi_vendor_bill_lines_backup`;
+--> statement-breakpoint
+CREATE TABLE `vendor_payment_allocations` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`book_set_id` text NOT NULL,
+	`payment_id` text NOT NULL,
+	`bill_id` text NOT NULL,
+	`amount_minor` integer NOT NULL,
+	FOREIGN KEY (`payment_id`,`tenant_id`,`book_set_id`) REFERENCES `vendor_payments`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`bill_id`,`tenant_id`,`book_set_id`) REFERENCES `vendor_bills`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "chk_vendor_payment_allocation_amount" CHECK(typeof("vendor_payment_allocations"."amount_minor") = 'integer' AND "vendor_payment_allocations"."amount_minor" > 0)
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_vendor_payment_allocation_bill` ON `vendor_payment_allocations` (`payment_id`,`bill_id`);
+--> statement-breakpoint
+CREATE INDEX `idx_vendor_payment_allocations_bill_v7` ON `vendor_payment_allocations` (`tenant_id`,`book_set_id`,`bill_id`);
+--> statement-breakpoint
+INSERT INTO `vendor_payment_allocations` SELECT * FROM `__agent_bahi_vendor_payment_allocations_backup`;
+--> statement-breakpoint
+CREATE TABLE `gst_tax_snapshots` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`book_set_id` text NOT NULL,
+	`document_type` text NOT NULL,
+	`sales_invoice_id` text,
+	`vendor_bill_id` text,
+	`seller_registration_id` text,
+	`buyer_profile_id` text,
+	`seller_gstin` text NOT NULL,
+	`seller_state_code` text NOT NULL,
+	`buyer_gstin` text,
+	`buyer_treatment` text NOT NULL,
+	`buyer_state_code` text NOT NULL,
+	`local_component` text,
+	`geometry` text NOT NULL,
+	`rounding_policy` text NOT NULL,
+	`taxable_minor` integer NOT NULL,
+	`tax_minor` integer NOT NULL,
+	`gross_minor` integer NOT NULL,
+	`itc_treatment` text,
+	`risk_flags_json` text NOT NULL,
+	`evidence_json` text NOT NULL,
+	`created_at` text NOT NULL,
+	FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`book_set_id`,`tenant_id`) REFERENCES `book_sets`(`id`,`tenant_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`sales_invoice_id`,`tenant_id`,`book_set_id`) REFERENCES `sales_invoices`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`vendor_bill_id`,`tenant_id`,`book_set_id`) REFERENCES `vendor_bills`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "chk_gst_snapshot_document_type" CHECK("gst_tax_snapshots"."document_type" IN ('SALE', 'PURCHASE')),
+	CONSTRAINT "chk_gst_snapshot_geometry" CHECK("gst_tax_snapshots"."geometry" IN ('INTRA_STATE', 'INTER_STATE')),
+	CONSTRAINT "chk_gst_snapshot_buyer_treatment" CHECK("gst_tax_snapshots"."buyer_treatment" IN ('REGISTERED', 'UNREGISTERED', 'CONSUMER')),
+	CONSTRAINT "chk_gst_snapshot_local_component" CHECK("gst_tax_snapshots"."local_component" IS NULL OR "gst_tax_snapshots"."local_component" IN ('SGST', 'UTGST')),
+	CONSTRAINT "chk_gst_snapshot_amounts" CHECK(typeof("gst_tax_snapshots"."taxable_minor") = 'integer' AND "gst_tax_snapshots"."taxable_minor" > 0 AND typeof("gst_tax_snapshots"."tax_minor") = 'integer' AND "gst_tax_snapshots"."tax_minor" >= 0 AND typeof("gst_tax_snapshots"."gross_minor") = 'integer' AND "gst_tax_snapshots"."gross_minor" = "gst_tax_snapshots"."taxable_minor" + "gst_tax_snapshots"."tax_minor"),
+	CONSTRAINT "chk_gst_snapshot_itc" CHECK("gst_tax_snapshots"."itc_treatment" IS NULL OR "gst_tax_snapshots"."itc_treatment" IN ('ELIGIBLE', 'INELIGIBLE', 'PENDING_REVIEW'))
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_gst_snapshot_sales_invoice` ON `gst_tax_snapshots` (`sales_invoice_id`,`tenant_id`,`book_set_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_gst_snapshot_vendor_bill` ON `gst_tax_snapshots` (`vendor_bill_id`,`tenant_id`,`book_set_id`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_gst_snapshot_scope_key` ON `gst_tax_snapshots` (`id`,`tenant_id`,`book_set_id`);
+--> statement-breakpoint
+CREATE INDEX `idx_gst_snapshots_register` ON `gst_tax_snapshots` (`tenant_id`,`book_set_id`,`document_type`,`created_at`,`id`);
+--> statement-breakpoint
+INSERT INTO `gst_tax_snapshots` SELECT * FROM `__agent_bahi_gst_tax_snapshots_backup`;
+--> statement-breakpoint
+CREATE TABLE `gst_tax_components` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tenant_id` text NOT NULL,
+	`book_set_id` text NOT NULL,
+	`snapshot_id` text NOT NULL,
+	`document_line_id` text NOT NULL,
+	`line_number` integer NOT NULL,
+	`classification` text NOT NULL,
+	`component` text NOT NULL,
+	`taxable_minor` integer NOT NULL,
+	`rate_bps` integer NOT NULL,
+	`tax_minor` integer NOT NULL,
+	`account_id` text,
+	`evidence_json` text NOT NULL,
+	FOREIGN KEY (`snapshot_id`,`tenant_id`,`book_set_id`) REFERENCES `gst_tax_snapshots`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "chk_gst_tax_component_component" CHECK("gst_tax_components"."component" IN ('CGST', 'SGST', 'UTGST', 'IGST')),
+	CONSTRAINT "chk_gst_tax_component_amounts" CHECK(typeof("gst_tax_components"."taxable_minor") = 'integer' AND "gst_tax_components"."taxable_minor" > 0 AND typeof("gst_tax_components"."rate_bps") = 'integer' AND "gst_tax_components"."rate_bps" >= 0 AND typeof("gst_tax_components"."tax_minor") = 'integer' AND "gst_tax_components"."tax_minor" >= 0)
+);
+--> statement-breakpoint
+CREATE INDEX `idx_gst_tax_components_snapshot` ON `gst_tax_components` (`tenant_id`,`book_set_id`,`snapshot_id`,`line_number`,`component`);
+--> statement-breakpoint
+INSERT INTO `gst_tax_components` SELECT * FROM `__agent_bahi_gst_tax_components_backup`;
+--> statement-breakpoint
+DROP TABLE `__agent_bahi_gst_tax_components_backup`;
+--> statement-breakpoint
+DROP TABLE `__agent_bahi_gst_tax_snapshots_backup`;
+--> statement-breakpoint
+DROP TABLE `__agent_bahi_vendor_payment_allocations_backup`;
+--> statement-breakpoint
+DROP TABLE `__agent_bahi_vendor_bill_lines_backup`;
+--> statement-breakpoint
+DROP TABLE `__agent_bahi_vendor_bills_backup`;
+--> statement-breakpoint
+CREATE TRIGGER `vendor_bills_no_delete_posted` BEFORE DELETE ON `vendor_bills`
+WHEN OLD.status <> 'DRAFT'
+BEGIN SELECT RAISE(ABORT, 'posted vendor bills are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `vendor_bill_lines_no_update` BEFORE UPDATE ON `vendor_bill_lines`
+BEGIN SELECT RAISE(ABORT, 'vendor bill lines are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `vendor_bill_lines_no_delete` BEFORE DELETE ON `vendor_bill_lines`
+BEGIN SELECT RAISE(ABORT, 'vendor bill lines are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `vendor_payment_allocations_no_update` BEFORE UPDATE ON `vendor_payment_allocations`
+BEGIN SELECT RAISE(ABORT, 'vendor payment allocations are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `vendor_payment_allocations_no_delete` BEFORE DELETE ON `vendor_payment_allocations`
+BEGIN SELECT RAISE(ABORT, 'vendor payment allocations are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `gst_tax_snapshots_no_update` BEFORE UPDATE ON `gst_tax_snapshots`
+BEGIN SELECT RAISE(ABORT, 'GST tax snapshots are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `gst_tax_snapshots_no_delete` BEFORE DELETE ON `gst_tax_snapshots`
+BEGIN SELECT RAISE(ABORT, 'GST tax snapshots are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `gst_tax_components_no_update` BEFORE UPDATE ON `gst_tax_components`
+BEGIN SELECT RAISE(ABORT, 'GST tax components are immutable'); END;
+--> statement-breakpoint
+CREATE TRIGGER `gst_tax_components_no_delete` BEFORE DELETE ON `gst_tax_components`
+BEGIN SELECT RAISE(ABORT, 'GST tax components are immutable'); END;
+--> statement-breakpoint
 CREATE TABLE `party_tax_profiles` (
 	`id` text PRIMARY KEY NOT NULL,
 	`tenant_id` text NOT NULL,
@@ -176,8 +384,6 @@ CREATE TABLE `withholding_events` (
 CREATE UNIQUE INDEX `uq_withholding_events_document_kind` ON `withholding_events` (`tenant_id`,`book_set_id`,`tax_kind`,`document_type`,`document_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `uq_withholding_events_scope_key` ON `withholding_events` (`id`,`tenant_id`,`book_set_id`);--> statement-breakpoint
 CREATE INDEX `idx_withholding_events_register` ON `withholding_events` (`tenant_id`,`book_set_id`,`tax_kind`,`event_date`,`id`);--> statement-breakpoint
-ALTER TABLE `vendor_bills` ADD `withholding_minor` integer DEFAULT 0 NOT NULL;
---> statement-breakpoint
 CREATE TRIGGER `vendor_bills_withholding_valid_insert` BEFORE INSERT ON `vendor_bills`
 WHEN NEW.withholding_minor < 0 OR NEW.withholding_minor > NEW.total_minor - NEW.paid_minor
 BEGIN SELECT RAISE(ABORT, 'vendor bill withholding amount is invalid'); END;
@@ -198,7 +404,7 @@ WHEN OLD.status <> 'DRAFT' AND NOT (
   AND NEW.created_at IS OLD.created_at AND NEW.posted_at IS OLD.posted_at AND NEW.updated_at IS NOT OLD.updated_at
   AND NEW.paid_minor >= OLD.paid_minor AND NEW.status IN ('POSTED', 'PARTIALLY_PAID', 'PAID')
   AND NEW.paid_minor IS (SELECT COALESCE(SUM(amount_minor), 0) FROM vendor_payment_allocations WHERE tenant_id = OLD.tenant_id AND book_set_id = OLD.book_set_id AND bill_id = OLD.id)
-  AND NEW.status IS CASE WHEN NEW.paid_minor = 0 THEN 'POSTED' WHEN NEW.paid_minor >= NEW.total_minor THEN 'PAID' ELSE 'PARTIALLY_PAID' END
+  AND NEW.status IS CASE WHEN NEW.paid_minor + NEW.withholding_minor = 0 THEN 'POSTED' WHEN NEW.paid_minor + NEW.withholding_minor >= NEW.total_minor THEN 'PAID' ELSE 'PARTIALLY_PAID' END
 )
 BEGIN SELECT RAISE(ABORT, 'posted vendor bill financial fields are immutable'); END;
 --> statement-breakpoint
