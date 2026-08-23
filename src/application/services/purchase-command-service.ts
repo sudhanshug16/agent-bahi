@@ -6,8 +6,9 @@ import type { CommandEnvelope, CommandResult } from "../commands.ts";
 import { canonicalJson, computeCommandHash, computeResultHash } from "../commands.ts";
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
 import { postJournalInSession, type JournalLinePayload } from "./journal-command-service.ts";
+import { prepareGstPosting, persistGstSnapshot, type GstDocumentBlock, type GstLineFact } from "./gst-service.ts";
 
-export interface BillLinePayload { description: string; expenseAccountId: string; amountMinor: number; }
+export interface BillLinePayload { description: string; expenseAccountId: string; amountMinor: number; gst?: GstLineFact; }
 export interface BillCreatePayload {
   billNumber: string;
   vendorId: string;
@@ -15,9 +16,10 @@ export interface BillCreatePayload {
   dueDate?: string;
   narration?: string;
   lines: BillLinePayload[];
+  gst?: GstDocumentBlock;
 }
 export interface BillCreateResult { billId: string; billNumber: string; totalMinor: number; status: "DRAFT"; }
-export interface BillPostPayload { billId: string; payableAccountId: string; }
+export interface BillPostPayload { billId: string; payableAccountId: string; gst?: GstDocumentBlock; }
 export interface BillPostResult { billId: string; journalId: string; totalMinor: number; status: "POSTED"; }
 export interface VendorPaymentAllocationPayload { billId: string; amountMinor: number; }
 export interface VendorPaymentRecordPayload {
@@ -147,7 +149,8 @@ export async function executeBillCreate(sessionRunner: BusinessSessionRunner, en
     for (const line of envelope.payload.lines) await assertAccount(session, envelope.tenantId, envelope.bookSetId, line.expenseAccountId, "EXPENSE", "expenseAccountId");
     const billId = randomUUID();
     const now = new Date().toISOString();
-    await session.execute("INSERT INTO vendor_bills (id, tenant_id, book_set_id, bill_number, vendor_id, bill_date, due_date, narration, status, total_minor, paid_minor, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 0, ?, ?)", [billId, envelope.tenantId, envelope.bookSetId, billNumber, vendorId, envelope.payload.billDate, envelope.payload.dueDate ?? null, envelope.payload.narration ?? null, totalMinor, now, now]);
+    const gstInput = envelope.payload.gst ? { ...envelope.payload.gst, lines: envelope.payload.gst.lines ?? envelope.payload.gst.lineFacts ?? envelope.payload.lines.map((line, index) => line.gst ? { ...line.gst, lineNumber: index + 1 } : undefined).filter(Boolean) as GstLineFact[] } : undefined;
+    await session.execute("INSERT INTO vendor_bills (id, tenant_id, book_set_id, bill_number, vendor_id, bill_date, due_date, narration, status, total_minor, paid_minor, gst_input_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?)", [billId, envelope.tenantId, envelope.bookSetId, billNumber, vendorId, envelope.payload.billDate, envelope.payload.dueDate ?? null, envelope.payload.narration ?? null, totalMinor, gstInput ? JSON.stringify(gstInput) : null, now, now]);
     for (const [index, line] of envelope.payload.lines.entries()) await session.execute("INSERT INTO vendor_bill_lines (id, tenant_id, book_set_id, bill_id, line_number, description, expense_account_id, amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, billId, index + 1, line.description, line.expenseAccountId, line.amountMinor]);
     return finishCommand(session, envelope, "bill.create", requestHash, { billId, billNumber, totalMinor, status: "DRAFT" }, "vendor_bill", billId, now);
   });
@@ -162,23 +165,34 @@ export async function executeBillPost(sessionRunner: BusinessSessionRunner, enve
     const replay = await replayOrUndefined(session, envelope, requestHash);
     if (replay) return replay as CommandResult<BillPostResult>;
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
-    const bill = await session.querySingle("SELECT id, bill_date, narration, status, total_minor FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [billId, envelope.tenantId, envelope.bookSetId]);
+    const bill = await session.querySingle("SELECT id, vendor_id, bill_date, narration, status, total_minor, gst_input_json FROM vendor_bills WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [billId, envelope.tenantId, envelope.bookSetId]);
     if (!bill) throw new DomainError("BILL_SCOPE_MISMATCH", "bill does not belong to tenant and BookSet");
     if (String(bill.status) !== "DRAFT") throw new DomainError("BILL_NOT_DRAFT", "only DRAFT bills can be posted");
     await assertAccount(session, envelope.tenantId, envelope.bookSetId, payableAccountId, "LIABILITY", "payableAccountId");
-    const lineRows = await session.query("SELECT description, expense_account_id, amount_minor FROM vendor_bill_lines WHERE bill_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY line_number", [billId, envelope.tenantId, envelope.bookSetId]);
+    const lineRows = await session.query("SELECT id, line_number, description, expense_account_id, amount_minor FROM vendor_bill_lines WHERE bill_id = ? AND tenant_id = ? AND book_set_id = ? ORDER BY line_number", [billId, envelope.tenantId, envelope.bookSetId]);
     if (lineRows.rows.length === 0) throw new DomainError("INVALID_BILL_LINES", "bill must contain at least one line");
+    const gstBlock = envelope.payload.gst ?? (bill.gst_input_json == null ? undefined : JSON.parse(String(bill.gst_input_json)) as GstDocumentBlock);
+    const gstPlan = gstBlock ? await prepareGstPosting(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, partyId: String(bill.vendor_id), documentDate: String(bill.bill_date), documentType: "PURCHASE", block: gstBlock, lines: lineRows.rows.map((row) => ({ id: String(row.id), lineNumber: Number(row.line_number), amountMinor: Number(row.amount_minor), description: String(row.description) })) }) : undefined;
     const lines: JournalLinePayload[] = [];
     for (const row of lineRows.rows) {
       const expenseAccountId = String(row.expense_account_id);
       await assertAccount(session, envelope.tenantId, envelope.bookSetId, expenseAccountId, "EXPENSE", "expenseAccountId");
-      lines.push({ accountId: brandAccountId(expenseAccountId), description: String(row.description), debitMinor: Number(row.amount_minor) });
+      const lineTax = gstPlan && gstPlan.itcTreatment !== "ELIGIBLE"
+        ? gstPlan.components.filter((component) => component.line.lineNumber === Number(row.line_number)).reduce((sum, component) => sum + component.taxMinor, 0)
+        : 0;
+      const debitMinor = Number(row.amount_minor) + lineTax;
+      lines.push({ accountId: brandAccountId(expenseAccountId), description: String(row.description), debitMinor });
     }
-    lines.push({ accountId: brandAccountId(payableAccountId), description: `Bill ${billId}`, creditMinor: Number(bill.total_minor) });
+    if (gstPlan && gstPlan.itcTreatment === "ELIGIBLE") for (const component of gstPlan.components) {
+      await assertAccount(session, envelope.tenantId, envelope.bookSetId, component.accountId!, "ASSET", `${component.component} input account`);
+      lines.push({ accountId: brandAccountId(component.accountId!), description: `${component.component} input GST ${component.line.lineNumber}`, debitMinor: component.taxMinor });
+    }
+    lines.push({ accountId: brandAccountId(payableAccountId), description: `Bill ${billId}`, creditMinor: gstPlan?.grossMinor ?? Number(bill.total_minor) });
     const journalId = await postJournalInSession(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, postingDate: String(bill.bill_date), reference: billId, narration: bill.narration === null ? undefined : String(bill.narration), lines });
     const now = new Date().toISOString();
-    await session.execute("UPDATE vendor_bills SET status = 'POSTED', payable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [payableAccountId, journalId, now, now, billId, envelope.tenantId, envelope.bookSetId]);
-    const totalMinor = Number(bill.total_minor);
+    if (gstPlan) await persistGstSnapshot(session, { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId, documentType: "PURCHASE", documentId: billId, plan: gstPlan, now });
+    await session.execute("UPDATE vendor_bills SET status = 'POSTED', total_minor = ?, payable_account_id = ?, posted_journal_id = ?, posted_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [gstPlan?.grossMinor ?? Number(bill.total_minor), payableAccountId, journalId, now, now, billId, envelope.tenantId, envelope.bookSetId]);
+    const totalMinor = gstPlan?.grossMinor ?? Number(bill.total_minor);
     return finishCommand(session, envelope, "bill.post", requestHash, { billId, journalId, totalMinor, status: "POSTED" }, "vendor_bill", billId, now);
   });
 }

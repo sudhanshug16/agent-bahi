@@ -28,6 +28,7 @@ export const vendorBills = sqliteTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     postedAt: text("posted_at"),
+    gstInputJson: text("gst_input_json"),
   },
   (table) => ({
     fkBookSet: foreignKey({ columns: [table.bookSetId, table.tenantId], foreignColumns: [bookSets.id, bookSets.tenantId] }).onDelete("no action"),

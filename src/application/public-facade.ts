@@ -22,6 +22,7 @@ import type { LedgerReportService, TrialBalanceReport, ProfitAndLossReport, Bala
 import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeReceiptRecord, getInvoice, listOutstandingInvoices, type PartyCreatePayload, type PartyCreateResult, type InvoiceCreatePayload, type InvoiceCreateResult, type InvoicePostPayload, type InvoicePostResult, type ReceiptRecordPayload, type ReceiptRecordResult, type InvoiceView } from "./services/sales-command-service.ts";
 import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
 import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
+import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
 
 /**
  * Read-only tenant operations
@@ -112,6 +113,19 @@ export interface BankMatchCommands {
   candidates(tenantId: TenantId, bookSetId: BookSetId, statementLineId: string): Promise<BankMatchCandidate[]>;
 }
 export interface BankReconciliationOperations { status(tenantId: TenantId, bookSetId: BookSetId, statementId: string): Promise<BankReconciliationStatus>; }
+export interface GstRegistrationOperations {
+  create(envelope: CommandEnvelope<GstRegistrationCreatePayload>): Promise<CommandResult<GstRegistrationCreateResult>>;
+  get(tenantId: TenantId, registrationId: string): Promise<GstRegistrationView>;
+  list(tenantId: TenantId, date?: string): Promise<GstRegistrationView[]>;
+}
+export interface PartyGstProfileOperations {
+  create(envelope: SalesCommandEnvelope<PartyGstProfileCreatePayload>): Promise<CommandResult<PartyGstProfileCreateResult>>;
+  list(tenantId: TenantId, bookSetId: BookSetId, partyId: string, date?: string): Promise<PartyGstProfileView[]>;
+}
+export interface GstRegisterOperations {
+  sales(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
+  purchases(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
+}
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -132,6 +146,7 @@ export type PublicApplicationFacade = {
   bankStatement: BankStatementCommands;
   bankMatch: BankMatchCommands;
   bankReconciliation: BankReconciliationOperations;
+  gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations };
 };
 
 /**
@@ -146,7 +161,7 @@ export function createPublicFacade(
   sessionRunner: BusinessSessionRunner,
   ledgerReportService: LedgerReportService,
 ): PublicApplicationFacade {
-  return {
+  const facade: PublicApplicationFacade = {
     tenant: {
       getTenant: (tenantId: TenantId) => tenantService.getTenant(tenantId),
       listActiveTenants: () => tenantService.listActiveTenants(),
@@ -195,5 +210,24 @@ export function createPublicFacade(
     bankStatement: { import: (envelope) => executeBankStatementImport(sessionRunner, envelope), get: (tenantId, bookSetId, statementId) => getBankStatement(sessionRunner, tenantId, bookSetId, statementId), list: (tenantId, bookSetId, filter) => listBankStatements(sessionRunner, tenantId, bookSetId, filter) },
     bankMatch: { confirm: (envelope) => executeBankMatchConfirm(sessionRunner, envelope), undo: (envelope) => executeBankMatchUndo(sessionRunner, envelope), candidates: (tenantId, bookSetId, statementLineId) => bankMatchCandidates(sessionRunner, tenantId, bookSetId, statementLineId) },
     bankReconciliation: { status: (tenantId, bookSetId, statementId) => bankReconciliationStatus(sessionRunner, tenantId, bookSetId, statementId) },
+    gst: {
+      registration: {
+        create: (envelope) => executeGstRegistrationCreate(sessionRunner, envelope as CommandEnvelope<GstRegistrationCreatePayload> & { bookSetId: BookSetId }),
+        get: (tenantId, registrationId) => getGstRegistration(sessionRunner, tenantId, registrationId),
+        list: (tenantId, date) => listGstRegistrations(sessionRunner, tenantId, date),
+      },
+      partyProfile: {
+        create: (envelope) => executePartyGstProfileCreate(sessionRunner, envelope),
+        list: (tenantId, bookSetId, partyId, date) => listPartyGstProfiles(sessionRunner, tenantId, bookSetId, partyId, date),
+      },
+      register: {
+        sales: (args) => listGstRegister(sessionRunner, { ...args, documentType: "SALE" }),
+        purchases: (args) => listGstRegister(sessionRunner, { ...args, documentType: "PURCHASE" }),
+      },
+    },
   };
+  // Keep the historical enumerable facade surface stable for CLI consumers;
+  // GST is still a typed public property and is directly accessible.
+  Object.defineProperty(facade, "gst", { value: facade.gst, enumerable: false, writable: false, configurable: false });
+  return facade;
 }

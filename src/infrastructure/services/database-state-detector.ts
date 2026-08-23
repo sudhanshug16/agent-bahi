@@ -15,6 +15,8 @@ import {
   DRIZZLE_BASELINE_HASH,
   DRIZZLE_BASELINE_CREATED_AT,
   DRIZZLE_BASELINE_MIGRATION_ID,
+  DRIZZLE_GST_HASH,
+  DRIZZLE_GST_MIGRATION_ID,
   DRIZZLE_JOURNAL_DDL,
   DRIZZLE_MIGRATIONS_TABLE,
   validateOfficialDrizzleJournal,
@@ -48,6 +50,10 @@ type CatalogRow = { type: string; name: string; tbl_name: string; sql: string | 
 
 const DRIZZLE_BASELINE_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_BASELINE_MIGRATION_ID}.sql`),
+  "utf8",
+);
+const DRIZZLE_GST_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`),
   "utf8",
 );
 
@@ -92,13 +98,14 @@ function catalog(db: BunDatabase): CatalogRow[] {
   `).all() as CatalogRow[];
 }
 
-function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean): CatalogRow[] {
+function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, current = false): CatalogRow[] {
   const memory = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
   try {
     memory.exec("PRAGMA foreign_keys = ON");
     if (drizzle) {
       memory.exec(DRIZZLE_JOURNAL_DDL);
       for (const statement of DRIZZLE_BASELINE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+      if (current) for (const statement of DRIZZLE_GST_SQL.split("--> statement-breakpoint")) memory.exec(statement);
     } else {
       memory.exec(MIGRATION_SCHEMA_SQLITE);
       memory.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);
@@ -173,13 +180,27 @@ function exactDrizzleJournal(db: BunDatabase): boolean {
   }
 }
 
-function exactFreshDrizzle(db: BunDatabase): boolean {
+function exactFreshDrizzle(db: BunDatabase, current = false): boolean {
   const manifest = KNOWN_SCHEMA_MANIFESTS.at(-1)!;
   if (!exactDrizzleJournal(db)) return false;
-  const expected = expectedCatalog(manifest, true);
+  const expected = expectedCatalog(manifest, true, current);
   const expectedControl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
-  if (!exactControl(db, manifest, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_BASELINE_HASH, expectedControl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
+  const expectedId = current ? DRIZZLE_GST_MIGRATION_ID : DRIZZLE_BASELINE_MIGRATION_ID;
+  const expectedHash = current ? DRIZZLE_GST_HASH : DRIZZLE_BASELINE_HASH;
+  if (!exactControl(db, manifest, expectedId, expectedHash, expectedControl ?? DATABASE_CONTROL_TABLE_DDL)) return false;
   return sameCatalog(catalog(db), expected);
+}
+
+function exactBridgedCurrent(db: BunDatabase, manifest: SqliteSchemaManifest): boolean {
+  if (!exactHistory(db, manifest) || !exactControl(db, manifest, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_HASH) || !exactDrizzleJournal(db)) return false;
+  // Legacy bridges retain schema_migrations, whose historical DDL can differ
+  // textually from a fresh Drizzle database after table-rebuild upgrades. The
+  // immutable history/control/journal checks above remain exact; verify every
+  // GST-owned object is present before accepting the bridge.
+  const has = (name: string): boolean => !!db.prepare("SELECT 1 FROM sqlite_schema WHERE name = ?").get(name);
+  return has("party_gst_profiles") && has("gst_tax_snapshots") && has("gst_tax_components")
+    && has("gst_tax_snapshots_no_update") && has("gst_tax_snapshots_no_delete")
+    && has("gst_tax_components_no_update") && has("gst_tax_components_no_delete");
 }
 
 /** Detect the current state without creating tables, repairing rows, or running migrations. */
@@ -199,7 +220,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
       : undefined;
 
     if (hasLegacyMigrations) {
-      const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => exactLegacySchema(db, candidate, hasDrizzleMigrations));
+      const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => exactLegacySchema(db, candidate, hasDrizzleMigrations) || (hasDrizzleMigrations && candidate.schemaVersion === 8 && exactBridgedCurrent(db, candidate)));
       if (!manifest) return { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations, legacyMigrationCount, drizzleMigrationCount };
       if (hasDrizzleMigrations) {
         if (manifest.schemaVersion !== 8 || !exactDrizzleJournal(db)) return { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations: true, legacyMigrationCount, drizzleMigrationCount };
@@ -209,7 +230,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
       return state ? { state, schemaVersion: manifest.schemaVersion, hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount } : { state: "UNKNOWN", hasLegacyMigrations: true, hasDrizzleMigrations: false, legacyMigrationCount };
     }
 
-    if (hasDrizzleMigrations && hasControl && exactFreshDrizzle(db)) {
+    if (hasDrizzleMigrations && hasControl && (exactFreshDrizzle(db) || exactFreshDrizzle(db, true))) {
       return { state: "DRIZZLE_MANAGED", schemaVersion: 8, hasLegacyMigrations: false, hasDrizzleMigrations: true, drizzleMigrationCount };
     }
     return { state: "UNKNOWN", hasLegacyMigrations: false, hasDrizzleMigrations, drizzleMigrationCount };

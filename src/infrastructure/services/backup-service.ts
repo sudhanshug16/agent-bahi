@@ -24,7 +24,7 @@ import { DatabaseControlService, type DatabaseControlRecord } from "./database-c
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
-import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -478,8 +478,8 @@ function drizzleControlRecord(db: BunDatabase): DatabaseControlRecord {
     || safeInteger(row.required_writer_protocol) !== CURRENT_SCHEMA_MANIFEST.writerProtocol
     || safeInteger(row.revision) !== CURRENT_SCHEMA_MANIFEST.revision
     || safeInteger(row.generation) !== CURRENT_SCHEMA_MANIFEST.generation
-    || row.state !== "READY" || row.last_migration_id !== DRIZZLE_BASELINE_MIGRATION_ID
-    || row.last_migration_checksum !== DRIZZLE_BASELINE_HASH
+    || row.state !== "READY" || row.last_migration_id !== DRIZZLE_GST_MIGRATION_ID
+    || row.last_migration_checksum !== DRIZZLE_GST_HASH
     || typeof row.last_writer_cli_version !== "string" || typeof row.last_writer_build_id !== "string"
     || typeof row.last_writer_at !== "string" || typeof row.created_at !== "string" || typeof row.updated_at !== "string"
     || row.recovery_reason !== null) {
@@ -494,8 +494,8 @@ function drizzleControlRecord(db: BunDatabase): DatabaseControlRecord {
     state: "READY",
     revision: CURRENT_SCHEMA_MANIFEST.revision,
     generation: CURRENT_SCHEMA_MANIFEST.generation,
-    lastMigrationId: DRIZZLE_BASELINE_MIGRATION_ID,
-    lastMigrationChecksum: DRIZZLE_BASELINE_HASH,
+    lastMigrationId: DRIZZLE_GST_MIGRATION_ID,
+    lastMigrationChecksum: DRIZZLE_GST_HASH,
     lastWriterCliVersion: row.last_writer_cli_version as string,
     lastWriterBuildId: row.last_writer_build_id as string,
     lastWriterAt: row.last_writer_at as string,
@@ -560,6 +560,8 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
       db.exec(DRIZZLE_JOURNAL_DDL);
       const baseline = readFileSync(join(import.meta.dir, "../../..", "drizzle", "0009_drizzle_v8_baseline.sql"), "utf8");
       for (const statement of baseline.split("--> statement-breakpoint")) db.exec(statement);
+      const gst = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`), "utf8");
+      for (const statement of gst.split("--> statement-breakpoint")) db.exec(statement);
     } else {
       db.exec(MIGRATION_SCHEMA_SQLITE);
       db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);

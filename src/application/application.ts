@@ -15,8 +15,11 @@ import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
 import {
   DRIZZLE_MIGRATIONS_TABLE,
+  DRIZZLE_GST_HASH,
+  officialDrizzleJournal,
   initializeDrizzleControl,
   seedOfficialDrizzleBaseline,
+  synchronizeDrizzleControl,
 } from "../infrastructure/services/drizzle-baseline.ts";
 import type { BackupResult, BackupService as BackupServicePort } from "../application/ports/persistence.ts";
 import { detectDatabaseState } from "../infrastructure/services/database-state-detector.ts";
@@ -170,6 +173,11 @@ export async function upgradeSqliteDatabase(
     if (state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED") {
       await options.faults?.beforeOfficialMigration?.();
       db.runFreshDrizzleMigrations();
+      await db.withMigrationLease((session) => synchronizeDrizzleControl(session, {
+        cliVersion: options.cliVersion ?? "agent-bahi",
+        buildId: options.buildId ?? "upgrade",
+        now: options.now ?? new Date(),
+      }).then(() => undefined));
       await options.faults?.beforeFinalVerification?.();
       const finalState = databaseState(dbPath);
       if (finalState.state !== state.state) throw new UpgradeError("UPGRADE_APPLY_FAILED", "Official Drizzle migration did not preserve a valid state");
@@ -206,6 +214,11 @@ export async function upgradeSqliteDatabase(
     await db.withMigrationLease((session) => seedOfficialDrizzleBaseline(session).then(() => undefined));
     await options.faults?.beforeOfficialMigration?.();
     db.runFreshDrizzleMigrations();
+    await db.withMigrationLease((session) => synchronizeDrizzleControl(session, {
+      cliVersion: options.cliVersion ?? "agent-bahi",
+      buildId: options.buildId ?? "upgrade",
+      now: options.now ?? new Date(),
+    }).then(() => undefined));
     await options.faults?.beforeFinalVerification?.();
     if (databaseState(dbPath).state !== "DRIZZLE_BRIDGED") throw new UpgradeError("UPGRADE_APPLY_FAILED", "Explicit bridge did not reach exact DRIZZLE_BRIDGED state");
   } catch (error) {
@@ -339,8 +352,10 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
     }
 
     if (state.state === "DRIZZLE_BRIDGED") {
+      const journal = native.query(`SELECT hash FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at DESC, id DESC LIMIT 1`).get() as { hash?: unknown } | undefined;
+      const ready = state.drizzleMigrationCount === officialDrizzleJournal().length && String(journal?.hash) === DRIZZLE_GST_HASH;
       return {
-        status: "READY",
+        status: ready ? "READY" : "UPDATE_REQUIRED",
         currentSchemaVersion: 8,
         requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
         currentDataFormatVersion: 1,
@@ -362,7 +377,8 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
       const ready = Number(control.schema_version) === 8
         && Number(control.data_format_version) === 1
         && String(control.state) === "READY"
-        && /^[0-9a-f]{64}$/.test(String(journal.hash));
+        && String(journal.hash) === DRIZZLE_GST_HASH
+        && state.drizzleMigrationCount === officialDrizzleJournal().length;
       return {
         status: ready ? "READY" : "UPDATE_REQUIRED",
         currentSchemaVersion: Number(control.schema_version),

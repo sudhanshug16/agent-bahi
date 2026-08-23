@@ -7,7 +7,7 @@ import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService } from "../services/database-control-service.ts";
 import { MigrationService, MIGRATION_SCHEMA_SQLITE } from "../services/migration-service.ts";
 import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
-import { DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_MIGRATIONS_TABLE } from "../services/drizzle-baseline.ts";
+import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_MIGRATIONS_TABLE, officialDrizzleJournal } from "../services/drizzle-baseline.ts";
 
 const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tenants",
@@ -33,6 +33,9 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "bank_statements",
   "bank_statement_lines",
   "bank_matches",
+  "party_gst_profiles",
+  "gst_tax_snapshots",
+  "gst_tax_components",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([
@@ -491,12 +494,13 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
     if (controlRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control row cardinality is invalid");
     const control = controlRows[0];
     const journalRows = connection.prepare(`SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`).all() as Array<Record<string, unknown>>;
-    if (journalRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Drizzle migration journal cardinality is invalid");
-    const journal = journalRows[0];
-    if (String(control.last_migration_id) !== DRIZZLE_BASELINE_MIGRATION_ID
+    if (journalRows.length !== officialDrizzleJournal().length) throw new DomainError("UPDATE_REQUIRED", "Database update is required before business work");
+    const journal = journalRows.at(-1)!;
+    if (String(control.last_migration_id) !== DRIZZLE_GST_MIGRATION_ID
       || String(control.last_migration_checksum) !== String(journal.hash)
+      || String(journal.hash) !== DRIZZLE_GST_HASH
       || !/^[0-9a-f]{64}$/.test(String(journal.hash))) {
-      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Drizzle migration journal and control metadata do not match");
+      throw new DomainError("UPDATE_REQUIRED", "Database update is required before business work");
     }
     const integer = (value: unknown): number => {
       const number = typeof value === "bigint" ? Number(value) : Number(value);
