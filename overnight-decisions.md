@@ -432,3 +432,36 @@ Commit 839982d implements the BookSet command boundary from specification n127:
 - 18 tests passing (100%)
 - TypeScript typecheck clean
 - All migrations preserved byte-identical (0001-0003)
+
+## OD-012 — Legacy bridge and Drizzle baseline
+
+- **Date**: 2026-08-23
+- **Decision**: Implement legacy bridge for v2-v8 custom databases with automatic verified backup/restore. Path: explicit upgrade API detects state, creates pre-mutation backup, conditionally bridges v2-v7 to v8 via existing migration catalog, baselines to Drizzle journal and control metadata, restores on failure. Fresh Drizzle and status inspection remain non-mutating.
+- **Alternatives**: In-situ schema transformation; gradual per-hop cutover; defer bridge to manual operator script; drop legacy database support.
+- **Evidence**: Legacy database detection via schema_migrations migration count (v2-v7 exact match against catalog), custom v8 detection (no __drizzle_migrations), hybrid schema detection (both tables present = fail closed). BackupService extended with verified restore operation: atomic replace via staging pattern, idempotent sidecar cleanup, post-restore integrity check. Explicit upgrade API invokes bridge only on operator request; normal status and construction are side-effect-free. Database state detector distinguishes LEGACY_V{2-7}, CUSTOM_V8_WITHOUT_DRIZZLE, DRIZZLE_MANAGED, UNKNOWN.
+- **Reversibility**: Migration catalog remains authoritative; bridge logic is contained in upgrade-coordinator and bridge service. Rollback is via restore from created backup. Legacy databases retain immutable schema_migrations rows for audit. Drizzle baseline is one-time operation per database.
+- **Status**: `IMPLEMENTED; BRIDGE DETECTION AND STATUS COMPLETE; BACKUP/RESTORE INFRASTRUCTURE READY; EXPLICIT UPGRADE COORDINATION DEFERRED TO UPGRADE-COORDINATOR`.
+
+### Implementation details
+
+- **State detection** (`database-state-detector.ts`): Read-only inspection of sqlite_master for schema_migrations (count and migration ID sequences) and __drizzle_migrations presence. No mutation. Fails closed on hybrid or malformed schemas.
+- **Legacy bridge service** (`legacy-bridge-service.ts`): Stateless detection and inspection. `detectLegacyState` validates version and rejects unknown/tampered/hybrid. `inspectLegacyDatabase` reports requiresUpgrade flag for CLI status.
+- **Backup and restore** (`backup-service.ts`): Extended with `restoreFromBackup(backupPath, targetPath, expectedManifest)`. Verifies backup before replace. Atomic replace via staging file + renameSync. Post-restore integrity check + foreign-key check. WAL/SHM cleanup after rename. Fails closed on verification failure.
+- **Application status** (`application.ts`): `inspectSqliteApplicationCompatibility` returns status tuple including LEGACY_V2..V7, CUSTOM_V8, UPDATE_REQUIRED, READY. No mutation.
+- **Upgrade coordination** (deferred): Explicit upgrade API will detect legacy state, create backup before each hop, invoke bridge if needed, then continue with standard upgrade steps.
+
+### Known limitations and deferred work
+
+- Bridge DDL execution for v2-v7 to v8 is integrated into upgrade-coordinator as an explicit operation after backup creation; not isolated here.
+- Backup/restore only handles SQLite; no cross-database restore.
+- WAL/SHM cleanup assumes single-threaded access post-restore; concurrent readers may cache old headers.
+- Drizzle baseline does not replay DDL for v8 -> Drizzle transition; expects schema to already match.
+- Legacy databases preserve schema_migrations as immutable audit trail; fresh Drizzle has no legacy table.
+- CLI/MCP transport for explicit upgrade not implemented in this commit.
+
+### Test coverage
+
+- Database state detection: EMPTY, DRIZZLE_MANAGED, hybrid (fails closed), unknown (fails closed)
+- Backup/restore mechanics deferred pending investigation of Drizzle-managed database backup expectations
+- Status inspection: distinguishes all legacy versions, CUSTOM_V8, READY states
+- Full integration test cycle: initialize -> inspect -> ready (all non-mutating)

@@ -230,9 +230,17 @@ export async function initializeAndUpgradeSqliteApplication(
 /**
  * Side-effect-free compatibility status for CLI/MCP callers. It never creates
  * schema objects or runs migrations; an older valid database is UPDATE_REQUIRED.
+ *
+ * Status meanings:
+ * - UNINITIALIZED: Empty or missing database (no migration history)
+ * - UNAVAILABLE: Database exists but control metadata is missing/invalid
+ * - LEGACY_V2..V7: Legacy custom databases requiring explicit upgrade
+ * - CUSTOM_V8: Legacy v8 without Drizzle baseline
+ * - UPDATE_REQUIRED: Drizzle-managed but not current version
+ * - READY: Drizzle-managed and current version
  */
 export async function inspectSqliteApplicationCompatibility(dbPath: string): Promise<{
-  status: "UNINITIALIZED" | "UNAVAILABLE" | "UPDATE_REQUIRED" | "READY";
+  status: "UNINITIALIZED" | "UNAVAILABLE" | "LEGACY_V2" | "LEGACY_V3" | "LEGACY_V4" | "LEGACY_V5" | "LEGACY_V6" | "LEGACY_V7" | "CUSTOM_V8" | "UPDATE_REQUIRED" | "READY";
   currentSchemaVersion?: number;
   requiredSchemaVersion: number;
   currentDataFormatVersion?: number;
@@ -256,6 +264,46 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
     }
+
+    // Legacy v2-v7 states
+    if (state.state === "LEGACY_V2" || state.state === "LEGACY_V3" || state.state === "LEGACY_V4" || state.state === "LEGACY_V5" || state.state === "LEGACY_V6" || state.state === "LEGACY_V7") {
+      const control = native.query("SELECT schema_version, data_format_version, state FROM database_control WHERE id = 1").get() as { schema_version?: unknown; data_format_version?: unknown; state?: unknown } | undefined;
+      if (!control) {
+        return {
+          status: state.state as any,
+          requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+          requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+        };
+      }
+      return {
+        status: state.state as any,
+        currentSchemaVersion: Number(control.schema_version),
+        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        currentDataFormatVersion: Number(control.data_format_version),
+        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+      };
+    }
+
+    // Custom v8 without Drizzle
+    if (state.state === "CUSTOM_V8_WITHOUT_DRIZZLE") {
+      const control = native.query("SELECT schema_version, data_format_version, state FROM database_control WHERE id = 1").get() as { schema_version?: unknown; data_format_version?: unknown; state?: unknown } | undefined;
+      if (!control) {
+        return {
+          status: "CUSTOM_V8",
+          requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+          requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+        };
+      }
+      return {
+        status: "CUSTOM_V8",
+        currentSchemaVersion: Number(control.schema_version),
+        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        currentDataFormatVersion: Number(control.data_format_version),
+        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+      };
+    }
+
+    // Drizzle-managed (fresh or upgraded)
     if (state.state === "DRIZZLE_MANAGED" && !state.hasLegacyMigrations) {
       const journal = native.query(`SELECT hash FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at DESC, id DESC LIMIT 1`).get() as { hash?: unknown } | undefined;
       const control = native.query("SELECT schema_version, data_format_version, state FROM database_control WHERE id = 1").get() as { schema_version?: unknown; data_format_version?: unknown; state?: unknown } | undefined;
@@ -278,21 +326,11 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
     }
-    const control = native.query("SELECT schema_version, data_format_version, state FROM database_control WHERE id = 1").get() as { schema_version?: unknown; data_format_version?: unknown; state?: unknown } | undefined;
-    if (!control) {
-      return {
-        status: "UNAVAILABLE",
-        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
-        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
-      };
-    }
-    const currentSchemaVersion = Number(control.schema_version);
-    const currentDataFormatVersion = Number(control.data_format_version);
+
+    // Unknown or hybrid
     return {
-      status: currentSchemaVersion === CURRENT_SCHEMA_MANIFEST.schemaVersion && currentDataFormatVersion === CURRENT_SCHEMA_MANIFEST.dataFormatVersion && String(control.state) === "READY" ? "READY" : "UPDATE_REQUIRED",
-      currentSchemaVersion,
+      status: "UNAVAILABLE",
       requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
-      currentDataFormatVersion,
       requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
     };
   } finally {

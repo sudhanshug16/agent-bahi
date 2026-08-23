@@ -10,7 +10,9 @@ import {
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   unlinkSync,
+  writeSync,
 } from "node:fs";
 import { basename, dirname } from "node:path";
 import { Database as BunDatabase } from "bun:sqlite";
@@ -210,6 +212,88 @@ export class BackupService implements BackupServicePort {
       ensureNoSidecars(canonicalPath);
       return true;
     } catch (error) {
+      throw normalizeBackupError(error, "BACKUP_VERIFICATION_FAILED");
+    }
+  }
+
+  /**
+   * Restore from a verified backup by atomically replacing the source database.
+   * Source must be quiesced/closed before restore; handles reopen and verification.
+   */
+  async restoreFromBackup(backupPath: string, targetPath: string, expectedSourceManifest?: SqliteSchemaManifest): Promise<boolean> {
+    let stagingPath: string | undefined;
+    try {
+      const backupCanonical = canonicalExistingRegularPath(backupPath, "BACKUP_SOURCE_UNSAFE");
+      const targetCanonical = canonicalDestinationPath(targetPath);
+
+      // Verify backup is valid before attempting replace
+      ensureNoSidecars(backupCanonical);
+      await this.verifySqliteFile(backupCanonical, undefined, expectedSourceManifest ?? this.expectedSourceManifest);
+      ensureNoSidecars(backupCanonical);
+
+      // Read backup file contents
+      let backupFd: number | undefined;
+      let backupBytes: Buffer;
+      try {
+        backupFd = openSync(backupCanonical, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+        backupBytes = readFileSync(backupFd);
+      } finally {
+        if (backupFd !== undefined) closeSync(backupFd);
+      }
+
+      // Atomically replace target with backup using staging pattern
+      stagingPath = `${targetCanonical}.restore-${randomUUID()}`;
+      const stagingFd = openSync(stagingPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600);
+      try {
+        const written = writeSync(stagingFd, backupBytes);
+        if (written !== backupBytes.length) throw new Error("Incomplete write");
+      } finally {
+        closeSync(stagingFd);
+      }
+      fsyncFile(stagingPath);
+
+      // Atomic rename
+      try {
+        renameSync(stagingPath, targetCanonical);
+      } catch (error) {
+        unlinkExact(stagingPath, undefined);
+        stagingPath = undefined;
+        throw error;
+      }
+      stagingPath = undefined;
+
+      fsyncFile(targetCanonical);
+      fsyncDirectory(dirname(targetCanonical));
+
+      // Clean up sidecar WAL/SHM files from the old database
+      for (const suffix of ["-wal", "-shm"]) {
+        try {
+          unlinkSync(`${targetCanonical}${suffix}`);
+        } catch (error) {
+          if (!isErrno(error, "ENOENT")) throw error;
+        }
+      }
+
+      // Verify restored database
+      let verifyDb: BunDatabase | undefined;
+      try {
+        verifyDb = openReadonly(targetCanonical);
+        const integrity = verifyDb.prepare("PRAGMA integrity_check").all() as Array<Record<string, unknown>>;
+        if (integrity.length !== 1 || String(Object.values(integrity[0] ?? {})[0]) !== "ok") {
+          throw new DomainError("BACKUP_VERIFICATION_FAILED", "Restored database integrity check failed");
+        }
+
+        const foreignKeys = verifyDb.prepare("PRAGMA foreign_key_check").all();
+        if (foreignKeys.length !== 0) {
+          throw new DomainError("BACKUP_VERIFICATION_FAILED", "Restored database foreign-key check failed");
+        }
+      } finally {
+        closeDatabase(verifyDb);
+      }
+
+      return true;
+    } catch (error) {
+      if (stagingPath) unlinkExact(stagingPath, undefined);
       throw normalizeBackupError(error, "BACKUP_VERIFICATION_FAILED");
     }
   }
