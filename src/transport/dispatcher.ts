@@ -69,6 +69,11 @@ const handlers: Record<string, Handler> = {
   "gst.party-profile.list": (facade, input) => facade.gst.partyProfile.list(tenantId(input), bookSetId(input), text(input, "partyId"), optionalText(input, "date")),
   "gst.register.sales": (facade, input) => facade.gst.register.sales({ tenantId: tenantId(input), bookSetId: bookSetId(input), gstin: text(input, "gstin"), fromDate: optionalText(input, "fromDate"), toDate: optionalText(input, "toDate") }),
   "gst.register.purchases": (facade, input) => facade.gst.register.purchases({ tenantId: tenantId(input), bookSetId: bookSetId(input), gstin: text(input, "gstin"), fromDate: optionalText(input, "fromDate"), toDate: optionalText(input, "toDate") }),
+  "company.status": (facade, input) => facade.company.status({
+    ...(optionalText(input, "tenantId") ? { tenantId: brandTenantId(optionalText(input, "tenantId")!) } : {}),
+    ...(optionalText(input, "bookSetId") ? { bookSetId: brandBookSetId(optionalText(input, "bookSetId")!) } : {}),
+    ...(optionalText(input, "asOfDate") ? { asOfDate: optionalText(input, "asOfDate") } : {}),
+  }),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

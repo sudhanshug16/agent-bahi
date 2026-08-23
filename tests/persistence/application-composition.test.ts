@@ -15,7 +15,7 @@ test("production composition exposes typed services without raw persistence hand
       cliVersion: "0.0.0-test",
       buildId: "composition",
     });
-    expect(Object.keys(application).sort()).toEqual(["account", "bankMatch", "bankReconciliation", "bankStatement", "bill", "bookSet", "bookSetScope", "invoice", "journal", "ledger", "party", "receipt", "tenant", "vendorPayment"]);
+    expect(Object.keys(application).sort()).toEqual(["account", "bankMatch", "bankReconciliation", "bankStatement", "bill", "bookSet", "bookSetScope", "company", "invoice", "journal", "ledger", "party", "receipt", "tenant", "vendorPayment"]);
     expect((application as Record<string, unknown>).runner).toBeUndefined();
     expect((application as Record<string, unknown>).db).toBeUndefined();
 

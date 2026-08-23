@@ -22,6 +22,7 @@ function help(): string {
     "  agent-bahi [--database PATH] operations run OPERATION [--input FILE|-] [--json]",
     "  agent-bahi [--database PATH] database.status|database.init",
     "  agent-bahi [--database PATH] database.upgrade --backup ABS_PATH",
+    "  agent-bahi [--database PATH] status [--tenant-id ID] [--book-set-id ID] [--as-of-date YYYY-MM-DD] [--json]",
     "  agent-bahi [--database PATH] mcp",
     "",
     "Normal business operations never initialize, upgrade, or mutate database schema.",
@@ -125,6 +126,13 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     operationId = args[0];
     const backup = takeFlag(args, "--backup");
     const input = operationId === "database.upgrade" ? { backupDestinationPath: backup } : {};
+    result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
+  } else if (args[0] === "status") {
+    operationId = "company.status";
+    const tenant = takeFlag(args, "--tenant-id") ?? takeFlag(args, "--tenant");
+    const bookSet = takeFlag(args, "--book-set-id") ?? takeFlag(args, "--bookset");
+    const asOfDate = takeFlag(args, "--as-of-date") ?? takeFlag(args, "--as-of");
+    const input = { ...(tenant ? { tenantId: tenant } : {}), ...(bookSet ? { bookSetId: bookSet } : {}), ...(asOfDate ? { asOfDate } : {}) };
     result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else {
     const error: DispatchEnvelope = { ok: false, error: { code: "UNKNOWN_OPERATION", message: "Expected operations list, operations describe, operations run, or database.*" } };

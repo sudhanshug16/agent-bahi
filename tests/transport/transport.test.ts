@@ -95,6 +95,42 @@ describe("shared CLI and stdio MCP transport", () => {
     }
   });
 
+  it("exposes company.status through the status shortcut and MCP with the same dispatcher result shape", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-bahi-company-status-transport-"));
+    const db = join(dir, "books.sqlite");
+    let transport: StdioClientTransport | undefined;
+    try {
+      expect((await cli(db, ["database.init", "--json"])).code).toBe(0);
+      const created = json((await cli(db, ["operations", "run", "tenant.create", "--input", "-", "--json"], {
+        schemaVersion: 1, tenantId: "status-transport", requestId: "status-transport-create", actor: { kind: "HUMAN", id: "test" }, source: "CLI", reason: "status transport", payload: { kind: "COMPANY", name: "Status Transport" },
+      })).stdout);
+      const tenantId = String((created.result as { tenantId: string }).tenantId);
+      const bookSetId = String((created.result as { defaultBookSetId: string }).defaultBookSetId);
+      expect((await cli(db, ["operations", "run", "tenant.activate", "--input", "-", "--json"], {
+        schemaVersion: 1, tenantId, requestId: "status-transport-activate", actor: { kind: "HUMAN", id: "test" }, source: "CLI", reason: "activate status transport", payload: { defaultBookSetId: bookSetId },
+      })).code).toBe(0);
+      const cliStatus = await cli(db, ["status", "--as-of-date", "2026-08-23", "--json"]);
+      expect(cliStatus.code).toBe(0);
+      const cliEnvelope = json(cliStatus.stdout);
+      expect(cliEnvelope.operationId).toBe("company.status");
+
+      transport = new StdioClientTransport({ command: process.execPath, args: [join(root, "src/mcp.ts"), "--database", db], cwd: root, stderr: "pipe" });
+      const client = new Client({ name: "agent-bahi-status-test", version: "1" }, { capabilities: {} });
+      await client.connect(transport);
+      const tools = await client.listTools();
+      expect(tools.tools.some((tool) => tool.name === "company.status")).toBe(true);
+      const mcpResult = await client.callTool({ name: "company.status", arguments: { asOfDate: "2026-08-23" } });
+      expect(mcpResult.isError).not.toBe(true);
+      expect((mcpResult.structuredContent as { ok: boolean; operationId: string; resultHash: string }).ok).toBe(true);
+      expect((mcpResult.structuredContent as { operationId: string }).operationId).toBe("company.status");
+      expect((mcpResult.structuredContent as { resultHash: string }).resultHash).toBe(String(cliEnvelope.resultHash));
+      await client.close();
+    } finally {
+      await transport?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a BookSet read when the tenant scope does not own it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-bahi-scope-"));
     const db = join(dir, "books.sqlite");

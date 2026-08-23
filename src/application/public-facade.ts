@@ -23,6 +23,7 @@ import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeRe
 import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
 import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
 import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
+import type { CompanyStatusInput, CompanyStatusResult, CompanyStatusService } from "./services/company-status-service.ts";
 
 /**
  * Read-only tenant operations
@@ -126,6 +127,7 @@ export interface GstRegisterOperations {
   sales(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
   purchases(args: { tenantId: TenantId; bookSetId: BookSetId; gstin: string; fromDate?: string; toDate?: string }): Promise<GstRegisterRow[]>;
 }
+export interface CompanyStatusOperations { status(input?: CompanyStatusInput): Promise<CompanyStatusResult>; }
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -147,6 +149,7 @@ export type PublicApplicationFacade = {
   bankMatch: BankMatchCommands;
   bankReconciliation: BankReconciliationOperations;
   gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations };
+  company: CompanyStatusOperations;
 };
 
 /**
@@ -160,6 +163,7 @@ export function createPublicFacade(
   bookSetScopeService: BookSetScopeService,
   sessionRunner: BusinessSessionRunner,
   ledgerReportService: LedgerReportService,
+  companyStatusService: CompanyStatusService,
 ): PublicApplicationFacade {
   const facade: PublicApplicationFacade = {
     tenant: {
@@ -225,6 +229,7 @@ export function createPublicFacade(
         purchases: (args) => listGstRegister(sessionRunner, { ...args, documentType: "PURCHASE" }),
       },
     },
+    company: { status: (input) => companyStatusService.status(input) },
   };
   // Keep the historical enumerable facade surface stable for CLI consumers;
   // GST is still a typed public property and is directly accessible.

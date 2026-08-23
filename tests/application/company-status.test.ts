@@ -1,0 +1,110 @@
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
+
+type TenantData = {
+  tenantId: string;
+  defaultBookSetId: string;
+  seedAccountIds: { assets: string; cash: string; liabilities: string; equity: string; income: string; expenses: string };
+};
+
+function envelope<T>(tenantId: string, bookSetId: string, payload: T) {
+  return { schemaVersion: 1 as const, tenantId: tenantId as any, bookSetId: bookSetId as any, requestId: randomUUID(), actor: { kind: "HUMAN" as const, id: "status-test" }, source: "INTERNAL" as const, reason: "company status test", payload };
+}
+
+describe("company.status", () => {
+  let directory: string | undefined;
+
+  afterEach(async () => {
+    if (directory) await rm(directory, { recursive: true, force: true });
+    directory = undefined;
+  });
+
+  async function fixture() {
+    directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-company-status-"));
+    const dbPath = join(directory, "books.sqlite");
+    const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    return { app, dbPath };
+  }
+
+  async function activeTenant(app: Awaited<ReturnType<typeof initializeAndUpgradeSqliteApplication>>, name: string, kind: "COMPANY" | "INDIVIDUAL" = "COMPANY"): Promise<TenantData> {
+    const created = await app.tenant.create({ schemaVersion: 1, tenantId: "bootstrap" as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "status-test" }, source: "INTERNAL", reason: "create status tenant", payload: { kind, name } });
+    const data = JSON.parse(created.resultJson) as TenantData;
+    await app.tenant.activate({ schemaVersion: 1, tenantId: data.tenantId as any, requestId: randomUUID(), actor: { kind: "SYSTEM", id: "status-test" }, source: "INTERNAL", reason: "activate status tenant", payload: { defaultBookSetId: data.defaultBookSetId as any } });
+    return data;
+  }
+
+  it("auto-selects one active tenant and reports balanced ledger, drafts, overdue amounts, and deterministic drill-downs", async () => {
+    const { app } = await fixture();
+    const tenant = await activeTenant(app, "Status Co");
+    const customer = JSON.parse((await app.party.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { displayName: "Customer", role: "CUSTOMER" }))).resultJson).partyId as string;
+    const vendor = JSON.parse((await app.party.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { displayName: "Vendor", role: "VENDOR" }))).resultJson).partyId as string;
+    const draftInvoice = await app.invoice.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { invoiceNumber: "DRAFT-1", customerId: customer, issueDate: "2026-08-01", dueDate: "2026-08-10", lines: [{ description: "Draft", revenueAccountId: tenant.seedAccountIds.income, amountMinor: 500 }] }));
+    expect(JSON.parse(draftInvoice.resultJson).status).toBe("DRAFT");
+    const invoice = await app.invoice.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { invoiceNumber: "POSTED-1", customerId: customer, issueDate: "2026-08-01", dueDate: "2026-08-10", lines: [{ description: "Sale", revenueAccountId: tenant.seedAccountIds.income, amountMinor: 1_000 }] }));
+    await app.invoice.post(envelope(tenant.tenantId, tenant.defaultBookSetId, { invoiceId: JSON.parse(invoice.resultJson).invoiceId, receivableAccountId: tenant.seedAccountIds.assets }));
+    const draftBill = await app.bill.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { billNumber: "DRAFT-BILL", vendorId: vendor, billDate: "2026-08-01", dueDate: "2026-08-10", lines: [{ description: "Draft", expenseAccountId: tenant.seedAccountIds.expenses, amountMinor: 700 }] }));
+    expect(JSON.parse(draftBill.resultJson).status).toBe("DRAFT");
+    const bill = await app.bill.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { billNumber: "POSTED-BILL", vendorId: vendor, billDate: "2026-08-01", dueDate: "2026-08-10", lines: [{ description: "Expense", expenseAccountId: tenant.seedAccountIds.expenses, amountMinor: 2_000 }] }));
+    await app.bill.post(envelope(tenant.tenantId, tenant.defaultBookSetId, { billId: JSON.parse(bill.resultJson).billId, payableAccountId: tenant.seedAccountIds.liabilities }));
+
+    const result = await app.company.status({ asOfDate: "2026-08-23" });
+    expect(result.selectedTenant.tenantId).toBe(tenant.tenantId);
+    expect(result.summaries).toHaveLength(1);
+    const summary = result.summaries[0]!;
+    expect(summary.ledger.isBalanced).toBe(true);
+    expect(summary.receivables).toMatchObject({ count: 1, totalMinor: 1_000, overdue: { count: 1, amountMinor: 1_000 } });
+    expect(summary.payables).toMatchObject({ count: 1, totalMinor: 2_000, overdue: { count: 1, amountMinor: 2_000 } });
+    expect(summary.drafts).toEqual({ invoiceCount: 1, billCount: 1 });
+    expect(summary.cashBank).toEqual({ status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" });
+    expect(result.issues.map((issue) => issue.code)).toEqual(["PAYABLES_OVERDUE", "RECEIVABLES_OVERDUE", "CASH_BANK_UNAVAILABLE"]);
+    expect(result.drillDown.map((entry) => entry.operationId)).toEqual([
+      "ledger.trial-balance", "ledger.balance-sheet", "ledger.profit-and-loss", "invoice.outstanding", "bill.outstanding", "bank-statement.list", "gst.registration.list",
+    ]);
+  });
+
+  it("rejects omitted tenant scope when active tenants are ambiguous without mutation", async () => {
+    const { app } = await fixture();
+    await activeTenant(app, "First");
+    await activeTenant(app, "Second");
+    await expect(app.company.status({ asOfDate: "2026-08-23" })).rejects.toMatchObject({ code: "TENANT_AMBIGUOUS" });
+  });
+
+  it("keeps multiple BookSets separate and reports an unreconciled latest bank statement", async () => {
+    const { app } = await fixture();
+    const tenant = await activeTenant(app, "Books Co", "INDIVIDUAL");
+    const second = await app.bookSet.create({ schemaVersion: 1, tenantId: tenant.tenantId as any, requestId: randomUUID(), actor: { kind: "HUMAN", id: "status-test" }, source: "INTERNAL", reason: "second books", payload: { kind: "PROPRIETORSHIP", displayName: "Second Books" } });
+    const secondBookSetId = JSON.parse(second.resultJson).bookSetId as string;
+    await app.bankStatement.import(envelope(tenant.tenantId, tenant.defaultBookSetId, { bankAccountId: tenant.seedAccountIds.cash, externalStatementId: "statement-1", periodStart: "2026-08-01", periodEnd: "2026-08-23", openingBalanceMinor: 0, closingBalanceMinor: 1_000, rows: [{ lineNumber: 1, transactionDate: "2026-08-10", description: "Unmatched", signedAmountMinor: 1_000 }] }));
+    const result = await app.company.status({ tenantId: tenant.tenantId as any, asOfDate: "2026-08-23" });
+    expect(result.summaries.map((summary) => summary.bookSet.bookSetId)).toEqual([tenant.defaultBookSetId, secondBookSetId].sort());
+    const first = result.summaries.find((summary) => summary.bookSet.bookSetId === tenant.defaultBookSetId)!;
+    expect(first.bankReconciliation.latestByBankAccount[0]).toMatchObject({ matchedCount: 0, unmatchedCount: 1, isReconciled: false });
+    expect(result.issues.some((issue) => issue.code === "BANK_RECONCILIATION_REVIEW")).toBe(true);
+    expect(result.summaries.find((summary) => summary.bookSet.bookSetId === secondBookSetId)!.bankReconciliation.latestByBankAccount).toEqual([]);
+  });
+
+  it("surfaces applicable GST activity and pending ITC review risk without filing claims", async () => {
+    const { app } = await fixture();
+    const tenant = await activeTenant(app, "GST Status Co");
+    const vendor = JSON.parse((await app.party.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { displayName: "GST Vendor", role: "VENDOR" }))).resultJson).partyId as string;
+    const registration = await app.gst.registration.create({ schemaVersion: 1, tenantId: tenant.tenantId as any, requestId: randomUUID(), actor: { kind: "HUMAN", id: "status-test" }, source: "INTERNAL", reason: "status GST registration", payload: { gstin: "27AAPFU0939F1ZV", effectiveFrom: "2026-01-01" } });
+    const registrationId = JSON.parse(registration.resultJson).registrationId as string;
+    const profile = await app.gst.partyProfile.create(envelope(tenant.tenantId, tenant.defaultBookSetId, { partyId: vendor, gstin: "27AAPFU0939F1ZV", treatment: "REGISTERED", stateCode: "27", effectiveFrom: "2026-01-01" }));
+    const profileId = JSON.parse(profile.resultJson).profileId as string;
+    const bill = await app.bill.create(envelope(tenant.tenantId, tenant.defaultBookSetId, {
+      billNumber: "GST-PENDING",
+      vendorId: vendor,
+      billDate: "2026-08-01",
+      lines: [{ description: "Taxable purchase", expenseAccountId: tenant.seedAccountIds.expenses, amountMinor: 10_000 }],
+      gst: { buyerRegistrationId: registrationId, buyerGstin: "27AAPFU0939F1ZV", sellerProfileId: profileId, sellerGstin: "27AAPFU0939F1ZV", localComponent: "SGST", itcTreatment: "PENDING_REVIEW", lines: [{ lineNumber: 1, classification: "9983", rateBps: 1800, evidenceIds: ["evidence-1"] }] },
+    }));
+    await app.bill.post(envelope(tenant.tenantId, tenant.defaultBookSetId, { billId: JSON.parse(bill.resultJson).billId, payableAccountId: tenant.seedAccountIds.liabilities }));
+    const summary = (await app.company.status({ tenantId: tenant.tenantId as any, asOfDate: "2026-08-23" })).summaries[0]!;
+    expect(summary.gst.registrationsApplicableAsOf.count).toBe(1);
+    expect(summary.gst.postedPurchaseActivity).toEqual({ count: 1, taxMinor: 1_800 });
+    expect(summary.gst.pendingReviewItc).toEqual({ count: 1, amountMinor: 1_800, risk: "REVIEW_REQUIRED" });
+  });
+});
