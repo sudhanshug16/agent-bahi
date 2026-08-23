@@ -40,7 +40,7 @@ describe("Purchase V7 migration", () => {
 
     await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite"), cliVersion: "test", buildId: "v7" });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0020_close_pack_v1" });
+    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0021_personal_taxcase_foundation_v1" });
     expect(native.query("SELECT name FROM pragma_table_info('parties') WHERE name = 'party_role'").get()).toEqual({ name: "party_role" });
     expect(native.query("SELECT COUNT(*) AS count FROM vendor_bills").get()).toEqual({ count: 0n });
     expect(native.query("SELECT COUNT(*) AS count FROM bank_statements").get()).toEqual({ count: 0n });
@@ -64,7 +64,7 @@ describe("Purchase V7 migration", () => {
     await db.close();
     await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite"), cliVersion: "test", buildId: "v8" });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0020_close_pack_v1" });
+    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0021_personal_taxcase_foundation_v1" });
     expect(native.query("SELECT COUNT(*) AS count FROM bank_matches").get()).toEqual({ count: 0n });
     native.close();
   });

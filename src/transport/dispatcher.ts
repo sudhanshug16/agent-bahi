@@ -175,6 +175,9 @@ const handlers: Record<string, Handler> = {
   "report.close-pack.export": (facade, input) => facade.closePack.export(input as never),
   "report.close-pack.get": (facade, input) => facade.closePack.getManifest(tenantId(input), bookSetId(input), text(input, "manifestId")),
   "report.close-pack.section": (facade, input) => facade.closePack.getSection(tenantId(input), bookSetId(input), text(input, "manifestId"), text(input, "sectionName")),
+  "tax-case.create": (facade, input) => facade.taxCase.create(input as never),
+  "tax-case.membership.refresh": (facade, input) => facade.taxCase.membershipRefresh(input as never),
+  "tax-case.status": (facade, input) => facade.taxCase.status(tenantId(input), text(input, "taxCaseId")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

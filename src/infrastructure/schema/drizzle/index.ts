@@ -1,5 +1,5 @@
 /**
- * Drizzle ORM schema index: All v8 production tables and their typed definitions.
+ * Drizzle ORM schema index: All production tables and their typed definitions.
  * This module is the single source of truth for the Drizzle schema.
  * Fresh database initialization and future migrations use only Drizzle artifacts.
  */
@@ -115,3 +115,6 @@ export { periodCloseEvents } from "./period-close-schema";
 
 // Close Pack V1
 export { closePackManifests, closePackSections, closePackBodies } from "./close-pack-schema";
+
+// Personal TaxCase foundation V1
+export { bookSetLedgerRevisions, taxCases, taxCaseMembershipVersions, taxCaseMemberships } from "./personal-taxcase-schema";

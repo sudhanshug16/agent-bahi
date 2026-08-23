@@ -25,7 +25,7 @@ import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, typ
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
 import { expectedSqliteCatalog, sqliteCatalogMatches } from "./sqlite-catalog-validator.ts";
-import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_MIGRATION_ID, DRIZZLE_TENANT_PAN_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournalPrefix } from "./drizzle-baseline.ts";
+import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_MIGRATION_ID, DRIZZLE_TENANT_PAN_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, DRIZZLE_CLOSE_PACK_V1_HASH, officialDrizzleJournal, validateOfficialDrizzleJournalPrefix } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -374,10 +374,11 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
     const journalRows = queryRows<Record<string, unknown>>(db, `SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`);
     try { validateOfficialDrizzleJournalPrefix(journalRows); } catch { throw new DomainError("BACKUP_HISTORY_MISMATCH", "Official Drizzle migration journal is not exact"); }
     const current = journalRows.length === officialDrizzleJournal().length;
-    const priorCurrent = journalRows.length === officialDrizzleJournal().length - 1 && String(journalRows.at(-1)?.hash) === DRIZZLE_TENANT_PAN_V1_HASH;
-    const previousPriorCurrent = journalRows.length === officialDrizzleJournal().length - 2 && String(journalRows.at(-1)?.hash) === DRIZZLE_PERIOD_CLOSE_V1_HASH;
+    const priorCurrent = journalRows.length === officialDrizzleJournal().length - 1 && String(journalRows.at(-1)?.hash) === DRIZZLE_CLOSE_PACK_V1_HASH;
+    const previousPriorCurrent = journalRows.length === officialDrizzleJournal().length - 2 && String(journalRows.at(-1)?.hash) === DRIZZLE_TENANT_PAN_V1_HASH;
+    const periodClosePriorCurrent = journalRows.length === officialDrizzleJournal().length - 3 && String(journalRows.at(-1)?.hash) === DRIZZLE_PERIOD_CLOSE_V1_HASH;
     const legacyPriorCurrent = journalRows.length === 8 && String(journalRows.at(-1)?.hash) === DRIZZLE_GST_RETURN_READINESS_V1_HASH;
-    controlRecord = drizzleControlRecord(db, current, state.state === "DRIZZLE_BRIDGED", priorCurrent, legacyPriorCurrent, previousPriorCurrent);
+    controlRecord = drizzleControlRecord(db, current, state.state === "DRIZZLE_BRIDGED", priorCurrent, legacyPriorCurrent, previousPriorCurrent, periodClosePriorCurrent);
     history = canonicalHash(journalRows);
   } else {
     const port = readonlyPort(db);
@@ -472,15 +473,15 @@ function looseControlRecord(db: BunDatabase): DatabaseControlRecord {
   };
 }
 
-function drizzleControlRecord(db: BunDatabase, current = true, bridged = false, priorCurrent = false, legacyPriorCurrent = false, previousPriorCurrent = false): DatabaseControlRecord {
+function drizzleControlRecord(db: BunDatabase, current = true, bridged = false, priorCurrent = false, legacyPriorCurrent = false, previousPriorCurrent = false, periodClosePriorCurrent = false): DatabaseControlRecord {
   const row = db.prepare(`SELECT schema_version, data_format_version,
     reader_compatibility_min, reader_compatibility_max, required_writer_protocol,
     state, revision, generation, last_migration_id, last_migration_checksum,
     last_writer_cli_version, last_writer_build_id, last_writer_at, created_at,
     updated_at, recovery_reason FROM database_control WHERE id = 1`).get() as Record<string, unknown> | undefined;
   const legacyLast = CURRENT_SCHEMA_MANIFEST.migrations.at(-1)!;
-  const expectedId = priorCurrent ? DRIZZLE_TENANT_PAN_V1_MIGRATION_ID : previousPriorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID : current ? DRIZZLE_GST_MIGRATION_ID : bridged ? legacyLast.id : DRIZZLE_BASELINE_MIGRATION_ID;
-  const expectedHash = priorCurrent ? DRIZZLE_TENANT_PAN_V1_HASH : previousPriorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_HASH : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_HASH : current ? DRIZZLE_GST_HASH : bridged ? legacyLast.checksum : DRIZZLE_BASELINE_HASH;
+  const expectedId = priorCurrent ? DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID : previousPriorCurrent ? DRIZZLE_TENANT_PAN_V1_MIGRATION_ID : periodClosePriorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID : current ? DRIZZLE_GST_MIGRATION_ID : bridged ? legacyLast.id : DRIZZLE_BASELINE_MIGRATION_ID;
+  const expectedHash = priorCurrent ? DRIZZLE_CLOSE_PACK_V1_HASH : previousPriorCurrent ? DRIZZLE_TENANT_PAN_V1_HASH : periodClosePriorCurrent ? DRIZZLE_PERIOD_CLOSE_V1_HASH : legacyPriorCurrent ? DRIZZLE_GST_RETURN_READINESS_V1_HASH : current ? DRIZZLE_GST_HASH : bridged ? legacyLast.checksum : DRIZZLE_BASELINE_HASH;
   if (!row || safeInteger(row.schema_version) !== 8
     || safeInteger(row.data_format_version) !== 1
     || safeInteger(row.reader_compatibility_min) !== 1

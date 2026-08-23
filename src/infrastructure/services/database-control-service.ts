@@ -4,7 +4,7 @@ import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
-import { DRIZZLE_CLOSE_PACK_V1_HASH, DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 import { expectedSqliteCatalog, sqliteCatalogMatches, type SqliteCatalogRow } from "./sqlite-catalog-validator.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -153,8 +153,8 @@ export class DatabaseControlService {
           const drizzleManifest: SqliteSchemaManifest = {
             ...KNOWN_SCHEMA_MANIFESTS.find((manifest) => manifest.schemaVersion === 8)!,
             migrations: Object.freeze([{
-              id: DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
-              checksum: DRIZZLE_CLOSE_PACK_V1_HASH,
+              id: DRIZZLE_GST_MIGRATION_ID,
+              checksum: DRIZZLE_GST_HASH,
               dialect: "sqlite",
               status: "APPLIED",
             }]),
@@ -185,8 +185,8 @@ export class DatabaseControlService {
           const drizzleManifest: SqliteSchemaManifest = {
             ...expectedManifest,
             migrations: Object.freeze([{
-              id: DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
-              checksum: DRIZZLE_CLOSE_PACK_V1_HASH,
+              id: DRIZZLE_GST_MIGRATION_ID,
+              checksum: DRIZZLE_GST_HASH,
               dialect: "sqlite",
               status: "APPLIED",
             }]),

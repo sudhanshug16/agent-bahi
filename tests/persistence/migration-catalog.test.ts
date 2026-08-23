@@ -108,9 +108,9 @@ describe("SQLite migration catalog", () => {
       expect(() => native.query("SELECT COUNT(*) as count FROM schema_migrations").get()).toThrow();
       // Should have the official Drizzle migration journal
       expect(native.query("SELECT COUNT(*) as count FROM __drizzle_migrations").get()).toEqual({
-        count: 12n,
+        count: 13n,
       });
-      expect(detectDatabaseState(native)).toMatchObject({ state: "DRIZZLE_MANAGED", schemaVersion: 8, drizzleMigrationCount: 12 });
+      expect(detectDatabaseState(native)).toMatchObject({ state: "DRIZZLE_MANAGED", schemaVersion: 8, drizzleMigrationCount: 13 });
       expect(native.query("SELECT schema_version FROM database_control").get()).toEqual({ schema_version: 8n });
       native.close();
     } finally {
@@ -127,8 +127,8 @@ describe("SQLite migration catalog", () => {
     try {
       await initializeSqliteDatabase(dbPath, { cliVersion: "test", buildId: "close-pack-migration" });
       const downgradeFixture = new BunDatabase(dbPath, { safeIntegers: true });
-      downgradeFixture.exec("DROP TABLE close_pack_bodies; DROP TABLE close_pack_sections; DROP TABLE close_pack_manifests");
-      downgradeFixture.query("DELETE FROM __drizzle_migrations WHERE created_at = (SELECT MAX(created_at) FROM __drizzle_migrations)").run();
+      downgradeFixture.exec("DROP TRIGGER journal_entries_ledger_revision_advance; DROP TRIGGER book_sets_ledger_revision_init; DROP TRIGGER tax_case_memberships_no_delete; DROP TRIGGER tax_case_memberships_no_update; DROP TRIGGER tax_case_membership_versions_no_delete; DROP TRIGGER tax_case_membership_versions_no_update; DROP TRIGGER tax_cases_no_delete; DROP TABLE tax_case_memberships; DROP TABLE tax_case_membership_versions; DROP TABLE tax_cases; DROP TABLE book_set_ledger_revisions; DROP TABLE close_pack_bodies; DROP TABLE close_pack_sections; DROP TABLE close_pack_manifests");
+      downgradeFixture.query("DELETE FROM __drizzle_migrations WHERE created_at >= (SELECT created_at FROM __drizzle_migrations WHERE id = 12)").run();
       downgradeFixture.query("UPDATE database_control SET last_migration_id = ?, last_migration_checksum = ? WHERE id = 1").run("0019_tenant_pan_v1", DRIZZLE_TENANT_PAN_V1_HASH);
       downgradeFixture.close();
 
@@ -141,8 +141,8 @@ describe("SQLite migration catalog", () => {
 
       await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "upgrade-invocation.sqlite"), cliVersion: "test", buildId: "close-pack-upgrade" });
       const current = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-      expect(detectDatabaseState(current)).toMatchObject({ state: "DRIZZLE_MANAGED", schemaVersion: 8, drizzleMigrationCount: 12 });
-      expect(current.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 12n });
+      expect(detectDatabaseState(current)).toMatchObject({ state: "DRIZZLE_MANAGED", schemaVersion: 8, drizzleMigrationCount: 13 });
+      expect(current.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 13n });
       expect(current.query("SELECT COUNT(*) AS count FROM close_pack_manifests").get()).toEqual({ count: 0n });
       current.close();
 
@@ -150,8 +150,8 @@ describe("SQLite migration catalog", () => {
       expect(await backupService.verifyBackup(currentBackupPath)).toBe(true);
       expect(await backupService.restoreFromBackup(currentBackupPath, restoredPath)).toBe(true);
       const restored = new BunDatabase(restoredPath, { readonly: true, safeIntegers: true });
-      expect(detectDatabaseState(restored)).toMatchObject({ state: "DRIZZLE_MANAGED", schemaVersion: 8, drizzleMigrationCount: 12 });
-      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 12n });
+      expect(detectDatabaseState(restored)).toMatchObject({ state: "DRIZZLE_MANAGED", schemaVersion: 8, drizzleMigrationCount: 13 });
+      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 13n });
       restored.close();
     } finally {
       await rm(directory, { recursive: true, force: true });

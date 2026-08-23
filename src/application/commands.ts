@@ -11,6 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh";
 
 export interface Actor {
   kind: ActorKind;
@@ -56,6 +57,20 @@ export interface TenantPanSetPayload {
   expectedCurrentHash?: string;
   reason?: string;
   confirm?: boolean;
+}
+
+export interface TaxCaseCreatePayload {
+  taxCaseId: string;
+  financialYear: string;
+  taxPeriod: string;
+  filingTrigger: string;
+  caseSequence?: number;
+  bookSetIds: string[];
+}
+
+export interface TaxCaseMembershipRefreshPayload {
+  taxCaseId: string;
+  bookSetIds?: string[];
 }
 
 export interface CommandResult<T> {

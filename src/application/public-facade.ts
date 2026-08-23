@@ -34,6 +34,8 @@ import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot
 import { PeriodCloseService, type PeriodClosePayload, type PeriodReopenPayload, type PeriodPlan, type PeriodEventResult } from "./services/period-close-service.ts";
 import { ClosePackService, type ClosePackExportPayload, type ClosePackExportResult, type ClosePackManifest } from "./services/close-pack-service.ts";
 import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
+import { createTaxCase, refreshTaxCaseMembership, taxCaseStatus, type TaxCaseStatus } from "./services/tax-case-service.ts";
+import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload } from "./commands.ts";
 
 /**
  * Read-only tenant operations
@@ -216,6 +218,12 @@ export interface ClosePackOperations {
   getSection(tenantId: TenantId, bookSetId: BookSetId, manifestId: string, sectionName: string): Promise<string | null>;
 }
 
+export interface TaxCaseOperations {
+  create(envelope: CommandEnvelope<TaxCaseCreatePayload>): Promise<CommandResult<Record<string, unknown>>>;
+  membershipRefresh(envelope: CommandEnvelope<TaxCaseMembershipRefreshPayload>): Promise<CommandResult<Record<string, unknown>>>;
+  status(tenantId: TenantId, taxCaseId: string): Promise<TaxCaseStatus>;
+}
+
 /**
  * Public application facade: typed read and command interfaces.
  * No raw service mutators or persistence handles escape.
@@ -245,6 +253,7 @@ export type PublicApplicationFacade = {
   compliance: ComplianceOperations;
   periodClose: PeriodCloseOperations;
   closePack: ClosePackOperations;
+  taxCase: TaxCaseOperations;
 };
 
 /**
@@ -390,6 +399,11 @@ export function createPublicFacade(
       export: (envelope) => closePackService.export(envelope),
       getManifest: (tenantId, bookSetId, manifestId) => closePackService.getManifest(tenantId, bookSetId, manifestId),
       getSection: (tenantId, bookSetId, manifestId, sectionName) => closePackService.getSection(tenantId, bookSetId, manifestId, sectionName),
+    },
+    taxCase: {
+      create: (envelope) => createTaxCase(sessionRunner, envelope),
+      membershipRefresh: (envelope) => refreshTaxCaseMembership(sessionRunner, envelope),
+      status: (tenantId, taxCaseId) => taxCaseStatus(sessionRunner, tenantId, taxCaseId),
     },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },
