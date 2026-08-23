@@ -200,6 +200,15 @@ const handlers: Record<string, Handler> = {
   "tax-case.position.generate": (facade, input) => facade.taxCase.position.generate(input as never),
   "tax-case.position.show": (facade, input) => facade.taxCase.position.show(tenantId(input), text(input, "taxCaseId"), text(input, "worksheetId")),
   "tax-case.position.status": (facade, input) => facade.taxCase.position.status(tenantId(input), text(input, "taxCaseId"), text(input, "worksheetId")),
+  "tax-authority.pack.register": (facade, input) => facade.taxAuthority.pack.register(input as never),
+  "tax-authority.pack.verify": (facade, input) => facade.taxAuthority.pack.verify(input as never),
+  "tax-authority.pack.reject": (facade, input) => facade.taxAuthority.pack.reject(input as never),
+  "tax-authority.pack.show": (facade, input) => facade.taxAuthority.pack.show(text(input, "packId")),
+  "tax-case.eligibility-facts.record": (facade, input) => facade.taxCase.eligibilityFacts.record(input as never),
+  "tax-case.itr-eligibility.evaluate": (facade, input) => facade.taxCase.itrEligibility.evaluate(input as never),
+  "tax-case.itr-eligibility.show": (facade, input) => facade.taxCase.itrEligibility.show(tenantId(input), text(input, "taxCaseId"), text(input, "evaluationId")),
+  "tax-case.itr-form.select": (facade, input) => facade.taxCase.itrForm.select(input as never),
+  "tax-case.itr-form.status": (facade, input) => facade.taxCase.itrForm.status(tenantId(input), text(input, "taxCaseId"), optionalText(input, "selectionId")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

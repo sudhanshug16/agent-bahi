@@ -11,7 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
-export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate" | "tax-authority.pack.register" | "tax-authority.pack.verify" | "tax-authority.pack.reject" | "tax-case.eligibility-facts.record" | "tax-case.itr-eligibility.evaluate" | "tax-case.itr-form.select";
 
 export interface Actor {
   kind: ActorKind;
@@ -137,6 +137,22 @@ export interface TaxCaseSourceAssessmentPreparePayload {
   outcomeCandidate: TaxCaseSourceAssessmentOutcome; supersedesAssessmentId?: string; assessmentId?: string;
 }
 export interface TaxCaseSourceAssessmentDecisionPayload { taxCaseId: string; sourceId: string; assessmentId: string; expectedAssessmentHash: string; reason: string; }
+
+export type ItrEligibilityValueType = "BOOLEAN" | "STRING" | "INTEGER_MINOR";
+export type ItrEligibilityProvenanceKind = "WORKSHEET_DERIVED" | "HUMAN_ASSERTION" | "AGENT_ASSERTION";
+export interface AuthorityArtifactReference { kind: "LAW" | "RULES" | "SCHEMA" | "INSTRUCTION"; sourceUrl: string; sourceTitle: string; officialReleaseIdentifier: string; officialReleaseDate: string; sha256: string; }
+export interface AuthorityPackRegisterPayload {
+  packId?: string; jurisdiction: "IN"; authority: "INCOME_TAX"; financialYear: string; assessmentYear: string; filingTypes: string[];
+  effectiveFrom: string; effectiveTo?: string; releasedAt: string; releaseIdentifier: string; artifactReferences: AuthorityArtifactReference[];
+  packVersion: string; candidateForms: string[]; ruleAst: unknown; canonicalHash?: string; supersedesPackId?: string;
+}
+export interface AuthorityPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface TaxCaseEligibilityFactRecordPayload {
+  taxCaseId: string; filingSnapshotId: string; worksheetId: string; snapshotCandidateHash: string; worksheetOutputHash: string;
+  fieldName: string; valueType: ItrEligibilityValueType; value: boolean | string; provenanceKind: ItrEligibilityProvenanceKind; provenance?: Record<string, unknown>; factId?: string;
+}
+export interface TaxCaseItrEligibilityEvaluatePayload { taxCaseId: string; filingSnapshotId: string; worksheetId: string; packId: string; }
+export interface TaxCaseItrFormSelectPayload { taxCaseId: string; evaluationId: string; expectedEvaluationHash: string; selectedForm: string; }
 
 export interface CommandResult<T> {
   resultJson: string;

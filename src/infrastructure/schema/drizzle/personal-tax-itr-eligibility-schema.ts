@@ -1,0 +1,185 @@
+import { sqliteTable, text, integer, foreignKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { tenants } from "./foundation-schema";
+import { taxCases, filingSnapshots, personalTaxPositionWorksheets } from "./personal-taxcase-schema";
+
+/** Global, source-linked authority material. It is deliberately not tenant-owned. */
+export const personalTaxAuthorityPacks = sqliteTable(
+  "personal_tax_authority_packs",
+  {
+    id: text("id").primaryKey(),
+    jurisdiction: text("jurisdiction").notNull(),
+    authority: text("authority").notNull(),
+    financialYear: text("financial_year").notNull(),
+    assessmentYear: text("assessment_year").notNull(),
+    filingTypesJson: text("filing_types_json").notNull(),
+    effectiveFrom: text("effective_from").notNull(),
+    effectiveTo: text("effective_to"),
+    releasedAt: text("released_at").notNull(),
+    releaseIdentifier: text("release_identifier").notNull(),
+    artifactReferencesJson: text("artifact_references_json").notNull(),
+    packVersion: text("pack_version").notNull(),
+    candidateFormsJson: text("candidate_forms_json").notNull(),
+    ruleAstJson: text("rule_ast_json").notNull(),
+    canonicalHash: text("canonical_hash").notNull(),
+    lifecycle: text("lifecycle").notNull().default("PROPOSED"),
+    supersedesPackId: text("supersedes_pack_id"),
+    createdAt: text("created_at").notNull(),
+    createdByActorKind: text("created_by_actor_kind").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+  },
+  (table) => ({
+    uqHash: uniqueIndex("uq_personal_tax_authority_packs_hash").on(table.canonicalHash),
+    uqVersion: uniqueIndex("uq_personal_tax_authority_packs_identity").on(table.jurisdiction, table.authority, table.financialYear, table.assessmentYear, table.packVersion),
+    fkSupersedes: foreignKey({ columns: [table.supersedesPackId], foreignColumns: [table.id] }).onDelete("no action"),
+    idxApplicable: index("idx_personal_tax_authority_packs_applicable").on(table.jurisdiction, table.authority, table.financialYear, table.assessmentYear, table.lifecycle),
+    chkScope: check("chk_personal_tax_authority_packs_scope", sql`${table.jurisdiction} = 'IN' AND ${table.authority} = 'INCOME_TAX'`),
+    chkLifecycle: check("chk_personal_tax_authority_packs_lifecycle", sql`${table.lifecycle} IN ('PROPOSED', 'HUMAN_VERIFIED', 'REJECTED')`),
+    chkActor: check("chk_personal_tax_authority_packs_actor", sql`${table.createdByActorKind} IN ('AGENT', 'HUMAN') AND length(trim(${table.createdByActorId})) > 0`),
+    chkHash: check("chk_personal_tax_authority_packs_hash", sql`length(${table.canonicalHash}) = 64 AND ${table.canonicalHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+export const personalTaxAuthorityPackEvents = sqliteTable(
+  "personal_tax_authority_pack_events",
+  {
+    id: text("id").primaryKey(),
+    packId: text("pack_id").notNull(),
+    eventType: text("event_type").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    reason: text("reason").notNull(),
+    expectedPackHash: text("expected_pack_hash").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkPack: foreignKey({ columns: [table.packId], foreignColumns: [personalTaxAuthorityPacks.id] }).onDelete("no action"),
+    uqRequest: uniqueIndex("uq_personal_tax_authority_pack_events_request").on(table.requestId),
+    idxPack: index("idx_personal_tax_authority_pack_events_pack").on(table.packId, table.createdAt, table.id),
+    chkType: check("chk_personal_tax_authority_pack_event_type", sql`${table.eventType} IN ('REGISTERED', 'HUMAN_VERIFIED', 'REJECTED', 'SUPERSEDED')`),
+    chkActor: check("chk_personal_tax_authority_pack_event_actor", sql`${table.actorKind} IN ('AGENT', 'HUMAN') AND length(trim(${table.actorId})) > 0 AND (${table.eventType} IN ('REGISTERED', 'SUPERSEDED') OR ${table.actorKind} = 'HUMAN')`),
+    chkHashes: check("chk_personal_tax_authority_pack_event_hashes", sql`length(${table.expectedPackHash}) = 64 AND ${table.expectedPackHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.requestHash}) = 64 AND ${table.requestHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+/** Tenant-scoped facts bound to one exact snapshot and one exact worksheet. */
+export const taxCaseItrEligibilityFacts = sqliteTable(
+  "tax_case_itr_eligibility_facts",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    filingSnapshotId: text("filing_snapshot_id").notNull(),
+    snapshotCandidateHash: text("snapshot_candidate_hash").notNull(),
+    worksheetId: text("worksheet_id").notNull(),
+    worksheetOutputHash: text("worksheet_output_hash").notNull(),
+    fieldName: text("field_name").notNull(),
+    valueType: text("value_type").notNull(),
+    valueJson: text("value_json").notNull(),
+    provenanceKind: text("provenance_kind").notNull(),
+    provenanceJson: text("provenance_json").notNull(),
+    verificationState: text("verification_state").notNull().default("UNVERIFIED"),
+    createdAt: text("created_at").notNull(),
+    createdByActorKind: text("created_by_actor_kind").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+  },
+  (table) => ({
+    fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    fkCase: foreignKey({ columns: [table.taxCaseId, table.tenantId], foreignColumns: [taxCases.id, taxCases.tenantId] }).onDelete("no action"),
+    fkSnapshot: foreignKey({ columns: [table.filingSnapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    fkWorksheet: foreignKey({ columns: [table.worksheetId, table.tenantId, table.taxCaseId], foreignColumns: [personalTaxPositionWorksheets.id, personalTaxPositionWorksheets.tenantId, personalTaxPositionWorksheets.taxCaseId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_tax_case_itr_eligibility_facts_id_scope").on(table.id, table.tenantId, table.taxCaseId),
+    idxFacts: index("idx_tax_case_itr_eligibility_facts_scope").on(table.tenantId, table.taxCaseId, table.filingSnapshotId, table.worksheetId, table.fieldName, table.createdAt),
+    chkHashes: check("chk_tax_case_itr_eligibility_fact_hashes", sql`length(${table.snapshotCandidateHash}) = 64 AND ${table.snapshotCandidateHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.worksheetOutputHash}) = 64 AND ${table.worksheetOutputHash} NOT GLOB '*[^0-9a-f]*'`),
+    chkType: check("chk_tax_case_itr_eligibility_fact_type", sql`${table.valueType} IN ('BOOLEAN', 'STRING', 'INTEGER_MINOR')`),
+    chkProvenance: check("chk_tax_case_itr_eligibility_fact_provenance", sql`${table.provenanceKind} IN ('WORKSHEET_DERIVED', 'HUMAN_ASSERTION', 'AGENT_ASSERTION') AND ${table.verificationState} IN ('UNVERIFIED', 'HUMAN_VERIFIED')`),
+    chkActor: check("chk_tax_case_itr_eligibility_fact_actor", sql`${table.createdByActorKind} IN ('AGENT', 'HUMAN') AND length(trim(${table.createdByActorId})) > 0`),
+  }),
+);
+
+export const taxCaseItrEligibilityFactEvents = sqliteTable(
+  "tax_case_itr_eligibility_fact_events",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    factId: text("fact_id").notNull(),
+    eventType: text("event_type").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    reason: text("reason").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkFact: foreignKey({ columns: [table.factId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseItrEligibilityFacts.id, taxCaseItrEligibilityFacts.tenantId, taxCaseItrEligibilityFacts.taxCaseId] }).onDelete("no action"),
+    uqRequest: uniqueIndex("uq_tax_case_itr_eligibility_fact_events_request").on(table.tenantId, table.requestId),
+    idxFact: index("idx_tax_case_itr_eligibility_fact_events_fact").on(table.tenantId, table.taxCaseId, table.factId, table.createdAt),
+    chkType: check("chk_tax_case_itr_eligibility_fact_event_type", sql`${table.eventType} IN ('PROPOSED', 'HUMAN_CONFIRMED', 'REJECTED')`),
+    chkActor: check("chk_tax_case_itr_eligibility_fact_event_actor", sql`${table.actorKind} IN ('AGENT', 'HUMAN') AND length(trim(${table.actorId})) > 0 AND (${table.eventType} = 'PROPOSED' OR ${table.actorKind} = 'HUMAN')`),
+    chkHash: check("chk_tax_case_itr_eligibility_fact_event_hash", sql`length(${table.requestHash}) = 64 AND ${table.requestHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+export const taxCaseItrEligibilityEvaluations = sqliteTable(
+  "tax_case_itr_eligibility_evaluations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    packId: text("pack_id").notNull(),
+    packHash: text("pack_hash").notNull(),
+    filingSnapshotId: text("filing_snapshot_id").notNull(),
+    snapshotCandidateHash: text("snapshot_candidate_hash").notNull(),
+    worksheetId: text("worksheet_id").notNull(),
+    worksheetOutputHash: text("worksheet_output_hash").notNull(),
+    factSetHash: text("fact_set_hash").notNull(),
+    resultsJson: text("results_json").notNull(),
+    evaluationHash: text("evaluation_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    createdByActorKind: text("created_by_actor_kind").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+  },
+  (table) => ({
+    fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    fkCase: foreignKey({ columns: [table.taxCaseId, table.tenantId], foreignColumns: [taxCases.id, taxCases.tenantId] }).onDelete("no action"),
+    fkPack: foreignKey({ columns: [table.packId], foreignColumns: [personalTaxAuthorityPacks.id] }).onDelete("no action"),
+    fkSnapshot: foreignKey({ columns: [table.filingSnapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    fkWorksheet: foreignKey({ columns: [table.worksheetId, table.tenantId, table.taxCaseId], foreignColumns: [personalTaxPositionWorksheets.id, personalTaxPositionWorksheets.tenantId, personalTaxPositionWorksheets.taxCaseId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_tax_case_itr_eligibility_evaluations_id_scope").on(table.id, table.tenantId, table.taxCaseId),
+    idxCase: index("idx_tax_case_itr_eligibility_evaluations_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    chkHashes: check("chk_tax_case_itr_eligibility_evaluation_hashes", sql`length(${table.packHash}) = 64 AND ${table.packHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.snapshotCandidateHash}) = 64 AND ${table.snapshotCandidateHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.worksheetOutputHash}) = 64 AND ${table.worksheetOutputHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.factSetHash}) = 64 AND ${table.factSetHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.evaluationHash}) = 64 AND ${table.evaluationHash} NOT GLOB '*[^0-9a-f]*'`),
+    chkActor: check("chk_tax_case_itr_eligibility_evaluation_actor", sql`${table.createdByActorKind} IN ('AGENT', 'HUMAN') AND length(trim(${table.createdByActorId})) > 0`),
+  }),
+);
+
+export const taxCaseItrFormSelections = sqliteTable(
+  "tax_case_itr_form_selections",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    evaluationId: text("evaluation_id").notNull(),
+    expectedEvaluationHash: text("expected_evaluation_hash").notNull(),
+    selectedForm: text("selected_form").notNull(),
+    packHash: text("pack_hash").notNull(),
+    snapshotCandidateHash: text("snapshot_candidate_hash").notNull(),
+    worksheetOutputHash: text("worksheet_output_hash").notNull(),
+    factSetHash: text("fact_set_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+  },
+  (table) => ({
+    fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    fkCase: foreignKey({ columns: [table.taxCaseId, table.tenantId], foreignColumns: [taxCases.id, taxCases.tenantId] }).onDelete("no action"),
+    fkEvaluation: foreignKey({ columns: [table.evaluationId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseItrEligibilityEvaluations.id, taxCaseItrEligibilityEvaluations.tenantId, taxCaseItrEligibilityEvaluations.taxCaseId] }).onDelete("no action"),
+    uqRequest: uniqueIndex("uq_tax_case_itr_form_selections_request").on(table.tenantId, table.requestId),
+    idxCase: index("idx_tax_case_itr_form_selections_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    chkHashes: check("chk_tax_case_itr_form_selection_hashes", sql`length(${table.expectedEvaluationHash}) = 64 AND ${table.expectedEvaluationHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.packHash}) = 64 AND ${table.packHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.snapshotCandidateHash}) = 64 AND ${table.snapshotCandidateHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.worksheetOutputHash}) = 64 AND ${table.worksheetOutputHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.factSetHash}) = 64 AND ${table.factSetHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.requestHash}) = 64 AND ${table.requestHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);

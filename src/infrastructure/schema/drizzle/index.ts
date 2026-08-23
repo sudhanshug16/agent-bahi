@@ -118,3 +118,6 @@ export { closePackManifests, closePackSections, closePackBodies } from "./close-
 
 // Personal TaxCase foundation V1
 export { bookSetLedgerRevisions, taxCases, taxCaseMembershipVersions, taxCaseMemberships, personalTaxSourceArtifacts, taxCaseExternalSources, taxCaseSourceArtifacts, taxCaseFacts, taxCaseFactEvents, taxCaseFactReconciliations, filingSnapshots, filingSnapshotBookSets, filingSnapshotSources, filingSnapshotFacts, filingSnapshotReconciliations, personalTaxPositionWorksheets, taxCaseSourceAssessments, taxCaseSourceAssessmentEvents } from "./personal-taxcase-schema";
+
+// Personal Tax Authority Pack + ITR Eligibility V1
+export { personalTaxAuthorityPacks, personalTaxAuthorityPackEvents, taxCaseItrEligibilityFacts, taxCaseItrEligibilityFactEvents, taxCaseItrEligibilityEvaluations, taxCaseItrFormSelections } from "./personal-tax-itr-eligibility-schema";
