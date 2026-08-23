@@ -21,8 +21,6 @@ CREATE TABLE `gst_outward_facts` (
   CONSTRAINT `chk_gst_outward_facts_ecommerce_gstin` CHECK(`ecommerce_gstin` IS NULL OR length(`ecommerce_gstin`) = 15)
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_outward_facts_scope_key` ON `gst_outward_facts` (`id`,`tenant_id`,`book_set_id`);
---> statement-breakpoint
 CREATE UNIQUE INDEX `uq_gst_outward_facts_invoice` ON `gst_outward_facts` (`invoice_id`,`tenant_id`,`book_set_id`);
 --> statement-breakpoint
 CREATE INDEX `idx_gst_outward_facts_scope` ON `gst_outward_facts` (`tenant_id`,`book_set_id`,`invoice_id`);
@@ -48,8 +46,6 @@ CREATE TABLE `gst_outward_line_facts` (
   CONSTRAINT `chk_gst_line_facts_quantity` CHECK(`quantity_decimal` IS NULL OR (typeof(`quantity_decimal`) = 'text' AND length(`quantity_decimal`) > 0))
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_line_facts_scope_key` ON `gst_outward_line_facts` (`id`,`tenant_id`,`book_set_id`);
---> statement-breakpoint
 CREATE UNIQUE INDEX `uq_gst_line_facts_line_number` ON `gst_outward_line_facts` (`outward_facts_id`,`line_number`);
 --> statement-breakpoint
 CREATE INDEX `idx_gst_line_facts_scope` ON `gst_outward_line_facts` (`tenant_id`,`book_set_id`,`outward_facts_id`);
@@ -72,8 +68,6 @@ CREATE TABLE `gst_returns` (
   CONSTRAINT `chk_gst_return_period_order` CHECK(`tax_period_from` <= `tax_period_to`),
   CONSTRAINT `chk_gst_return_gstin` CHECK(length(`gstin`) = 15)
 );
---> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_returns_scope_key` ON `gst_returns` (`id`,`tenant_id`,`book_set_id`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `uq_gst_return_registration_period` ON `gst_returns` (`registration_id`,`return_form`,`tax_period_from`,`tax_period_to`);
 --> statement-breakpoint
@@ -98,8 +92,6 @@ CREATE TABLE `gst_return_snapshots` (
   CONSTRAINT `chk_gst_snapshot_hashes` CHECK(length(`request_hash`) = 64 AND length(`payload_hash`) = 64 AND `request_hash` NOT GLOB '*[^0-9a-f]*' AND `payload_hash` NOT GLOB '*[^0-9a-f]*')
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_snapshot_scope_key` ON `gst_return_snapshots` (`id`,`tenant_id`,`book_set_id`);
---> statement-breakpoint
 CREATE UNIQUE INDEX `uq_gst_snapshot_return_version` ON `gst_return_snapshots` (`return_id`,`snapshot_version`);
 --> statement-breakpoint
 CREATE INDEX `idx_gst_snapshot_scope_return` ON `gst_return_snapshots` (`tenant_id`,`book_set_id`,`return_id`);
@@ -119,8 +111,6 @@ CREATE TABLE `gst_return_validations` (
   FOREIGN KEY (`return_id`,`tenant_id`,`book_set_id`) REFERENCES `gst_returns`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
   CONSTRAINT `chk_gst_validation_readiness_status` CHECK(`readiness_status` IN ('READY', 'REVIEW_REQUIRED', 'BLOCKED'))
 );
---> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_validation_scope_key` ON `gst_return_validations` (`id`,`tenant_id`,`book_set_id`);
 --> statement-breakpoint
 CREATE UNIQUE INDEX `uq_gst_validation_snapshot` ON `gst_return_validations` (`snapshot_id`,`tenant_id`,`book_set_id`);
 --> statement-breakpoint
@@ -170,8 +160,6 @@ CREATE TABLE `gst_return_exports` (
   CONSTRAINT `chk_gst_export_portal_json_status` CHECK(`portal_json_status` IN ('SCHEMA_UNPINNED', 'NOT_GENERATED'))
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_export_scope_key` ON `gst_return_exports` (`id`,`tenant_id`,`book_set_id`);
---> statement-breakpoint
 CREATE UNIQUE INDEX `uq_gst_export_validation` ON `gst_return_exports` (`validation_id`,`tenant_id`,`book_set_id`);
 --> statement-breakpoint
 CREATE INDEX `idx_gst_export_scope_return` ON `gst_return_exports` (`tenant_id`,`book_set_id`,`return_id`);
@@ -193,8 +181,6 @@ CREATE TABLE `gst_return_observations` (
   CONSTRAINT `chk_gst_observation_type` CHECK(`observation_type` IN ('USER_MARKED_PORTAL_UPLOADED', 'PORTAL_ERROR', 'PORTAL_PROCESSED', 'USER_MARKED_SUBMITTED', 'ACKNOWLEDGED', 'REJECTED')),
   CONSTRAINT `chk_gst_observation_evidence_required` CHECK((`observation_type` IN ('USER_MARKED_SUBMITTED', 'ACKNOWLEDGED') AND `evidence_id` IS NOT NULL) OR `observation_type` NOT IN ('USER_MARKED_SUBMITTED', 'ACKNOWLEDGED'))
 );
---> statement-breakpoint
-CREATE UNIQUE INDEX `uq_gst_observation_scope_key` ON `gst_return_observations` (`id`,`tenant_id`,`book_set_id`);
 --> statement-breakpoint
 CREATE INDEX `idx_gst_observation_scope_return` ON `gst_return_observations` (`tenant_id`,`book_set_id`,`return_id`,`observation_type`);
 --> statement-breakpoint
