@@ -11,7 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
-export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record";
 
 export interface Actor {
   kind: ActorKind;
@@ -84,6 +84,45 @@ export interface TaxCaseSourceImportPayload {
   originalFilename: string;
   filePath?: string;
   contentBase64?: string;
+}
+
+export type TaxCaseFactKind = "TDS_CREDIT" | "TCS_CREDIT" | "TAX_PAYMENT" | "BUSINESS_RECEIPT" | "INTEREST_INCOME" | "DIVIDEND_INCOME" | "SECURITIES_TRANSACTION" | "RENT_INCOME" | "OTHER";
+
+export interface TaxCaseFactProposePayload {
+  taxCaseId: string;
+  sourceId: string;
+  artifactId: string;
+  factId?: string;
+  sourceRecordKey?: string;
+  sourceOrdinal?: number;
+  kind: TaxCaseFactKind;
+  rawSourceLabel: string;
+  rawSourceLocator: string;
+  eventDate: string;
+  periodStart?: string;
+  periodEnd?: string;
+  originalCurrency: string;
+  grossAmountMinor: number;
+  taxAmountMinor?: number;
+  counterpartyDisplay?: Record<string, unknown>;
+  parserIdentity: string;
+  parserVersion: string;
+  provenance?: Record<string, unknown>;
+  normalizedPayload?: unknown;
+  normalizedPayloadHash?: string;
+  supersedesFactId?: string;
+}
+
+export interface TaxCaseFactDecisionPayload { taxCaseId: string; factId: string; reason: string; }
+
+export interface TaxCaseReconciliationRecordPayload {
+  taxCaseId: string;
+  factId: string;
+  bookSetId: string;
+  journalLineId: string;
+  allocatedAmountMinor: number;
+  currency: string;
+  reason: string;
 }
 
 export interface CommandResult<T> {

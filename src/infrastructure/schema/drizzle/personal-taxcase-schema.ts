@@ -1,6 +1,7 @@
 import { sqliteTable, text, integer, blob, foreignKey, primaryKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { tenants, bookSets } from "./foundation-schema";
+import { journalLines } from "./ledger-schema";
 
 /** Personal TaxCase foundation: live BookSet membership and ledger cursors only. */
 export const bookSetLedgerRevisions = sqliteTable(
@@ -166,5 +167,105 @@ export const taxCaseSourceArtifacts = sqliteTable(
     uqScopeKey: uniqueIndex("uq_tax_case_source_artifacts_id_scope").on(table.id, table.taxCaseId, table.tenantId),
     idxCase: index("idx_tax_case_source_artifacts_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
     chkHash: check("chk_tax_case_source_artifact_hash", sql`length(${table.contentHash}) = 64 AND ${table.contentHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+export const taxCaseFacts = sqliteTable(
+  "tax_case_facts",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    sourceRecordKey: text("source_record_key"),
+    sourceOrdinal: integer("source_ordinal"),
+    kind: text("kind").notNull(),
+    rawSourceLabel: text("raw_source_label").notNull(),
+    rawSourceLocator: text("raw_source_locator").notNull(),
+    eventDate: text("event_date").notNull(),
+    periodStart: text("period_start"),
+    periodEnd: text("period_end"),
+    originalCurrency: text("original_currency").notNull(),
+    grossAmountMinor: integer("gross_amount_minor").notNull(),
+    taxAmountMinor: integer("tax_amount_minor"),
+    counterpartyDisplayJson: text("counterparty_display_json"),
+    parserIdentity: text("parser_identity").notNull(),
+    parserVersion: text("parser_version").notNull(),
+    provenanceJson: text("provenance_json").notNull(),
+    normalizedPayloadHash: text("normalized_payload_hash").notNull(),
+    supersedesFactId: text("supersedes_fact_id"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkSource: foreignKey({ columns: [table.sourceId, table.taxCaseId, table.tenantId], foreignColumns: [taxCaseExternalSources.id, taxCaseExternalSources.taxCaseId, taxCaseExternalSources.tenantId] }).onDelete("no action"),
+    fkArtifact: foreignKey({ columns: [table.artifactId, table.tenantId], foreignColumns: [personalTaxSourceArtifacts.id, personalTaxSourceArtifacts.tenantId] }).onDelete("no action"),
+    fkSupersedes: foreignKey({ columns: [table.supersedesFactId, table.tenantId, table.taxCaseId], foreignColumns: [table.id, table.tenantId, table.taxCaseId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_tax_case_facts_id_scope").on(table.id, table.tenantId, table.taxCaseId),
+    uqPayload: uniqueIndex("uq_tax_case_fact_source_payload").on(table.tenantId, table.taxCaseId, table.sourceId, table.artifactId, table.sourceRecordKey, table.sourceOrdinal, table.normalizedPayloadHash),
+    idxCase: index("idx_tax_case_facts_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    idxSourceKey: index("idx_tax_case_facts_source_key").on(table.tenantId, table.sourceId, table.sourceRecordKey, table.sourceOrdinal),
+    chkKind: check("chk_tax_case_fact_kind", sql`${table.kind} IN ('TDS_CREDIT', 'TCS_CREDIT', 'TAX_PAYMENT', 'BUSINESS_RECEIPT', 'INTEREST_INCOME', 'DIVIDEND_INCOME', 'SECURITIES_TRANSACTION', 'RENT_INCOME', 'OTHER')`),
+    chkIdentity: check("chk_tax_case_fact_identity", sql`((source_record_key IS NOT NULL AND length(trim(source_record_key)) > 0 AND source_ordinal IS NULL) OR (source_record_key IS NULL AND source_ordinal IS NOT NULL AND typeof(source_ordinal) = 'integer' AND source_ordinal >= 0))`),
+    chkAmount: check("chk_tax_case_fact_amounts", sql`typeof(gross_amount_minor) = 'integer' AND gross_amount_minor >= 0 AND (tax_amount_minor IS NULL OR (typeof(tax_amount_minor) = 'integer' AND tax_amount_minor >= 0))`),
+    chkHash: check("chk_tax_case_fact_payload_hash", sql`length(normalized_payload_hash) = 64 AND normalized_payload_hash NOT GLOB '*[^0-9a-f]*'`),
+    chkCurrency: check("chk_tax_case_fact_currency", sql`length(original_currency) = 3 AND original_currency = upper(original_currency)`),
+  }),
+);
+
+export const taxCaseFactEvents = sqliteTable(
+  "tax_case_fact_events",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    factId: text("fact_id").notNull(),
+    eventType: text("event_type").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    reason: text("reason").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkFact: foreignKey({ columns: [table.factId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseFacts.id, taxCaseFacts.tenantId, taxCaseFacts.taxCaseId] }).onDelete("no action"),
+    uqRequest: uniqueIndex("uq_tax_case_fact_events_request").on(table.tenantId, table.requestId),
+    idxFact: index("idx_tax_case_fact_events_fact").on(table.tenantId, table.taxCaseId, table.factId, table.createdAt, table.id),
+    chkType: check("chk_tax_case_fact_event_type", sql`${table.eventType} IN ('PROPOSED', 'HUMAN_CONFIRMED', 'REJECTED')`),
+    chkActor: check("chk_tax_case_fact_event_actor", sql`length(trim(actor_id)) > 0 AND (event_type = 'PROPOSED' OR actor_kind = 'HUMAN')`),
+    chkHash: check("chk_tax_case_fact_event_hash", sql`length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+export const taxCaseFactReconciliations = sqliteTable(
+  "tax_case_fact_reconciliations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    factId: text("fact_id").notNull(),
+    bookSetId: text("book_set_id").notNull(),
+    journalLineId: text("journal_line_id").notNull(),
+    allocatedAmountMinor: integer("allocated_amount_minor").notNull(),
+    currency: text("currency").notNull(),
+    reason: text("reason").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    actorId: text("actor_id").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkFact: foreignKey({ columns: [table.factId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseFacts.id, taxCaseFacts.tenantId, taxCaseFacts.taxCaseId] }).onDelete("no action"),
+    fkBookSet: foreignKey({ columns: [table.bookSetId, table.tenantId], foreignColumns: [bookSets.id, bookSets.tenantId] }).onDelete("no action"),
+    fkJournalLine: foreignKey({ columns: [table.journalLineId, table.tenantId, table.bookSetId], foreignColumns: [journalLines.id, journalLines.tenantId, journalLines.bookSetId] }).onDelete("no action"),
+    uqRequest: uniqueIndex("uq_tax_case_fact_reconciliations_request").on(table.tenantId, table.requestId),
+    idxFact: index("idx_tax_case_fact_reconciliations_fact").on(table.tenantId, table.taxCaseId, table.factId, table.createdAt, table.id),
+    idxTarget: index("idx_tax_case_fact_reconciliations_target").on(table.tenantId, table.bookSetId, table.journalLineId),
+    chkAmount: check("chk_tax_case_fact_reconciliation_amount", sql`typeof(allocated_amount_minor) = 'integer' AND allocated_amount_minor > 0`),
+    chkCurrency: check("chk_tax_case_fact_reconciliation_currency", sql`length(currency) = 3 AND currency = upper(currency)`),
+    chkActor: check("chk_tax_case_fact_reconciliation_actor", sql`${table.actorKind} = 'HUMAN' AND length(trim(actor_id)) > 0`),
+    chkHash: check("chk_tax_case_fact_reconciliation_hash", sql`length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*'`),
   }),
 );

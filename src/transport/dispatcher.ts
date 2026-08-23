@@ -181,6 +181,13 @@ const handlers: Record<string, Handler> = {
   "tax-case.source.import": (facade, input) => facade.taxCase.source.import(input as never),
   "tax-case.source.list": (facade, input) => facade.taxCase.source.list(tenantId(input), text(input, "taxCaseId")),
   "tax-case.source.status": (facade, input) => facade.taxCase.source.status(tenantId(input), text(input, "taxCaseId"), text(input, "sourceId")),
+  "tax-case.fact.propose": (facade, input) => facade.taxCase.fact.propose(input as never),
+  "tax-case.fact.confirm": (facade, input) => facade.taxCase.fact.confirm(input as never),
+  "tax-case.fact.reject": (facade, input) => facade.taxCase.fact.reject(input as never),
+  "tax-case.fact.list": (facade, input) => facade.taxCase.fact.list(tenantId(input), text(input, "taxCaseId"), optionalText(input, "sourceId")),
+  "tax-case.reconciliation.record": (facade, input) => facade.taxCase.reconciliation.record(input as never),
+  "tax-case.reconciliation.list": (facade, input) => facade.taxCase.reconciliation.list(tenantId(input), text(input, "taxCaseId"), optionalText(input, "factId")),
+  "tax-case.reconciliation.summary": (facade, input) => facade.taxCase.reconciliation.summary(tenantId(input), text(input, "taxCaseId")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

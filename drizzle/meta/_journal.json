@@ -99,6 +99,13 @@
       "when": 1787500000000,
       "tag": "0022_personal_tax_source_intake_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1787505231020,
+      "tag": "0023_personal_tax_facts_reconciliation_v1",
+      "breakpoints": true
     }
   ]
 }

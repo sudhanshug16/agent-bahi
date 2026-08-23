@@ -44,6 +44,7 @@ export const journalLines = sqliteTable(
   (table) => ({
     fkEntry: foreignKey({ columns: [table.journalEntryId, table.tenantId, table.bookSetId], foreignColumns: [journalEntries.id, journalEntries.tenantId, journalEntries.bookSetId] }).onDelete("no action"),
     fkAccount: foreignKey({ columns: [table.accountId, table.tenantId, table.bookSetId], foreignColumns: [accounts.id, accounts.tenantId, accounts.bookSetId] }).onDelete("no action"),
+    uqIdTenantBookSet: uniqueIndex("uq_journal_lines_id_tenant_book_set_v1").on(table.id, table.tenantId, table.bookSetId),
     idxEntry: index("idx_journal_lines_entry").on(table.tenantId, table.bookSetId, table.journalEntryId),
     idxAccount: index("idx_journal_lines_account").on(table.tenantId, table.bookSetId, table.accountId),
     chkDebit: check("chk_journal_line_debit", sql`typeof(${table.debitMinor}) = 'integer' AND ${table.debitMinor} >= 0`),
