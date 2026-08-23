@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "19914a17-388a-40fb-8978-96825d9b4fd5",
-  "prevId": "e79e06ca-442b-437e-acdc-9ac52029b838",
+  "id": "c406710b-c55e-48ad-8d24-f14b69052689",
+  "prevId": "19914a17-388a-40fb-8978-96825d9b4fd5",
   "tables": {
     "bank_matches": {
       "name": "bank_matches",
