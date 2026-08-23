@@ -43,3 +43,17 @@ export {
   withholdingDepositAllocations,
   withholdingComplianceCases,
 } from "./tds-tcs-schema";
+
+// Fixed assets V1
+export {
+  assetBookPolicies,
+  fixedAssets,
+  assetComponents,
+  assetDepreciationRuns,
+  assetDepreciationLines,
+  assetTaxRuleSnapshots,
+  assetTaxBlocks,
+  assetTaxRuns,
+  assetTaxRunLines,
+  assetDisposals,
+} from "./fixed-assets-schema";

@@ -126,6 +126,13 @@ async function assertAccount(session: BusinessSession, tenantId: TenantId, bookS
   if (String(row.account_type) !== expectedType) throw new DomainError("INVALID_ACCOUNT_CLASS", `${field} must be ${expectedType}`);
 }
 
+async function assertBillInputAccount(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, accountId: string, field: string): Promise<void> {
+  const row = await session.querySingle("SELECT id, account_type, archived_at FROM accounts WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [accountId, tenantId, bookSetId]);
+  if (!row) throw new DomainError("ACCOUNT_SCOPE_MISMATCH", `${field} does not belong to tenant and BookSet`);
+  if (row.archived_at !== null && row.archived_at !== undefined) throw new DomainError("ACCOUNT_ARCHIVED", `${field} is archived`);
+  if (!['EXPENSE', 'ASSET'].includes(String(row.account_type))) throw new DomainError("INVALID_ACCOUNT_CLASS", `${field} must be EXPENSE or ASSET`);
+}
+
 async function assertVendor(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, vendorId: string): Promise<void> {
   const row = await session.querySingle("SELECT id, status, party_role FROM parties WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [vendorId, tenantId, bookSetId]);
   if (!row) throw new DomainError("VENDOR_SCOPE_MISMATCH", "vendor does not belong to tenant and BookSet");
@@ -153,7 +160,7 @@ export async function executeBillCreate(sessionRunner: BusinessSessionRunner, en
     if (replay) return replay as CommandResult<BillCreateResult>;
     await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
     await assertVendor(session, envelope.tenantId, envelope.bookSetId, vendorId);
-    for (const line of envelope.payload.lines) await assertAccount(session, envelope.tenantId, envelope.bookSetId, line.expenseAccountId, "EXPENSE", "expenseAccountId");
+    for (const line of envelope.payload.lines) await assertBillInputAccount(session, envelope.tenantId, envelope.bookSetId, line.expenseAccountId, "expenseAccountId");
     const billId = randomUUID();
     const now = new Date().toISOString();
     const gstInput = envelope.payload.gst ? { ...envelope.payload.gst, lines: envelope.payload.gst.lines ?? envelope.payload.gst.lineFacts ?? envelope.payload.lines.map((line, index) => line.gst ? { ...line.gst, lineNumber: index + 1 } : undefined).filter(Boolean) as GstLineFact[] } : undefined;
@@ -183,7 +190,7 @@ export async function executeBillPost(sessionRunner: BusinessSessionRunner, enve
     const lines: JournalLinePayload[] = [];
     for (const row of lineRows.rows) {
       const expenseAccountId = String(row.expense_account_id);
-      await assertAccount(session, envelope.tenantId, envelope.bookSetId, expenseAccountId, "EXPENSE", "expenseAccountId");
+      await assertBillInputAccount(session, envelope.tenantId, envelope.bookSetId, expenseAccountId, "expenseAccountId");
       const lineTax = gstPlan && gstPlan.itcTreatment !== "ELIGIBLE"
         ? gstPlan.components.filter((component) => component.line.lineNumber === Number(row.line_number)).reduce((sum, component) => sum + component.taxMinor, 0)
         : 0;

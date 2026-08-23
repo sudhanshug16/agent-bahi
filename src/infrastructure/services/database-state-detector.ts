@@ -18,6 +18,7 @@ import {
   DRIZZLE_GST_HASH,
   DRIZZLE_GST_MIGRATION_ID,
   DRIZZLE_GST_V1_MIGRATION_ID,
+  DRIZZLE_TDS_TCS_MIGRATION_ID,
   DRIZZLE_JOURNAL_DDL,
   DRIZZLE_MIGRATIONS_TABLE,
   validateOfficialDrizzleJournal,
@@ -59,6 +60,10 @@ const DRIZZLE_GST_SQL = readFileSync(
 );
 const DRIZZLE_GST_V1_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_V1_MIGRATION_ID}.sql`),
+  "utf8",
+);
+const DRIZZLE_TDS_TCS_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_TDS_TCS_MIGRATION_ID}.sql`),
   "utf8",
 );
 
@@ -112,6 +117,7 @@ function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, curre
       for (const statement of DRIZZLE_BASELINE_SQL.split("--> statement-breakpoint")) memory.exec(statement);
       if (current) {
         for (const statement of DRIZZLE_GST_V1_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        for (const statement of DRIZZLE_TDS_TCS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_GST_SQL.split("--> statement-breakpoint")) memory.exec(statement);
       }
     } else {
@@ -219,6 +225,9 @@ function exactBridgedCurrent(db: BunDatabase, manifest: SqliteSchemaManifest): b
     "tenant_deductor_profiles", "party_tax_profiles", "tax_rule_snapshots", "withholding_events", "withholding_deposits", "withholding_deposit_allocations", "withholding_compliance_cases",
     "uq_tenant_deductor_profiles_scope_key", "idx_tenant_deductor_profiles_effective", "uq_party_tax_profiles_scope_key", "idx_party_tax_profiles_effective", "uq_tax_rule_snapshots_scope_key", "idx_tax_rule_snapshots_effective", "uq_withholding_events_document_kind", "uq_withholding_events_scope_key", "idx_withholding_events_register", "uq_withholding_deposits_scope_key", "idx_withholding_deposits_register", "uq_withholding_deposit_allocation_event", "idx_withholding_deposit_allocations_event", "uq_withholding_compliance_case_period",
     "tenant_deductor_profiles_no_overlap", "tenant_deductor_profiles_no_overlap_upd", "party_tax_profiles_no_overlap", "party_tax_profiles_no_overlap_upd", "tax_rule_snapshots_no_update", "tax_rule_snapshots_no_delete", "withholding_events_no_update", "withholding_events_no_delete", "withholding_deposits_no_update", "withholding_deposits_no_delete", "withholding_deposit_allocations_no_update", "withholding_deposit_allocations_no_delete", "withholding_compliance_cases_no_update", "withholding_compliance_cases_no_delete",
+    "asset_book_policies", "fixed_assets", "asset_components", "asset_depreciation_runs", "asset_depreciation_lines", "asset_tax_rule_snapshots", "asset_tax_blocks", "asset_tax_runs", "asset_tax_run_lines", "asset_disposals",
+    "uq_asset_book_policies_scope_key", "idx_asset_book_policies_effective", "uq_fixed_assets_asset_number_scope", "uq_fixed_assets_scope_key", "uq_fixed_assets_source_bill_line", "idx_fixed_assets_register", "uq_asset_components_number", "idx_asset_components_asset", "uq_asset_depreciation_posted_period", "idx_asset_depreciation_runs_period", "uq_asset_depreciation_line_run_asset_component", "idx_asset_depreciation_lines_asset", "uq_asset_tax_rule_snapshot_identity", "idx_asset_tax_rule_snapshot_effective", "uq_asset_tax_block_scope_code", "uq_asset_tax_run_period", "uq_asset_tax_run_line_block", "uq_asset_disposals_asset", "idx_asset_disposals_date",
+    "asset_book_policies_no_update", "asset_book_policies_no_delete", "fixed_assets_no_update", "fixed_assets_no_delete", "asset_components_no_update", "asset_components_no_delete", "asset_depreciation_runs_no_update", "asset_depreciation_runs_no_delete", "asset_depreciation_lines_no_update", "asset_depreciation_lines_no_delete", "asset_tax_rule_snapshots_no_update", "asset_tax_rule_snapshots_no_delete", "asset_tax_blocks_no_update", "asset_tax_blocks_no_delete", "asset_tax_runs_no_update", "asset_tax_runs_no_delete", "asset_tax_run_lines_no_update", "asset_tax_run_lines_no_delete", "asset_disposals_no_update", "asset_disposals_no_delete",
   ]);
   const expected = expectedCatalog(manifest, true, true).filter((row) => gstObjects.has(row.name));
   const actual = catalog(db).filter((row) => gstObjects.has(row.name));

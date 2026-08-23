@@ -20,8 +20,9 @@ export const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations" as const;
 export const DRIZZLE_BASELINE_MIGRATION_ID = "0009_drizzle_v8_baseline" as const;
 export const DRIZZLE_GST_V1_MIGRATION_ID = "0010_gst_v1" as const;
 export const DRIZZLE_TDS_TCS_MIGRATION_ID = "0011_tds_tcs_v1" as const;
+export const DRIZZLE_FIXED_ASSETS_MIGRATION_ID = "0012_fixed_assets_v1" as const;
 /** Backwards-compatible name for the current official Drizzle migration. */
-export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_TDS_TCS_MIGRATION_ID;
+export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_FIXED_ASSETS_MIGRATION_ID;
 
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -35,11 +36,12 @@ const officialJournal = JSON.parse(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTOR
 };
 const officialEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_BASELINE_MIGRATION_ID);
 const gstEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_GST_V1_MIGRATION_ID);
-const currentEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_TDS_TCS_MIGRATION_ID);
+const tdsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_TDS_TCS_MIGRATION_ID);
+const currentEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_FIXED_ASSETS_MIGRATION_ID);
 if (!officialEntry || !Number.isSafeInteger(officialEntry.when)) {
   throw new Error("Official Drizzle baseline journal entry is missing or malformed");
 }
-if (!gstEntry || !Number.isSafeInteger(gstEntry.when) || !currentEntry || !Number.isSafeInteger(currentEntry.when)) {
+if (!gstEntry || !Number.isSafeInteger(gstEntry.when) || !tdsEntry || !Number.isSafeInteger(tdsEntry.when) || !currentEntry || !Number.isSafeInteger(currentEntry.when)) {
   throw new Error("Official Drizzle current journal entry is missing or malformed");
 }
 export const DRIZZLE_BASELINE_HASH = createHash("sha256")
@@ -51,11 +53,15 @@ export const DRIZZLE_GST_V1_HASH = createHash("sha256")
   .digest("hex");
 export const DRIZZLE_GST_V1_CREATED_AT = gstEntry.when;
 export const DRIZZLE_TDS_TCS_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_GST_MIGRATION_ID}.sql`)))
+  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_TDS_TCS_MIGRATION_ID}.sql`)))
+    .digest("hex");
+export const DRIZZLE_TDS_TCS_CREATED_AT = tdsEntry.when;
+export const DRIZZLE_FIXED_ASSETS_HASH = createHash("sha256")
+  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_FIXED_ASSETS_MIGRATION_ID}.sql`)))
   .digest("hex");
-export const DRIZZLE_TDS_TCS_CREATED_AT = currentEntry.when;
-export const DRIZZLE_GST_HASH = DRIZZLE_TDS_TCS_HASH;
-export const DRIZZLE_GST_CREATED_AT = DRIZZLE_TDS_TCS_CREATED_AT;
+export const DRIZZLE_FIXED_ASSETS_CREATED_AT = currentEntry.when;
+export const DRIZZLE_GST_HASH = DRIZZLE_FIXED_ASSETS_HASH;
+export const DRIZZLE_GST_CREATED_AT = DRIZZLE_FIXED_ASSETS_CREATED_AT;
 
 export interface DrizzleControlInitializationOptions {
   readonly cliVersion: string;
@@ -76,6 +82,7 @@ export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
     { id: null, hash: DRIZZLE_BASELINE_HASH, createdAt: DRIZZLE_BASELINE_CREATED_AT },
     { id: null, hash: DRIZZLE_GST_V1_HASH, createdAt: DRIZZLE_GST_V1_CREATED_AT },
     { id: null, hash: DRIZZLE_TDS_TCS_HASH, createdAt: DRIZZLE_TDS_TCS_CREATED_AT },
+    { id: null, hash: DRIZZLE_FIXED_ASSETS_HASH, createdAt: DRIZZLE_FIXED_ASSETS_CREATED_AT },
   ];
 }
 

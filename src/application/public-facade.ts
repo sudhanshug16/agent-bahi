@@ -25,6 +25,7 @@ import { executeBankStatementImport, getBankStatement, listBankStatements, execu
 import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
 import type { CompanyStatusInput, CompanyStatusResult, CompanyStatusService } from "./services/company-status-service.ts";
 import { executeDeductorProfileCreate, executePartyTaxProfileCreate, executeTaxRuleSnapshotCreate, executeWithholdingDeposit, listDeductorProfiles, listPartyTaxProfiles, listWithholdingRegister, type DeductorProfilePayload, type PartyTaxProfilePayload, type TaxRuleSnapshotPayload, type WithholdingDepositPayload, type WithholdingEventRow, type TaxKind } from "./services/tds-tcs-service.ts";
+import { executeAssetRegister, executeDepreciation, executeAssetTaxRule, executeTaxBlock, executeTaxCompute, executeAssetDispose, listAssetRegister, listBookDepreciation, listTaxSchedule, bookTaxReconciliation, type AssetRegisterPayload, type AssetRegisterResult, type DepreciationPreviewPayload, type DepreciationResult, type AssetTaxRulePayload, type TaxRuleResult, type TaxBlockPayload, type TaxBlockResult, type TaxComputePayload, type TaxRunResult, type AssetDisposePayload, type AssetDisposeResult, type AssetRegisterRow, type DepreciationLineResult, type TaxLineResult } from "./services/fixed-assets-service.ts";
 
 /**
  * Read-only tenant operations
@@ -136,6 +137,15 @@ export interface TaxOperations {
   deposit(envelope: SalesCommandEnvelope<WithholdingDepositPayload>): Promise<CommandResult<unknown>>;
   register(tenantId: TenantId, bookSetId: BookSetId, taxKind: TaxKind): Promise<WithholdingEventRow[]>;
 }
+export interface FixedAssetOperations {
+  register(envelope: SalesCommandEnvelope<AssetRegisterPayload>): Promise<CommandResult<AssetRegisterResult>>;
+  depreciation: { preview(envelope: SalesCommandEnvelope<DepreciationPreviewPayload>): Promise<CommandResult<DepreciationResult>>; post(envelope: SalesCommandEnvelope<DepreciationPreviewPayload>): Promise<CommandResult<DepreciationResult>> };
+  taxRule: { create(envelope: CommandEnvelope<AssetTaxRulePayload>): Promise<CommandResult<TaxRuleResult>> };
+  taxBlock: { register(envelope: SalesCommandEnvelope<TaxBlockPayload>): Promise<CommandResult<TaxBlockResult>> };
+  tax: { compute(envelope: SalesCommandEnvelope<TaxComputePayload>): Promise<CommandResult<TaxRunResult>> };
+  dispose(envelope: SalesCommandEnvelope<AssetDisposePayload>): Promise<CommandResult<AssetDisposeResult>>;
+  reports: { register(tenantId: TenantId, bookSetId: BookSetId, asOfDate?: string): Promise<AssetRegisterRow[]>; depreciation(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<DepreciationLineResult[]>; tax(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<TaxLineResult[]>; reconciliation(tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<Array<{ assetId: string; assetNumber: string; bookDepreciationMinor: number; taxDepreciationMinor: number; differenceMinor: number }>> };
+}
 
 /**
  * Public application facade: typed read and command interfaces.
@@ -158,6 +168,7 @@ export type PublicApplicationFacade = {
   bankReconciliation: BankReconciliationOperations;
   gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations };
   tax: TaxOperations;
+  fixedAssets: FixedAssetOperations;
   company: CompanyStatusOperations;
 };
 
@@ -245,6 +256,15 @@ export function createPublicFacade(
       ruleSnapshot: { create: (envelope) => executeTaxRuleSnapshotCreate(sessionRunner, envelope) },
       deposit: (envelope) => executeWithholdingDeposit(sessionRunner, envelope),
       register: (tenantId, bookSetId, taxKind) => listWithholdingRegister(sessionRunner, tenantId, bookSetId, taxKind),
+    },
+    fixedAssets: {
+      register: (envelope) => executeAssetRegister(sessionRunner, envelope),
+      depreciation: { preview: (envelope) => executeDepreciation(sessionRunner, envelope, false), post: (envelope) => executeDepreciation(sessionRunner, envelope, true) },
+      taxRule: { create: (envelope) => executeAssetTaxRule(sessionRunner, envelope) },
+      taxBlock: { register: (envelope) => executeTaxBlock(sessionRunner, envelope) },
+      tax: { compute: (envelope) => executeTaxCompute(sessionRunner, envelope) },
+      dispose: (envelope) => executeAssetDispose(sessionRunner, envelope),
+      reports: { register: (tenantId, bookSetId, asOfDate) => listAssetRegister(sessionRunner, tenantId, bookSetId, asOfDate), depreciation: (tenantId, bookSetId, periodStart, periodEnd) => listBookDepreciation(sessionRunner, tenantId, bookSetId, periodStart, periodEnd), tax: (tenantId, bookSetId, periodStart, periodEnd) => listTaxSchedule(sessionRunner, tenantId, bookSetId, periodStart, periodEnd), reconciliation: (tenantId, bookSetId, periodStart, periodEnd) => bookTaxReconciliation(sessionRunner, tenantId, bookSetId, periodStart, periodEnd) },
     },
   };
   // Keep the historical enumerable facade surface stable for CLI consumers;

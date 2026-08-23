@@ -64,6 +64,7 @@ export const vendorBillLines = sqliteTable(
     fkBill: foreignKey({ columns: [table.billId, table.tenantId, table.bookSetId], foreignColumns: [vendorBills.id, vendorBills.tenantId, vendorBills.bookSetId] }).onDelete("no action"),
     fkExpense: foreignKey({ columns: [table.expenseAccountId, table.tenantId, table.bookSetId], foreignColumns: [accounts.id, accounts.tenantId, accounts.bookSetId] }).onDelete("no action"),
     uqLineNumber: uniqueIndex("uq_vendor_bill_line_number").on(table.billId, table.lineNumber),
+    uqIdTenantBookSet: uniqueIndex("uq_vendor_bill_lines_id_tenant_book_set").on(table.id, table.tenantId, table.bookSetId),
     idxBill: index("idx_vendor_bill_lines_bill_v7").on(table.tenantId, table.bookSetId, table.billId, table.lineNumber),
     chkLineNumber: check("chk_vendor_bill_line_number", sql`typeof(${table.lineNumber}) = 'integer' AND ${table.lineNumber} > 0`),
     chkDescription: check("chk_vendor_bill_line_description", sql`length(${table.description}) > 0`),

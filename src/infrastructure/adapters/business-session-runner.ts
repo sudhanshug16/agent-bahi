@@ -43,6 +43,16 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "withholding_deposits",
   "withholding_deposit_allocations",
   "withholding_compliance_cases",
+  "asset_book_policies",
+  "fixed_assets",
+  "asset_components",
+  "asset_depreciation_runs",
+  "asset_depreciation_lines",
+  "asset_tax_rule_snapshots",
+  "asset_tax_blocks",
+  "asset_tax_runs",
+  "asset_tax_run_lines",
+  "asset_disposals",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

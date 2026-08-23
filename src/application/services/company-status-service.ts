@@ -97,6 +97,13 @@ export interface CompanyStatusBookSetSummary {
     rejectedCaseCount: number;
     unsubmittedCaseCount: number;
   };
+  assets: {
+    manualEvidenceCount: number;
+    previewNeededCount: number;
+    taxRuleMissingCount: number;
+    taxUnrunCount: number;
+    disposedOpenAnomalyCount: number;
+  };
   cashBank: {
     status: "UNAVAILABLE";
     reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE";
@@ -389,6 +396,21 @@ async function tdsTcsStatus(session: BusinessSession, tenantId: string, bookSetI
   return { unverifiedProfileCount: profiles.rows.length + deductors.rows.length, unverifiedRuleCount: effectiveUnverifiedRules, undepositedLiabilityCount, undepositedLiabilityMinor, rejectedCaseCount, unsubmittedCaseCount };
 }
 
+async function assetStatus(session: BusinessSession, tenantId: string, bookSetId: string, asOfDate: string): Promise<CompanyStatusBookSetSummary["assets"]> {
+  const manual = await session.query("SELECT id FROM fixed_assets WHERE tenant_id = ? AND book_set_id = ? AND source_vendor_bill_line_id IS NULL AND acquisition_date <= ?", [tenantId, bookSetId, asOfDate]);
+  const active = await session.query("SELECT id, tax_block_id FROM fixed_assets WHERE tenant_id = ? AND book_set_id = ? AND status = 'ACTIVE' AND put_to_use_date <= ?", [tenantId, bookSetId, asOfDate]);
+  const postedAssets = await session.query("SELECT dl.asset_id FROM asset_depreciation_lines dl JOIN asset_depreciation_runs dr ON dr.id = dl.run_id AND dr.tenant_id = dl.tenant_id AND dr.book_set_id = dl.book_set_id WHERE dl.tenant_id = ? AND dl.book_set_id = ? AND dr.status = 'POSTED' AND dr.period_end <= ? ORDER BY dl.asset_id", [tenantId, bookSetId, asOfDate]);
+  const postedAssetIds = new Set(postedAssets.rows.map((row) => String(row.asset_id)));
+  const previewNeededCount = active.rows.filter((row) => !postedAssetIds.has(String(row.id))).length;
+  const missingRule = await session.query("SELECT a.id, b.id AS block_id, r.id AS rule_id, r.source_verified, r.effective_from, r.effective_to FROM fixed_assets a LEFT JOIN asset_tax_blocks b ON b.id = a.tax_block_id AND b.tenant_id = a.tenant_id AND b.book_set_id = a.book_set_id LEFT JOIN asset_tax_rule_snapshots r ON r.id = b.rule_snapshot_id AND r.tenant_id = a.tenant_id WHERE a.tenant_id = ? AND a.book_set_id = ? AND a.status = 'ACTIVE'", [tenantId, bookSetId]);
+  const missingRuleCount = missingRule.rows.filter((row) => row.block_id == null || row.rule_id == null || Number(row.source_verified) !== 1 || String(row.effective_from) > asOfDate || (row.effective_to != null && String(row.effective_to) < asOfDate)).length;
+  const taxBlocks = await session.query("SELECT id FROM asset_tax_blocks WHERE tenant_id = ? AND book_set_id = ? ORDER BY id", [tenantId, bookSetId]);
+  let taxUnrunCount = 0;
+  for (const block of taxBlocks.rows) { const run = await session.querySingle("SELECT l.id FROM asset_tax_run_lines l JOIN asset_tax_runs r ON r.id = l.run_id AND r.tenant_id = l.tenant_id AND r.book_set_id = l.book_set_id WHERE l.block_id = ? AND l.tenant_id = ? AND l.book_set_id = ? AND r.period_end <= ?", [block.id, tenantId, bookSetId, asOfDate]); if (!run) taxUnrunCount += 1; }
+  const anomalies = await session.query("SELECT id FROM fixed_assets WHERE tenant_id = ? AND book_set_id = ? AND status = 'DISPOSED' AND disposed_at IS NULL OR tenant_id = ? AND book_set_id = ? AND status = 'ACTIVE' AND disposed_at IS NOT NULL", [tenantId, bookSetId, tenantId, bookSetId]);
+  return { manualEvidenceCount: manual.rows.length, previewNeededCount, taxRuleMissingCount: missingRuleCount, taxUnrunCount, disposedOpenAnomalyCount: anomalies.rows.length };
+}
+
 function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   const issues: CompanyStatusIssue[] = [];
   if (!summary.ledger.isBalanced) issues.push({ severity: "BLOCKED", code: "LEDGER_UNBALANCED", bookSetId: summary.bookSet.bookSetId, amountMinor: Math.abs(summary.ledger.totalDebitMinor - summary.ledger.totalCreditMinor) });
@@ -403,6 +425,11 @@ function issuesFor(summary: CompanyStatusBookSetSummary): CompanyStatusIssue[] {
   if (summary.tdsTcs.undepositedLiabilityCount > 0) issues.push({ severity: "HIGH", code: "TDS_TCS_LIABILITY_UNDEPOSITED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.undepositedLiabilityCount, amountMinor: summary.tdsTcs.undepositedLiabilityMinor });
   if (summary.tdsTcs.rejectedCaseCount > 0) issues.push({ severity: "HIGH", code: "TDS_TCS_CASE_REJECTED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.rejectedCaseCount });
   if (summary.tdsTcs.unsubmittedCaseCount > 0) issues.push({ severity: "MEDIUM", code: "TDS_TCS_CASE_UNSUBMITTED", bookSetId: summary.bookSet.bookSetId, count: summary.tdsTcs.unsubmittedCaseCount });
+  if (summary.assets.manualEvidenceCount > 0) issues.push({ severity: "MEDIUM", code: "FIXED_ASSET_MANUAL_EVIDENCE", bookSetId: summary.bookSet.bookSetId, count: summary.assets.manualEvidenceCount });
+  if (summary.assets.previewNeededCount > 0) issues.push({ severity: "MEDIUM", code: "FIXED_ASSET_DEPRECIATION_PREVIEW_NEEDED", bookSetId: summary.bookSet.bookSetId, count: summary.assets.previewNeededCount });
+  if (summary.assets.taxRuleMissingCount > 0) issues.push({ severity: "HIGH", code: "FIXED_ASSET_TAX_RULE_MISSING", bookSetId: summary.bookSet.bookSetId, count: summary.assets.taxRuleMissingCount });
+  if (summary.assets.taxUnrunCount > 0) issues.push({ severity: "MEDIUM", code: "FIXED_ASSET_TAX_UNRUN", bookSetId: summary.bookSet.bookSetId, count: summary.assets.taxUnrunCount });
+  if (summary.assets.disposedOpenAnomalyCount > 0) issues.push({ severity: "BLOCKED", code: "FIXED_ASSET_DISPOSAL_ANOMALY", bookSetId: summary.bookSet.bookSetId, count: summary.assets.disposedOpenAnomalyCount });
   issues.push({ severity: "INFO", code: "CASH_BANK_UNAVAILABLE", bookSetId: summary.bookSet.bookSetId });
   return issues;
 }
@@ -420,6 +447,9 @@ function drillDown(tenantId: string, bookSetId: string, asOfDate: string): Compa
     { operationId: "bill.outstanding", inputTemplate: { tenantId, bookSetId } },
     { operationId: "bank-statement.list", inputTemplate: { tenantId, bookSetId } },
     { operationId: "gst.registration.list", inputTemplate: { tenantId, date: asOfDate } },
+    { operationId: "asset.register.report", inputTemplate: { tenantId, bookSetId, asOfDate } },
+    { operationId: "asset.depreciation.report", inputTemplate: { tenantId, bookSetId, periodStart: "<YYYY-MM-DD>", periodEnd: asOfDate } },
+    { operationId: "asset.tax.report", inputTemplate: { tenantId, bookSetId, periodStart: "<YYYY-MM-DD>", periodEnd: asOfDate } },
   ];
 }
 
@@ -455,6 +485,7 @@ export class CompanyStatusService {
           bankReconciliation: await bankReconciliation(session, tenantId, bookSetId),
           gst: await gstStatus(session, tenantId, bookSetId, asOfDate),
           tdsTcs: await tdsTcsStatus(session, tenantId, bookSetId, asOfDate),
+          assets: await assetStatus(session, tenantId, bookSetId, asOfDate),
           cashBank: { status: "UNAVAILABLE", reason: "ACCOUNT_CLASSIFICATION_UNAVAILABLE" },
         };
         summaries.push(summary);
