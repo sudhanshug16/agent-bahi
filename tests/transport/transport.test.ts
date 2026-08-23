@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { findOperation } from "../../src/transport/catalog.ts";
 
 const root = process.cwd();
 
@@ -24,6 +25,22 @@ function json(stdout: string): Record<string, unknown> {
 }
 
 describe("shared CLI and stdio MCP transport", () => {
+  it("catalogs every GST readiness operation with scope, examples, and remediation", () => {
+    const ids = [
+      "gst.outward-facts.record", "gst.outward-facts.get", "gst.outward-facts.list",
+      "gst.return.prepare", "gst.return.validate", "gst.return.export-review-pack",
+      "gst.return.get", "gst.return.list", "gst.return.record-observation", "gst.return.readiness-report",
+    ];
+    for (const id of ids) {
+      const operation = findOperation(id);
+      expect(operation).toBeDefined();
+      expect(operation?.requiredScope).toBe("bookSet");
+      expect(operation?.description.length).toBeGreaterThan(0);
+      expect(operation?.examples.length).toBeGreaterThan(0);
+      expect(operation?.remediation.length).toBeGreaterThan(0);
+    }
+  });
+
   it("reports an empty database without creating or mutating it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-bahi-transport-"));
     const db = join(dir, "empty.sqlite");

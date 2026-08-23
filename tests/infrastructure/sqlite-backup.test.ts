@@ -93,7 +93,7 @@ describe("SQLite BackupService", () => {
     const restored = new BunDatabase(restoredPath, { readonly: true });
     try {
       expect(() => restored.query("SELECT COUNT(*) FROM schema_migrations").get()).toThrow();
-      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 7 });
+      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 8 });
     } finally { restored.close(); }
   });
 
@@ -202,18 +202,11 @@ describe("SQLite BackupService", () => {
     expect(stagingFiles).toHaveLength(0);
   });
 
-  it("preserves and accepts a legitimate extra application table already in the source", async () => {
+  it("rejects a legitimate-looking extra application table already in the source", async () => {
     const destination = join(directory, "with-extra-table.sqlite");
     await db.execute("CREATE TABLE app_custom_data (id TEXT PRIMARY KEY, data TEXT)");
-    const result = await new BackupService(sourcePath).createBackup(destination);
-    expect(result.status).toBe("SUCCESS");
-    const snapshot = new BunDatabase(destination, { readonly: true, safeIntegers: true });
-    const catalogRows = snapshot.query(
-      "SELECT type, name FROM sqlite_schema WHERE type = 'table' AND name = 'app_custom_data' AND name NOT LIKE 'sqlite_%'"
-    ).all() as Array<{ type: string; name: string }>;
-    snapshot.close();
-    expect(catalogRows).toHaveLength(1);
-    expect(catalogRows[0]).toEqual({ type: "table", name: "app_custom_data" });
+    await expect(new BackupService(sourcePath).createBackup(destination)).rejects.toMatchObject({ code: "BACKUP_SCHEMA_MISMATCH" });
+    expect(await Bun.file(destination).exists()).toBe(false);
   });
 
   it("captures committed rows and excludes another connection's uncommitted row", async () => {

@@ -75,7 +75,7 @@ describe("GST Return Readiness V1", () => {
         await f.app.gst.returnReadiness.outwardFacts.record(f.env("facts", "creator", { invoiceId, placeOfSupplyStateCode: "27" }));
         expect(true).toBe(false); // Should throw
       } catch (e) {
-        expect((e as any).message).toContain("INVOICE_NOT_POSTED");
+        expect((e as any).code).toBe("INVOICE_NOT_POSTED");
       }
     } finally {
       new BunDatabase(f.dbPath).close();
@@ -103,7 +103,7 @@ describe("GST Return Readiness V1", () => {
         await f.app.gst.returnReadiness.outwardFacts.record(f.env("facts2", "creator", { invoiceId, placeOfSupplyStateCode: "27" }));
         expect(true).toBe(false); // Should throw
       } catch (e) {
-        expect((e as any).message).toContain("FACTS_ALREADY_RECORDED");
+        expect((e as any).code).toBe("FACTS_ALREADY_RECORDED");
       }
     } finally {
       new BunDatabase(f.dbPath).close();
@@ -231,7 +231,7 @@ describe("GST Return Readiness V1", () => {
 
       const invoice = await f.app.invoice.create(f.env("invoice", "creator", { invoiceNumber: "INV-008", customerId: partyId, issueDate: "2024-08-15", lines: [{ description: "Services", revenueAccountId: f.tenant.seedAccountIds.income, amountMinor: 100_000 }] }));
       const invoiceId = JSON.parse(invoice.resultJson).invoiceId as string;
-      await f.app.invoice.post(f.env("post-invoice", "creator", { invoiceId }));
+      await f.app.invoice.post(f.env("post-invoice", "creator", { invoiceId, receivableAccountId: f.tenant.seedAccountIds.assets }));
 
       // Record facts in first tenant
       const facts = await f.app.gst.returnReadiness.outwardFacts.record(f.env("facts", "creator", { invoiceId, placeOfSupplyStateCode: "27" }));
@@ -242,8 +242,58 @@ describe("GST Return Readiness V1", () => {
         await f.app.gst.returnReadiness.outwardFacts.get(tenant2.tenantId as never, tenant2.defaultBookSetId as never, factsId);
         expect(true).toBe(false); // Should throw
       } catch (e) {
-        expect((e as any).message).toContain("FACTS_NOT_FOUND");
+        expect((e as any).code).toBe("FACTS_NOT_FOUND");
       }
+    } finally {
+      new BunDatabase(f.dbPath).close();
+    }
+  });
+
+  it("exports deterministic review-pack facts, tax components, and validation issues without portal JSON", async () => {
+    const f = await fixture();
+    try {
+      const party = await f.app.party.create(f.env("export-party", "creator", { displayName: "Customer Export", partyRole: "CUSTOMER" }));
+      const partyId = JSON.parse(party.resultJson).partyId as string;
+      const profile = await f.app.gst.partyProfile.create(f.env("export-profile", "creator", { partyId, gstin: "27AAPFU0939F1ZV", treatment: "REGISTERED", stateCode: "27", effectiveFrom: "2024-01-01" }));
+      const profileId = JSON.parse(profile.resultJson).profileId as string;
+      const invoice = await f.app.invoice.create(f.env("export-invoice", "creator", {
+        invoiceNumber: "INV-EXPORT",
+        customerId: partyId,
+        issueDate: "2024-08-15",
+        lines: [{ description: "Taxed Service", revenueAccountId: f.tenant.seedAccountIds.income, amountMinor: 100_000 }],
+        gst: { sellerRegistrationId: f.gstReg.registrationId, buyerProfileId: profileId, localComponent: "SGST", cgstAccountId: f.tenant.seedAccountIds.liabilities, sgstAccountId: f.tenant.seedAccountIds.liabilities, lines: [{ lineNumber: 1, classification: "9983", rateBps: 1800, evidenceIds: ["evidence-1"] }] },
+      }));
+      const invoiceId = JSON.parse(invoice.resultJson).invoiceId as string;
+      await f.app.invoice.post(f.env("export-post", "creator", { invoiceId, receivableAccountId: f.tenant.seedAccountIds.assets }));
+
+      // Leave supplemental line facts absent so the frozen validation produces an issue row while source line and tax facts remain exportable.
+      await f.app.gst.returnReadiness.outwardFacts.record(f.env("export-facts", "creator", { invoiceId, placeOfSupplyStateCode: "27", recipientRegistrationCategory: "REGISTERED" }));
+      const prepared = await f.app.gst.returnReadiness.return.prepare(f.env("export-prepare", "creator", { registrationId: f.gstReg.registrationId, returnForm: "GSTR1", taxPeriodFrom: "2024-08-01", taxPeriodTo: "2024-08-31" }));
+      const snapshotId = JSON.parse(prepared.resultJson).snapshotId as string;
+      const validation = await f.app.gst.returnReadiness.return.validate(f.tenant.tenantId as never, f.tenant.defaultBookSetId as never, snapshotId, "export-reviewer");
+      const exportEnvelope = f.env("export-pack", "export-reviewer", { validationId: "pending" });
+      // The public export API takes the validation identity; obtain it from the immutable validation row without changing source facts.
+      const db = new BunDatabase(f.dbPath, { readonly: true });
+      const validationId = String((db.query("SELECT id FROM gst_return_validations WHERE snapshot_id = ? AND tenant_id = ? AND book_set_id = ?").get(snapshotId, f.tenant.tenantId, f.tenant.defaultBookSetId) as { id: string }).id);
+      db.close();
+      exportEnvelope.payload = { validationId };
+      const first = await f.app.gst.returnReadiness.return.exportReviewPack(exportEnvelope);
+      const second = await f.app.gst.returnReadiness.return.exportReviewPack(exportEnvelope);
+      expect(first.resultHash).toBe(second.resultHash);
+
+      const artifacts = new BunDatabase(f.dbPath, { readonly: true });
+      const row = artifacts.query("SELECT portal_json_status, csv_documents_lines_json, csv_line_details_lines_json, csv_tax_component_lines_json, csv_validation_issues_lines_json, csv_documents_hash, csv_line_details_hash, csv_tax_component_hash, csv_validation_issues_hash FROM gst_return_exports WHERE validation_id = ?").get(validationId) as Record<string, string>;
+      expect(row.portal_json_status).toBe("SCHEMA_UNPINNED");
+      expect(JSON.stringify(row.csv_documents_lines_json)).toContain("INV-EXPORT");
+      expect(JSON.stringify(row.csv_line_details_lines_json)).toContain("Taxed Service");
+      expect(JSON.stringify(row.csv_tax_component_lines_json)).toMatch(/CGST|SGST/);
+      expect(row.csv_validation_issues_lines_json).toContain("MISSING_LINE_FACTS");
+      expect(row.csv_documents_hash).toHaveLength(64);
+      expect(row.csv_line_details_hash).toHaveLength(64);
+      expect(row.csv_tax_component_hash).toHaveLength(64);
+      expect(row.csv_validation_issues_hash).toHaveLength(64);
+      expect(validation.issueCount).toBeGreaterThan(0);
+      artifacts.close();
     } finally {
       new BunDatabase(f.dbPath).close();
     }
@@ -260,7 +310,7 @@ describe("GST Return Readiness V1", () => {
 
       const invoice = await f.app.invoice.create(f.env("invoice", "creator", { invoiceNumber: "INV-009", customerId: partyId, issueDate: "2024-08-15", lines: [{ description: "Services", revenueAccountId: f.tenant.seedAccountIds.income, amountMinor: 100_000 }] }));
       const invoiceId = JSON.parse(invoice.resultJson).invoiceId as string;
-      await f.app.invoice.post(f.env("post-invoice", "creator", { invoiceId }));
+      await f.app.invoice.post(f.env("post-invoice", "creator", { invoiceId, receivableAccountId: f.tenant.seedAccountIds.assets }));
 
       // First record with specific requestId
       const result1 = await f.app.gst.returnReadiness.outwardFacts.record(command(f.tenant.tenantId, f.tenant.defaultBookSetId, requestId, "creator", { invoiceId, placeOfSupplyStateCode: "27" }));
@@ -285,11 +335,11 @@ describe("GST Return Readiness V1", () => {
 
       const invoice1 = await f.app.invoice.create(f.env("invoice1", "creator", { invoiceNumber: "INV-010", customerId: partyId, issueDate: "2024-08-15", lines: [{ description: "Services", revenueAccountId: f.tenant.seedAccountIds.income, amountMinor: 100_000 }] }));
       const invoiceId1 = JSON.parse(invoice1.resultJson).invoiceId as string;
-      await f.app.invoice.post(f.env("post-invoice1", "creator", { invoiceId: invoiceId1 }));
+      await f.app.invoice.post(f.env("post-invoice1", "creator", { invoiceId: invoiceId1, receivableAccountId: f.tenant.seedAccountIds.assets }));
 
       const invoice2 = await f.app.invoice.create(f.env("invoice2", "creator", { invoiceNumber: "INV-011", customerId: partyId, issueDate: "2024-08-15", lines: [{ description: "Services", revenueAccountId: f.tenant.seedAccountIds.income, amountMinor: 200_000 }] }));
       const invoiceId2 = JSON.parse(invoice2.resultJson).invoiceId as string;
-      await f.app.invoice.post(f.env("post-invoice2", "creator", { invoiceId: invoiceId2 }));
+      await f.app.invoice.post(f.env("post-invoice2", "creator", { invoiceId: invoiceId2, receivableAccountId: f.tenant.seedAccountIds.assets }));
 
       // First record with requestId
       await f.app.gst.returnReadiness.outwardFacts.record(command(f.tenant.tenantId, f.tenant.defaultBookSetId, requestId, "creator", { invoiceId: invoiceId1, placeOfSupplyStateCode: "27" }));
@@ -299,7 +349,7 @@ describe("GST Return Readiness V1", () => {
         await f.app.gst.returnReadiness.outwardFacts.record(command(f.tenant.tenantId, f.tenant.defaultBookSetId, requestId, "creator", { invoiceId: invoiceId2, placeOfSupplyStateCode: "28" }));
         expect(true).toBe(false); // Should throw
       } catch (e) {
-        expect((e as any).message).toContain("idempotency");
+        expect((e as any).code).toBe("IDEMPOTENCY_CONFLICT");
       }
     } finally {
       new BunDatabase(f.dbPath).close();

@@ -24,7 +24,7 @@ import { DatabaseControlService, type DatabaseControlRecord } from "./database-c
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
-import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_V1_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, DRIZZLE_TDS_TCS_MIGRATION_ID, DRIZZLE_FIXED_ASSETS_MIGRATION_ID, DRIZZLE_FX_V1_MIGRATION_ID, DRIZZLE_PAYROLL_V1_MIGRATION_ID, DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID, DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -532,13 +532,7 @@ function validateMigrationHistory(rows: MigrationRow[], expectedManifest: Sqlite
 
 function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false, current = true): void {
   const expected = expectedCatalog(expectedManifest, drizzle, current);
-  const actualByName = new Map(catalog.map((row) => [`${row.type}:${row.name}`, row]));
-  for (const expectedRow of expected) {
-    const actual = actualByName.get(`${expectedRow.type}:${expectedRow.name}`);
-    if (!actual || canonicalJson(actual) !== canonicalJson(expectedRow)) {
-      throw new DomainError("BACKUP_SCHEMA_MISMATCH", "SQLite schema catalog is not canonical");
-    }
-  }
+  validateExactCatalogMatch(catalog, expected);
 }
 
 function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[]): void {
@@ -579,6 +573,8 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
         for (const statement of payroll.split("--> statement-breakpoint")) db.exec(statement);
         const expenseClaims = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID}.sql`), "utf8");
         for (const statement of expenseClaims.split("--> statement-breakpoint")) db.exec(statement);
+        const gstReturnReadiness = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`), "utf8");
+        for (const statement of gstReturnReadiness.split("--> statement-breakpoint")) db.exec(statement);
       }
     } else {
       db.exec(MIGRATION_SCHEMA_SQLITE);

@@ -117,13 +117,20 @@ function sha256(data: string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-function escapeCsv(value: string | number | null | undefined): string {
+type CsvCell = string | number | null | undefined;
+
+function escapeCsv(value: CsvCell): string {
   if (value == null) return "";
   const str = String(value);
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
+}
+
+function csvBytes(rows: readonly (readonly CsvCell[])[]): string {
+  // RFC 4180 line endings and escaping are part of the artifact contract.
+  return rows.map((row) => row.map(escapeCsv).join(",")).join("\r\n");
 }
 
 async function scopeBookSet(session: BusinessSession, tenantId: string, bookSetId: string): Promise<void> {
@@ -186,6 +193,7 @@ async function finish<T>(session: BusinessSession, command: string, envelopeValu
 
 export async function recordOutwardFacts(runner: BusinessSessionRunner, e: GstEnvelope<GstOutwardFactsPayload>): Promise<CommandResult<{ factsId: string; invoiceId: string }>> {
   if (!e.bookSetId) throw new DomainError("INVALID_COMMAND", "bookSetId is required");
+  const bookSetId = e.bookSetId;
   const p = e.payload;
   const hash = computeCommandHash("gst.outward-facts.record", e, p);
 
@@ -193,7 +201,7 @@ export async function recordOutwardFacts(runner: BusinessSessionRunner, e: GstEn
     const prior = await replay(s, e.tenantId, e.requestId, hash);
     if (prior) return prior as CommandResult<{ factsId: string; invoiceId: string }>;
 
-    await scopeBookSet(s, e.tenantId, e.bookSetId);
+    await scopeBookSet(s, e.tenantId, bookSetId);
 
     const invoiceRow = await s.querySingle("SELECT id, status FROM sales_invoices WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [p.invoiceId, e.tenantId, e.bookSetId]);
     if (!invoiceRow) throw new DomainError("INVOICE_NOT_FOUND", "invoice does not belong to tenant and BookSet");
@@ -251,6 +259,7 @@ export async function listOutwardFacts(runner: BusinessSessionRunner, tenantId: 
 
 export async function prepareReturn(runner: BusinessSessionRunner, e: GstEnvelope<GstReturnPreparePayload>): Promise<CommandResult<GstReturnPrepareResult>> {
   if (!e.bookSetId) throw new DomainError("INVALID_COMMAND", "bookSetId is required");
+  const bookSetId = e.bookSetId;
   const p = e.payload;
   const hash = computeCommandHash("gst.return.prepare", e, p);
 
@@ -258,7 +267,7 @@ export async function prepareReturn(runner: BusinessSessionRunner, e: GstEnvelop
     const prior = await replay(s, e.tenantId, e.requestId, hash);
     if (prior) return prior as CommandResult<GstReturnPrepareResult>;
 
-    await scopeBookSet(s, e.tenantId, e.bookSetId);
+    await scopeBookSet(s, e.tenantId, bookSetId);
 
     isoDate(p.taxPeriodFrom, "taxPeriodFrom");
     isoDate(p.taxPeriodTo, "taxPeriodTo");
@@ -289,14 +298,21 @@ export async function prepareReturn(runner: BusinessSessionRunner, e: GstEnvelop
 
     const sourceIds: string[] = [];
     const sourceHashes: Record<string, string> = {};
+    let taxableTotal = 0;
+    let taxTotal = 0;
+    let grossTotal = 0;
     for (const inv of invoiceRows.rows) {
       const invId = String(inv.id);
       sourceIds.push(invId);
       sourceHashes[invId] = sha256(JSON.stringify({ id: invId, number: String(inv.invoice_number), date: String(inv.issue_date), total: Number(inv.total_minor) }));
+      const taxSnapshot = await s.querySingle("SELECT taxable_minor, tax_minor, gross_minor FROM gst_tax_snapshots WHERE sales_invoice_id = ? AND tenant_id = ? AND book_set_id = ?", [invId, e.tenantId, e.bookSetId]);
+      taxableTotal += taxSnapshot ? Number(taxSnapshot.taxable_minor) : Number(inv.total_minor);
+      taxTotal += taxSnapshot ? Number(taxSnapshot.tax_minor) : 0;
+      grossTotal += taxSnapshot ? Number(taxSnapshot.gross_minor) : Number(inv.total_minor);
     }
 
     const payloadHash = sha256(JSON.stringify({ returnId, registrationId: p.registrationId, taxPeriodFrom: p.taxPeriodFrom, taxPeriodTo: p.taxPeriodTo, invoiceIds: sourceIds }));
-    const summaryFacts = { invoiceCount: sourceIds.length, periodFrom: p.taxPeriodFrom, periodTo: p.taxPeriodTo };
+    const summaryFacts = { invoiceCount: sourceIds.length, periodFrom: p.taxPeriodFrom, periodTo: p.taxPeriodTo, taxableTotal, taxTotal, grossTotal };
 
     const snapshotVersion = (await s.querySingle("SELECT MAX(snapshot_version) as max_v FROM gst_return_snapshots WHERE return_id = ? AND tenant_id = ? AND book_set_id = ?", [returnId, e.tenantId, e.bookSetId]))?.max_v as number | null;
     const nextVersion = (snapshotVersion ?? 0) + 1;
@@ -388,24 +404,92 @@ export async function exportReviewPack(runner: BusinessSessionRunner, e: GstEnve
     const validation = await s.querySingle("SELECT snapshot_id, return_id, readiness_status FROM gst_return_validations WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [p.validationId, e.tenantId, e.bookSetId]);
     if (!validation) throw new DomainError("VALIDATION_NOT_FOUND", "validation not found");
 
-    const snapshot = await s.querySingle("SELECT id, return_id FROM gst_return_snapshots WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [validation.snapshot_id, e.tenantId, e.bookSetId]);
+    const snapshot = await s.querySingle("SELECT id, return_id, prepared_at, source_invoice_ids_json, summary_facts_json FROM gst_return_snapshots WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [validation.snapshot_id, e.tenantId, e.bookSetId]);
     if (!snapshot) throw new DomainError("SNAPSHOT_NOT_FOUND", "snapshot not found");
 
-    const csvSummaryLines = [["Period From", "Period To", "Invoice Count", "Readiness Status"]];
-    const csvDocumentLines = [["Invoice ID", "Invoice Number", "Issue Date", "Customer", "Total Amount", "HSN/SAC Recorded"]];
-    const csvLineDetailsLines = [["Invoice ID", "Line Number", "Description", "Amount", "Classification", "HSN/SAC Code"]];
-    const csvTaxComponentLines = [["Invoice ID", "Component", "Amount"]];
-    const csvValidationIssuesLines = [["Invoice ID", "Issue Code", "Severity", "Message"]];
+    const returnRow = await s.querySingle("SELECT gstin, tax_period_from, tax_period_to FROM gst_returns WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [snapshot.return_id, e.tenantId, e.bookSetId]);
+    if (!returnRow) throw new DomainError("RETURN_NOT_FOUND", "return not found");
 
-    const manifest = { validationId: p.validationId, snapshotId: validation.snapshot_id, format: "NEUTRAL_REVIEW_PACK_V1", exportedAt: new Date().toISOString() };
+    let sourceInvoiceIds: string[];
+    try {
+      const decoded = JSON.parse(String(snapshot.source_invoice_ids_json));
+      if (!Array.isArray(decoded) || decoded.some((value) => typeof value !== "string")) throw new Error("source invoice IDs are not an array of strings");
+      sourceInvoiceIds = [...decoded].sort();
+    } catch {
+      throw new DomainError("SNAPSHOT_INVALID", "GST snapshot source invoice IDs are malformed");
+    }
+
+    const csvSummaryLines: CsvCell[][] = [["GSTIN", "Period From", "Period To", "Invoice Count", "Taxable Total", "Tax Total", "Gross Total", "Readiness Status"]];
+    const csvDocumentLines: CsvCell[][] = [["Invoice ID", "Invoice Number", "Issue Date", "Customer", "Total Amount", "Place Of Supply", "Recipient Category", "Reverse Charge", "E-commerce GSTIN", "HSN/SAC Recorded"]];
+    const csvLineDetailsLines: CsvCell[][] = [["Invoice ID", "Line Number", "Invoice Line ID", "Description", "Amount", "Classification", "HSN/SAC Code", "Quantity", "Unit Of Measure"]];
+    const csvTaxComponentLines: CsvCell[][] = [["Invoice ID", "Invoice Line ID", "Line Number", "Component", "Classification", "Taxable Amount", "Rate BPS", "Tax Amount", "Evidence"]];
+    const csvValidationIssuesLines: CsvCell[][] = [["Invoice ID", "Issue Code", "Severity", "Message", "Location"]];
+    let summaryTotals: { taxableTotal: number; taxTotal: number; grossTotal: number } | undefined;
+    try {
+      const decoded = JSON.parse(String(snapshot.summary_facts_json));
+      if (decoded && typeof decoded === "object" && ["taxableTotal", "taxTotal", "grossTotal"].every((key) => Number.isSafeInteger(decoded[key]) && Number(decoded[key]) >= 0)) {
+        summaryTotals = { taxableTotal: Number(decoded.taxableTotal), taxTotal: Number(decoded.taxTotal), grossTotal: Number(decoded.grossTotal) };
+      }
+    } catch {
+      throw new DomainError("SNAPSHOT_INVALID", "GST snapshot summary facts are malformed");
+    }
+    let fallbackTaxableTotal = 0;
+    let fallbackTaxTotal = 0;
+    let fallbackGrossTotal = 0;
+
+    for (const invoiceId of sourceInvoiceIds) {
+      const invoice = await s.querySingle("SELECT id, invoice_number, issue_date, customer_id, total_minor FROM sales_invoices WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [invoiceId, e.tenantId, e.bookSetId]);
+      if (!invoice) {
+        csvDocumentLines.push([invoiceId, "", "", "", "", "", "", "", "", ""]);
+        continue;
+      }
+
+      const party = await s.querySingle("SELECT display_name FROM parties WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [invoice.customer_id, e.tenantId, e.bookSetId]);
+      const facts = await s.querySingle("SELECT id, place_of_supply_state_code, recipient_registration_category, reverse_charge_applicable, ecommerce_gstin FROM gst_outward_facts WHERE invoice_id = ? AND tenant_id = ? AND book_set_id = ?", [invoiceId, e.tenantId, e.bookSetId]);
+      const lineFacts = await s.query("SELECT sil.id, sil.line_number, sil.description, sil.amount_minor, glf.classification, glf.hsn_sac_code, glf.quantity_decimal, glf.unit_of_measure_code FROM sales_invoice_lines sil LEFT JOIN gst_outward_line_facts glf ON glf.invoice_line_id = sil.id AND glf.tenant_id = sil.tenant_id AND glf.book_set_id = sil.book_set_id WHERE sil.invoice_id = ? AND sil.tenant_id = ? AND sil.book_set_id = ? ORDER BY sil.line_number, sil.id", [invoiceId, e.tenantId, e.bookSetId]);
+      const taxSnapshot = await s.querySingle("SELECT taxable_minor, tax_minor, gross_minor FROM gst_tax_snapshots WHERE sales_invoice_id = ? AND tenant_id = ? AND book_set_id = ?", [invoiceId, e.tenantId, e.bookSetId]);
+      const taxComponents = await s.query("SELECT tc.document_line_id, tc.line_number, tc.classification, tc.component, tc.taxable_minor, tc.rate_bps, tc.tax_minor, tc.evidence_json FROM gst_tax_components tc JOIN gst_tax_snapshots ts ON ts.id = tc.snapshot_id AND ts.tenant_id = tc.tenant_id AND ts.book_set_id = tc.book_set_id WHERE ts.sales_invoice_id = ? AND tc.tenant_id = ? AND tc.book_set_id = ? ORDER BY tc.line_number, tc.component, tc.document_line_id, tc.id", [invoiceId, e.tenantId, e.bookSetId]);
+      const hasHsnSac = lineFacts.rows.some((line) => line.hsn_sac_code != null && String(line.hsn_sac_code) !== "");
+
+      const gross = taxSnapshot ? Number(taxSnapshot.gross_minor) : Number(invoice.total_minor);
+      const tax = taxSnapshot ? Number(taxSnapshot.tax_minor) : 0;
+      const taxable = taxSnapshot ? Number(taxSnapshot.taxable_minor) : Number(invoice.total_minor);
+      fallbackTaxableTotal += taxable;
+      fallbackTaxTotal += tax;
+      fallbackGrossTotal += gross;
+      csvDocumentLines.push([invoiceId, String(invoice.invoice_number), String(invoice.issue_date), party ? String(party.display_name) : "", Number(invoice.total_minor), facts?.place_of_supply_state_code == null ? "" : String(facts.place_of_supply_state_code), facts?.recipient_registration_category == null ? "" : String(facts.recipient_registration_category), Number(facts?.reverse_charge_applicable ?? 0) === 1 ? "TRUE" : "FALSE", facts?.ecommerce_gstin == null ? "" : String(facts.ecommerce_gstin), hasHsnSac ? "TRUE" : "FALSE"]);
+
+      for (const line of lineFacts.rows) {
+        csvLineDetailsLines.push([invoiceId, Number(line.line_number), String(line.id), String(line.description), Number(line.amount_minor), line.classification == null ? "" : String(line.classification), line.hsn_sac_code == null ? "" : String(line.hsn_sac_code), line.quantity_decimal == null ? "" : String(line.quantity_decimal), line.unit_of_measure_code == null ? "" : String(line.unit_of_measure_code)]);
+      }
+      for (const component of taxComponents.rows) {
+        csvTaxComponentLines.push([invoiceId, String(component.document_line_id), Number(component.line_number), String(component.component), String(component.classification), Number(component.taxable_minor), Number(component.rate_bps), Number(component.tax_minor), String(component.evidence_json)]);
+      }
+    }
+
+    let issues: Array<Record<string, unknown>> = [];
+    try {
+      const decoded = JSON.parse(String((await s.querySingle("SELECT issues_json FROM gst_return_validations WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [p.validationId, e.tenantId, e.bookSetId]))?.issues_json ?? "[]"));
+      if (Array.isArray(decoded)) issues = decoded.filter((value): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value));
+    } catch {
+      throw new DomainError("VALIDATION_INVALID", "GST validation issues are malformed");
+    }
+    issues.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    for (const issue of issues) {
+      csvValidationIssuesLines.push([issue.invoiceId == null ? "" : String(issue.invoiceId), issue.code == null ? "" : String(issue.code), issue.severity == null ? "" : String(issue.severity), issue.message == null ? "" : String(issue.message), issue.location == null ? "" : String(issue.location)]);
+    }
+    const totals = summaryTotals ?? { taxableTotal: fallbackTaxableTotal, taxTotal: fallbackTaxTotal, grossTotal: fallbackGrossTotal };
+    csvSummaryLines.push([String(returnRow.gstin), String(returnRow.tax_period_from), String(returnRow.tax_period_to), sourceInvoiceIds.length, totals.taxableTotal, totals.taxTotal, totals.grossTotal, String(validation.readiness_status)]);
+
+    const manifest = { validationId: p.validationId, snapshotId: validation.snapshot_id, format: "NEUTRAL_REVIEW_PACK_V1", sourcePreparedAt: String(snapshot.prepared_at), sourceInvoiceCount: sourceInvoiceIds.length };
     const manifestJson = JSON.stringify(manifest);
     const manifestHash = sha256(manifestJson);
 
-    const csvSummaryHash = sha256(csvSummaryLines.map(r => r.map(escapeCsv).join(",")).join("\n"));
-    const csvDocumentsHash = sha256(csvDocumentLines.map(r => r.map(escapeCsv).join(",")).join("\n"));
-    const csvLineDetailsHash = sha256(csvLineDetailsLines.map(r => r.map(escapeCsv).join(",")).join("\n"));
-    const csvTaxComponentHash = sha256(csvTaxComponentLines.map(r => r.map(escapeCsv).join(",")).join("\n"));
-    const csvValidationIssuesHash = sha256(csvValidationIssuesLines.map(r => r.map(escapeCsv).join(",")).join("\n"));
+    const csvSummaryHash = sha256(csvBytes(csvSummaryLines));
+    const csvDocumentsHash = sha256(csvBytes(csvDocumentLines));
+    const csvLineDetailsHash = sha256(csvBytes(csvLineDetailsLines));
+    const csvTaxComponentHash = sha256(csvBytes(csvTaxComponentLines));
+    const csvValidationIssuesHash = sha256(csvBytes(csvValidationIssuesLines));
 
     const exportId = randomUUID();
     const now = new Date().toISOString();

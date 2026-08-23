@@ -23,6 +23,7 @@ import {
   DRIZZLE_TDS_TCS_MIGRATION_ID,
   DRIZZLE_PAYROLL_V1_MIGRATION_ID,
   DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID,
+  DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID,
   DRIZZLE_JOURNAL_DDL,
   DRIZZLE_MIGRATIONS_TABLE,
   validateOfficialDrizzleJournal,
@@ -82,6 +83,10 @@ const DRIZZLE_EXPENSE_CLAIMS_SQL = readFileSync(
   join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID}.sql`),
   "utf8",
 );
+const DRIZZLE_GST_RETURN_READINESS_SQL = readFileSync(
+  join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`),
+  "utf8",
+);
 
 function normalizeDdl(sql: string | null | undefined): string {
   return String(sql ?? "")
@@ -138,6 +143,7 @@ function expectedCatalog(manifest: SqliteSchemaManifest, drizzle: boolean, curre
         for (const statement of DRIZZLE_FX_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_PAYROLL_SQL.split("--> statement-breakpoint")) memory.exec(statement);
         for (const statement of DRIZZLE_EXPENSE_CLAIMS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
+        for (const statement of DRIZZLE_GST_RETURN_READINESS_SQL.split("--> statement-breakpoint")) memory.exec(statement);
       }
     } else {
       memory.exec(MIGRATION_SCHEMA_SQLITE);
@@ -235,12 +241,25 @@ function exactBridgedCurrent(db: BunDatabase, manifest: SqliteSchemaManifest): b
     "uq_party_gst_profiles_scope_key", "idx_party_gst_profiles_scope_date",
     "uq_gst_snapshot_sales_invoice", "uq_gst_snapshot_vendor_bill", "uq_gst_snapshot_scope_key", "idx_gst_snapshots_register",
     "idx_gst_tax_components_snapshot",
+    "uq_gst_registrations_scope_key",
+    "uq_sales_invoice_lines_id_tenant_book_set_v1",
+    "gst_outward_facts", "gst_outward_line_facts", "gst_returns", "gst_return_snapshots", "gst_return_validations", "gst_return_exports", "gst_return_observations",
+    "uq_gst_outward_facts_scope_key", "uq_gst_outward_facts_invoice", "idx_gst_outward_facts_scope",
+    "uq_gst_line_facts_scope_key", "uq_gst_line_facts_line_number", "idx_gst_line_facts_scope",
+    "uq_gst_returns_scope_key", "uq_gst_return_registration_period", "idx_gst_returns_scope_period",
+    "uq_gst_return_snapshot_scope_key", "uq_gst_snapshot_return_version", "idx_gst_snapshot_scope_return",
+    "uq_gst_validation_scope_key", "uq_gst_validation_snapshot", "idx_gst_validation_scope_return",
+    "uq_gst_export_scope_key", "uq_gst_export_validation", "idx_gst_export_scope_return",
+    "uq_gst_observation_scope_key", "idx_gst_observation_scope_return", "idx_gst_observation_recorded_at",
     "party_gst_profiles_no_overlap", "party_gst_profiles_no_overlap_upd",
     "gst_registrations_posted_snapshot_no_update", "gst_registrations_posted_snapshot_no_delete",
     "party_gst_profiles_posted_snapshot_no_update", "party_gst_profiles_posted_snapshot_no_delete",
     "sales_invoices_posted_fields_immutable", "vendor_bills_posted_fields_immutable",
     "gst_tax_snapshots_no_update", "gst_tax_snapshots_no_delete",
     "gst_tax_components_no_update", "gst_tax_components_no_delete",
+    "gst_outward_facts_no_update", "gst_outward_facts_no_delete", "gst_line_facts_no_update", "gst_line_facts_no_delete",
+    "gst_snapshots_no_update", "gst_snapshots_no_delete", "gst_validations_no_update", "gst_validations_no_delete",
+    "gst_exports_no_update", "gst_exports_no_delete", "gst_observations_no_update", "gst_observations_no_delete",
     "tenant_deductor_profiles", "party_tax_profiles", "tax_rule_snapshots", "withholding_events", "withholding_deposits", "withholding_deposit_allocations", "withholding_compliance_cases",
     "uq_tenant_deductor_profiles_scope_key", "idx_tenant_deductor_profiles_effective", "uq_party_tax_profiles_scope_key", "idx_party_tax_profiles_effective", "uq_tax_rule_snapshots_scope_key", "idx_tax_rule_snapshots_effective", "uq_withholding_events_document_kind", "uq_withholding_events_scope_key", "idx_withholding_events_register", "uq_withholding_deposits_scope_key", "idx_withholding_deposits_register", "uq_withholding_deposit_allocation_event", "idx_withholding_deposit_allocations_event", "uq_withholding_compliance_case_period",
     "tenant_deductor_profiles_no_overlap", "tenant_deductor_profiles_no_overlap_upd", "party_tax_profiles_no_overlap", "party_tax_profiles_no_overlap_upd", "tax_rule_snapshots_no_update", "tax_rule_snapshots_no_delete", "withholding_events_no_update", "withholding_events_no_delete", "withholding_deposits_no_update", "withholding_deposits_no_delete", "withholding_deposit_allocations_no_update", "withholding_deposit_allocations_no_delete", "withholding_compliance_cases_no_update", "withholding_compliance_cases_no_delete",

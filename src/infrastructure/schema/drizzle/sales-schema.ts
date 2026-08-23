@@ -85,6 +85,7 @@ export const salesInvoiceLines = sqliteTable(
   (table) => ({
     fkInvoice: foreignKey({ columns: [table.invoiceId, table.tenantId, table.bookSetId], foreignColumns: [salesInvoices.id, salesInvoices.tenantId, salesInvoices.bookSetId] }).onDelete("no action"),
     fkRevenue: foreignKey({ columns: [table.revenueAccountId, table.tenantId, table.bookSetId], foreignColumns: [accounts.id, accounts.tenantId, accounts.bookSetId] }).onDelete("no action"),
+    uqIdTenantBookSet: uniqueIndex("uq_sales_invoice_lines_id_tenant_book_set_v1").on(table.id, table.tenantId, table.bookSetId),
     uqLineNumber: uniqueIndex("uq_sales_invoice_line_number").on(table.invoiceId, table.lineNumber),
     idxInvoice: index("idx_sales_invoice_lines_invoice_v6").on(table.tenantId, table.bookSetId, table.invoiceId, table.lineNumber),
     chkLineNumber: check("chk_sales_invoice_line_number", sql`typeof(${table.lineNumber}) = 'integer' AND ${table.lineNumber} > 0`),

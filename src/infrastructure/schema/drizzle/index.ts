@@ -83,3 +83,14 @@ export {
   expenseAdvanceRepayments,
   expenseReimbursements,
 } from "./expense-claims-schema";
+
+// GST Return Readiness V1
+export {
+  gstOutwardFacts,
+  gstOutwardLineFacts,
+  gstReturns,
+  gstReturnSnapshots,
+  gstReturnValidations,
+  gstReturnExports,
+  gstReturnObservations,
+} from "./gst-return-readiness-schema";

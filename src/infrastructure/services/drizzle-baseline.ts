@@ -252,7 +252,7 @@ export async function synchronizeDrizzleControl(
   options: DrizzleControlInitializationOptions,
 ): Promise<void> {
   const journal = await readDrizzleJournal(session);
-  if (journal.hash !== DRIZZLE_GST_HASH) throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "Expense claims migration is not the current official Drizzle journal entry");
+  if (journal.hash !== DRIZZLE_GST_HASH) throw new DomainError("DRIZZLE_JOURNAL_MISMATCH", "GST return readiness migration is not the current official Drizzle journal entry");
   const row = await session.executeSingle("SELECT schema_version, data_format_version, state, revision, generation FROM database_control WHERE id = 1");
   if (!row || Number(row.schema_version) !== 8 || Number(row.data_format_version) !== 1 || String(row.state) !== "READY" || Number(row.revision) !== 7 || Number(row.generation) !== 1) {
     throw new DomainError("DRIZZLE_CONTROL_MISMATCH", "Cannot advance non-canonical v8 compatibility metadata");

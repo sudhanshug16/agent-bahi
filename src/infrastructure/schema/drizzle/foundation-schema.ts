@@ -136,6 +136,7 @@ export const gstRegistrations = sqliteTable(
   },
   (table) => ({
     fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    uqScope: uniqueIndex("uq_gst_registrations_scope_key").on(table.id, table.tenantId),
     idxTenant: index("idx_gst_registrations_tenant").on(table.tenantId),
     chkStatus: check("chk_gst_registration_status", sql`${table.status} IN ('ACTIVE', 'INACTIVE')`),
   })
