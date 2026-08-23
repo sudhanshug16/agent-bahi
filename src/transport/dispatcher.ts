@@ -178,6 +178,9 @@ const handlers: Record<string, Handler> = {
   "tax-case.create": (facade, input) => facade.taxCase.create(input as never),
   "tax-case.membership.refresh": (facade, input) => facade.taxCase.membershipRefresh(input as never),
   "tax-case.status": (facade, input) => facade.taxCase.status(tenantId(input), text(input, "taxCaseId")),
+  "tax-case.source.import": (facade, input) => facade.taxCase.source.import(input as never),
+  "tax-case.source.list": (facade, input) => facade.taxCase.source.list(tenantId(input), text(input, "taxCaseId")),
+  "tax-case.source.status": (facade, input) => facade.taxCase.source.status(tenantId(input), text(input, "taxCaseId"), text(input, "sourceId")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

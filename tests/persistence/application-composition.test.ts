@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
 import { brandBookSetId } from "../../src/core/types.ts";
+import { OFFICIAL_DRIZZLE_MIGRATIONS, DRIZZLE_GST_MIGRATION_ID } from "../../src/infrastructure/services/drizzle-baseline.ts";
 
 test("production composition exposes typed services without raw persistence handles", async () => {
   const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-application-"));
@@ -48,8 +49,8 @@ test("bootstrap applies the journal migration and scope resolution is active-onl
       buildId: "bootstrap-test",
     });
     const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: "0021_personal_taxcase_foundation_v1" });
-    expect(native.query("SELECT hash FROM __drizzle_migrations ORDER BY created_at").all()).toHaveLength(13);
+    expect(native.query("SELECT schema_version, last_migration_id FROM database_control").get()).toEqual({ schema_version: 8n, last_migration_id: DRIZZLE_GST_MIGRATION_ID });
+    expect(native.query("SELECT hash FROM __drizzle_migrations ORDER BY created_at").all()).toHaveLength(OFFICIAL_DRIZZLE_MIGRATIONS.length);
     native.close();
 
     const createRequestId = randomUUID();

@@ -92,6 +92,13 @@
       "when": 1787499223953,
       "tag": "0021_personal_taxcase_foundation_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787500000000,
+      "tag": "0022_personal_tax_source_intake_v1",
+      "breakpoints": true
     }
   ]
 }

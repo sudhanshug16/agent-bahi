@@ -71,7 +71,8 @@ export function drizzleCheckpointForJournalLength(length: number): DrizzleMigrat
 
 /** Checkpoints accepted by the backup/upgrade contract, including baseline. */
 export function drizzleBackupCheckpointForJournalLength(length: number): DrizzleMigrationDescriptor | undefined {
-  return [1, 8, 10, 11, 12, OFFICIAL_DRIZZLE_MIGRATIONS.length].includes(length) ? drizzleCheckpointForJournalLength(length) : undefined;
+  const current = OFFICIAL_DRIZZLE_MIGRATIONS.length;
+  return [1, 8, 10, 11, 12, current - 1, current].includes(length) ? drizzleCheckpointForJournalLength(length) : undefined;
 }
 
 // Compatibility aliases are projections of the canonical descriptors. New
@@ -89,6 +90,7 @@ export const DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID = descriptorAt(10).id;
 export const DRIZZLE_TENANT_PAN_V1_MIGRATION_ID = descriptorAt(11).id;
 export const DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID = descriptorAt(12).id;
 export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID = descriptorAt(13).id;
+export const DRIZZLE_PERSONAL_TAX_SOURCE_INTAKE_V1_MIGRATION_ID = drizzleCurrentMigration().id;
 /** Backwards-compatible name for the current official Drizzle migration. */
 export const DRIZZLE_GST_MIGRATION_ID = drizzleCurrentMigration().id;
 
@@ -118,6 +120,8 @@ export const DRIZZLE_CLOSE_PACK_V1_HASH = descriptorAt(12).hash;
 export const DRIZZLE_CLOSE_PACK_V1_CREATED_AT = descriptorAt(12).createdAt;
 export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_HASH = descriptorAt(13).hash;
 export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_CREATED_AT = descriptorAt(13).createdAt;
+export const DRIZZLE_PERSONAL_TAX_SOURCE_INTAKE_V1_HASH = drizzleCurrentMigration().hash;
+export const DRIZZLE_PERSONAL_TAX_SOURCE_INTAKE_V1_CREATED_AT = drizzleCurrentMigration().createdAt;
 export const DRIZZLE_COMPLIANCE_HASH = descriptorAt(9).hash;
 export const DRIZZLE_GST_HASH = drizzleCurrentMigration().hash;
 export const DRIZZLE_GST_CREATED_AT = drizzleCurrentMigration().createdAt;

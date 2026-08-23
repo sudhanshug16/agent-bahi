@@ -113,6 +113,9 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tax_cases",
   "tax_case_membership_versions",
   "tax_case_memberships",
+  "personal_tax_source_artifacts",
+  "tax_case_external_sources",
+  "tax_case_source_artifacts",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

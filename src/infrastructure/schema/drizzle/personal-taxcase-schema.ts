@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, foreignKey, primaryKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, blob, foreignKey, primaryKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { tenants, bookSets } from "./foundation-schema";
 
@@ -95,5 +95,76 @@ export const taxCaseMemberships = sqliteTable(
     idxCase: index("idx_tax_case_memberships_case").on(table.tenantId, table.taxCaseId, table.version, table.bookSetId),
     chkVersion: check("chk_tax_case_membership_row_version", sql`typeof(${table.version}) = 'integer' AND ${table.version} >= 1`),
     chkRevision: check("chk_tax_case_membership_ledger_revision", sql`typeof(${table.ledgerRevision}) = 'integer' AND ${table.ledgerRevision} >= 0`),
+  }),
+);
+
+export const personalTaxSourceArtifacts = sqliteTable(
+  "personal_tax_source_artifacts",
+  {
+    tenantId: text("tenant_id").notNull(),
+    contentHash: text("content_hash").notNull(),
+    id: text("id").notNull(),
+    bytes: blob("bytes", { mode: "buffer" }).notNull(),
+    byteSize: integer("byte_size").notNull(),
+    mediaType: text("media_type").notNull(),
+    originalFilename: text("original_filename").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.tenantId, table.contentHash] }),
+    fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_personal_tax_source_artifacts_id_scope").on(table.id, table.tenantId),
+    chkHash: check("chk_personal_tax_source_artifact_hash", sql`length(${table.contentHash}) = 64 AND ${table.contentHash} NOT GLOB '*[^0-9a-f]*'`),
+    chkSize: check("chk_personal_tax_source_artifact_size", sql`typeof(${table.byteSize}) = 'integer' AND ${table.byteSize} > 0`),
+    chkMetadata: check("chk_personal_tax_source_artifact_metadata", sql`length(trim(${table.mediaType})) > 0 AND length(trim(${table.originalFilename})) > 0`),
+    idxTenant: index("idx_personal_tax_source_artifacts_tenant").on(table.tenantId, table.createdAt, table.contentHash),
+  }),
+);
+
+export const taxCaseExternalSources = sqliteTable(
+  "tax_case_external_sources",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourcePeriod: text("source_period"),
+    sourceAsOf: text("source_as_of"),
+    parserIdentity: text("parser_identity").notNull(),
+    parserVersion: text("parser_version").notNull(),
+    parserStatus: text("parser_status").notNull(),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkCase: foreignKey({ columns: [table.taxCaseId, table.tenantId], foreignColumns: [taxCases.id, taxCases.tenantId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_tax_case_external_sources_id_scope").on(table.id, table.taxCaseId, table.tenantId),
+    idxCase: index("idx_tax_case_external_sources_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    chkKind: check("chk_tax_case_external_source_kind", sql`${table.sourceKind} IN ('AIS', 'TIS', 'FORM_26AS', 'OTHER')`),
+    chkParserStatus: check("chk_tax_case_external_source_parser_status", sql`${table.parserStatus} IN ('UNPARSED', 'UNSUPPORTED', 'PARSED')`),
+    chkStatus: check("chk_tax_case_external_source_status", sql`${table.status} IN ('STORED', 'INCOMPLETE', 'READY')`),
+    chkParserIdentity: check("chk_tax_case_external_source_parser_identity", sql`length(trim(${table.parserIdentity})) > 0 AND length(trim(${table.parserVersion})) > 0`),
+  }),
+);
+
+export const taxCaseSourceArtifacts = sqliteTable(
+  "tax_case_source_artifacts",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    contentHash: text("content_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkSource: foreignKey({ columns: [table.sourceId, table.taxCaseId, table.tenantId], foreignColumns: [taxCaseExternalSources.id, taxCaseExternalSources.taxCaseId, taxCaseExternalSources.tenantId] }).onDelete("no action"),
+    fkArtifact: foreignKey({ columns: [table.artifactId, table.tenantId], foreignColumns: [personalTaxSourceArtifacts.id, personalTaxSourceArtifacts.tenantId] }).onDelete("no action"),
+    fkArtifactHash: foreignKey({ columns: [table.tenantId, table.contentHash], foreignColumns: [personalTaxSourceArtifacts.tenantId, personalTaxSourceArtifacts.contentHash] }).onDelete("no action"),
+    uqSourceArtifact: uniqueIndex("uq_tax_case_source_artifacts_source_hash").on(table.sourceId, table.tenantId, table.contentHash),
+    uqScopeKey: uniqueIndex("uq_tax_case_source_artifacts_id_scope").on(table.id, table.taxCaseId, table.tenantId),
+    idxCase: index("idx_tax_case_source_artifacts_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    chkHash: check("chk_tax_case_source_artifact_hash", sql`length(${table.contentHash}) = 64 AND ${table.contentHash} NOT GLOB '*[^0-9a-f]*'`),
   }),
 );

@@ -3,7 +3,7 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { upgradeSqliteDatabase } from "../../src/application/application.ts";
-import { DRIZZLE_BASELINE_CREATED_AT, DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_JOURNAL_DDL } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_BASELINE_CREATED_AT, DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, OFFICIAL_DRIZZLE_MIGRATIONS } from "../../src/infrastructure/services/drizzle-baseline.ts";
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
 
 describe("pending official Drizzle GST upgrade", () => {
@@ -33,7 +33,7 @@ describe("pending official Drizzle GST upgrade", () => {
 
       await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "current.backup") });
       const current = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-      expect(current.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 13n });
+      expect(current.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: BigInt(OFFICIAL_DRIZZLE_MIGRATIONS.length) });
       current.close();
     } finally {
       await rm(directory, { recursive: true, force: true });

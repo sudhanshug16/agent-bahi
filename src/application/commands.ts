@@ -11,7 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
-export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import";
 
 export interface Actor {
   kind: ActorKind;
@@ -71,6 +71,19 @@ export interface TaxCaseCreatePayload {
 export interface TaxCaseMembershipRefreshPayload {
   taxCaseId: string;
   bookSetIds?: string[];
+}
+
+export type TaxCaseSourceKind = "AIS" | "TIS" | "FORM_26AS" | "OTHER";
+
+export interface TaxCaseSourceImportPayload {
+  taxCaseId: string;
+  sourceKind: TaxCaseSourceKind;
+  sourcePeriod?: string;
+  sourceAsOf?: string;
+  mediaType: string;
+  originalFilename: string;
+  filePath?: string;
+  contentBase64?: string;
 }
 
 export interface CommandResult<T> {

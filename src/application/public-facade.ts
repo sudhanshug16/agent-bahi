@@ -34,8 +34,8 @@ import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot
 import { PeriodCloseService, type PeriodClosePayload, type PeriodReopenPayload, type PeriodPlan, type PeriodEventResult } from "./services/period-close-service.ts";
 import { ClosePackService, type ClosePackExportPayload, type ClosePackExportResult, type ClosePackManifest } from "./services/close-pack-service.ts";
 import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
-import { createTaxCase, refreshTaxCaseMembership, taxCaseStatus, type TaxCaseStatus } from "./services/tax-case-service.ts";
-import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload } from "./commands.ts";
+import { createTaxCase, refreshTaxCaseMembership, taxCaseStatus, importTaxCaseSource, listTaxCaseSources, taxCaseSourceStatus, type TaxCaseStatus } from "./services/tax-case-service.ts";
+import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload } from "./commands.ts";
 
 /**
  * Read-only tenant operations
@@ -222,6 +222,11 @@ export interface TaxCaseOperations {
   create(envelope: CommandEnvelope<TaxCaseCreatePayload>): Promise<CommandResult<Record<string, unknown>>>;
   membershipRefresh(envelope: CommandEnvelope<TaxCaseMembershipRefreshPayload>): Promise<CommandResult<Record<string, unknown>>>;
   status(tenantId: TenantId, taxCaseId: string): Promise<TaxCaseStatus>;
+  source: {
+    import(envelope: CommandEnvelope<TaxCaseSourceImportPayload>): Promise<CommandResult<Record<string, unknown>>>;
+    list(tenantId: TenantId, taxCaseId: string): Promise<Record<string, unknown>[]>;
+    status(tenantId: TenantId, taxCaseId: string, sourceId: string): Promise<Record<string, unknown>>;
+  };
 }
 
 /**
@@ -404,6 +409,11 @@ export function createPublicFacade(
       create: (envelope) => createTaxCase(sessionRunner, envelope),
       membershipRefresh: (envelope) => refreshTaxCaseMembership(sessionRunner, envelope),
       status: (tenantId, taxCaseId) => taxCaseStatus(sessionRunner, tenantId, taxCaseId),
+      source: {
+        import: (envelope) => importTaxCaseSource(sessionRunner, envelope),
+        list: (tenantId, taxCaseId) => listTaxCaseSources(sessionRunner, tenantId, taxCaseId),
+        status: (tenantId, taxCaseId, sourceId) => taxCaseSourceStatus(sessionRunner, tenantId, taxCaseId, sourceId),
+      },
     },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },

@@ -24,7 +24,7 @@ import { DatabaseControlService } from "../../src/infrastructure/services/databa
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
 import { detectLegacyState, inspectLegacyDatabase } from "../../src/infrastructure/services/legacy-bridge-service.ts";
 import { MIGRATION_CATALOG, KNOWN_SCHEMA_MANIFESTS } from "../../src/infrastructure/schema/migration-catalog.ts";
-import { DRIZZLE_CLOSE_PACK_V1_HASH, DRIZZLE_FIXED_ASSETS_HASH, DRIZZLE_FX_V1_HASH, DRIZZLE_GST_HASH, DRIZZLE_GST_V1_HASH, DRIZZLE_TDS_TCS_HASH, DRIZZLE_PAYROLL_V1_HASH, DRIZZLE_EXPENSE_CLAIMS_V1_HASH, DRIZZLE_GST_RETURN_READINESS_V1_HASH, DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, DRIZZLE_PERIOD_CLOSE_V1_HASH, DRIZZLE_TENANT_PAN_V1_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { OFFICIAL_DRIZZLE_MIGRATIONS } from "../../src/infrastructure/services/drizzle-baseline.ts";
 
 async function createLegacyFixture(path: string, schemaVersion: number): Promise<void> {
   const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === schemaVersion)!;
@@ -247,21 +247,7 @@ describe("Legacy Bridge and Restore", () => {
     try {
       expect(detectDatabaseState(db).state).toBe("DRIZZLE_BRIDGED");
       expect(db.query("SELECT id, name FROM tenants").all()).toEqual(beforeTenant);
-      expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([
-        { id: 1n, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" },
-        { id: 2n, hash: DRIZZLE_GST_V1_HASH },
-        { id: 3n, hash: DRIZZLE_TDS_TCS_HASH },
-        { id: 4n, hash: DRIZZLE_FIXED_ASSETS_HASH },
-        { id: 5n, hash: DRIZZLE_FX_V1_HASH },
-        { id: 6n, hash: DRIZZLE_PAYROLL_V1_HASH },
-        { id: 7n, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH },
-        { id: 8n, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH },
-        { id: 9n, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH },
-        { id: 10n, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH },
-        { id: 11n, hash: DRIZZLE_TENANT_PAN_V1_HASH },
-        { id: 12n, hash: DRIZZLE_CLOSE_PACK_V1_HASH },
-        { id: 13n, hash: DRIZZLE_GST_HASH },
-      ]);
+      expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual(OFFICIAL_DRIZZLE_MIGRATIONS.map((migration) => ({ id: BigInt(migration.order), hash: migration.hash })));
     } finally { db.close(); }
   });
 

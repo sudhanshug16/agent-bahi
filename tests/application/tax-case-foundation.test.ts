@@ -45,6 +45,7 @@ describe("Personal TaxCase foundation", () => {
       const addedStale = await app.taxCase.status(individual.tenantId, "case-1");
       expect(addedStale.status).toBe("STALE");
       expect(addedStale.reasons).toEqual(["ELIGIBLE_BOOKSET_ADDED"]);
+      await expect(app.taxCase.membershipRefresh(envelope(individual.tenantId, randomUUID(), { taxCaseId: "case-1", bookSetIds: [individual.defaultBookSetId, prop.bookSetId] }))).rejects.toMatchObject({ code: "TAX_CASE_BOOKSET_SET_MISMATCH" });
       const changed = await app.taxCase.membershipRefresh(envelope(individual.tenantId, randomUUID(), { taxCaseId: "case-1" }));
       expect(JSON.parse(changed.resultJson)).toMatchObject({ changed: true, membershipVersion: 2 });
       await app.bookSet.archive(envelope(individual.tenantId, randomUUID(), { bookSetId: prop2.bookSetId }));
