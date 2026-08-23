@@ -36,8 +36,9 @@ import { ClosePackService, type ClosePackExportPayload, type ClosePackExportResu
 import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
 import { createTaxCase, refreshTaxCaseMembership, taxCaseStatus, importTaxCaseSource, listTaxCaseSources, taxCaseSourceStatus, type TaxCaseStatus } from "./services/tax-case-service.ts";
 import { proposeTaxCaseFact, confirmTaxCaseFact, rejectTaxCaseFact, listTaxCaseFacts, recordTaxCaseReconciliation, listTaxCaseReconciliations, taxCaseFactSummary } from "./services/tax-case-facts-service.ts";
+import { prepareTaxCaseSourceAssessment, confirmTaxCaseSourceAssessment, rejectTaxCaseSourceAssessment, showTaxCaseSourceAssessment, taxCaseSourceReadinessStatus } from "./services/tax-case-source-readiness-service.ts";
 import { previewTaxCaseFilingSnapshot, sealTaxCaseFilingSnapshot, showTaxCaseFilingSnapshot, statusTaxCaseFilingSnapshot, type FilingSnapshotPreview } from "./services/tax-case-filing-snapshot-service.ts";
-import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload } from "./commands.ts";
+import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload, TaxCaseSourceAssessmentPreparePayload, TaxCaseSourceAssessmentDecisionPayload } from "./commands.ts";
 
 /**
  * Read-only tenant operations
@@ -228,6 +229,12 @@ export interface TaxCaseOperations {
     import(envelope: CommandEnvelope<TaxCaseSourceImportPayload>): Promise<CommandResult<Record<string, unknown>>>;
     list(tenantId: TenantId, taxCaseId: string): Promise<Record<string, unknown>[]>;
     status(tenantId: TenantId, taxCaseId: string, sourceId: string): Promise<Record<string, unknown>>;
+    assessment: {
+      prepare(envelope: CommandEnvelope<TaxCaseSourceAssessmentPreparePayload>): Promise<CommandResult<Record<string, unknown>>>;
+      confirm(envelope: CommandEnvelope<TaxCaseSourceAssessmentDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>;
+      reject(envelope: CommandEnvelope<TaxCaseSourceAssessmentDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>;
+      show(tenantId: TenantId, taxCaseId: string, sourceId: string, assessmentId: string): Promise<Record<string, unknown>>;
+    };
   };
   fact: {
     propose(envelope: CommandEnvelope<TaxCaseFactProposePayload>): Promise<CommandResult<Record<string, unknown>>>;
@@ -432,7 +439,13 @@ export function createPublicFacade(
       source: {
         import: (envelope) => importTaxCaseSource(sessionRunner, envelope),
         list: (tenantId, taxCaseId) => listTaxCaseSources(sessionRunner, tenantId, taxCaseId),
-        status: (tenantId, taxCaseId, sourceId) => taxCaseSourceStatus(sessionRunner, tenantId, taxCaseId, sourceId),
+        status: async (tenantId, taxCaseId, sourceId) => ({ ...(await taxCaseSourceStatus(sessionRunner, tenantId, taxCaseId, sourceId)), ...(await taxCaseSourceReadinessStatus(sessionRunner, tenantId, taxCaseId, sourceId)) }),
+        assessment: {
+          prepare: (envelope) => prepareTaxCaseSourceAssessment(sessionRunner, envelope),
+          confirm: (envelope) => confirmTaxCaseSourceAssessment(sessionRunner, envelope),
+          reject: (envelope) => rejectTaxCaseSourceAssessment(sessionRunner, envelope),
+          show: (tenantId, taxCaseId, sourceId, assessmentId) => showTaxCaseSourceAssessment(sessionRunner, tenantId, taxCaseId, sourceId, assessmentId),
+        },
       },
       fact: {
         propose: (envelope) => proposeTaxCaseFact(sessionRunner, envelope),

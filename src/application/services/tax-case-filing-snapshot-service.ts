@@ -4,6 +4,7 @@ import type { CommandEnvelope, CommandResult } from "../commands.ts";
 import { canonicalJson, computeCommandHash, computeResultHash } from "../commands.ts";
 import { DomainError, IdempotencyConflictError, IdempotencyCorruptError } from "../../core/types.ts";
 import { validateCommandEnvelope } from "./bookset-command-service.ts";
+import { sourceReadinessInSession } from "./tax-case-source-readiness-service.ts";
 
 const COMMAND = "tax-case.filing-snapshot.seal";
 const SNAPSHOT_KIND = "PERSONAL_TAX_FILING_SNAPSHOT_V1";
@@ -71,13 +72,14 @@ async function sourceBindings(session: BusinessSession, tenantId: string, taxCas
   for (const source of sourceRows.rows) {
     const links = await session.query("SELECT l.id AS link_id, l.artifact_id, l.content_hash, a.id AS stored_artifact_id, a.byte_size FROM tax_case_source_artifacts l LEFT JOIN personal_tax_source_artifacts a ON a.id = l.artifact_id AND a.tenant_id = l.tenant_id AND a.content_hash = l.content_hash WHERE l.tenant_id = ? AND l.tax_case_id = ? AND l.source_id = ? ORDER BY l.content_hash, l.id", [tenantId, taxCaseId, String(source.id)]);
     if (links.rows.length === 0) blocker(blockers, "SOURCE_ARTIFACT_MISSING");
-    if (String(source.status) !== "READY" || String(source.parser_status) !== "PARSED") blocker(blockers, "SOURCE_NOT_READY");
+    const readiness = await sourceReadinessInSession(session, tenantId, taxCaseId, String(source.id));
+    if (String(readiness.readinessStatus) !== "READY") blocker(blockers, "SOURCE_NOT_READY");
     for (const link of links.rows) {
       const artifactReady = link.stored_artifact_id != null && Number(link.byte_size ?? 0) > 0 && /^[0-9a-f]{64}$/.test(String(link.content_hash));
       if (!artifactReady) blocker(blockers, "SOURCE_ARTIFACT_MISSING");
       result.push({
         sourceId: String(source.id), sourceKind: String(source.source_kind), sourcePeriod: source.source_period == null ? null : String(source.source_period), sourceAsOf: source.source_as_of == null ? null : String(source.source_as_of),
-        parser: { identity: String(source.parser_identity), version: String(source.parser_version), status: String(source.parser_status) }, sourceStatus: String(source.status), artifactId: String(link.artifact_id), contentHash: String(link.content_hash),
+        parser: { identity: String(source.parser_identity), version: String(source.parser_version), status: String(source.parser_status) }, sourceStatus: String(readiness.readinessStatus), artifactId: String(link.artifact_id), contentHash: String(link.content_hash),
       });
     }
   }

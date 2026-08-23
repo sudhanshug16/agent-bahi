@@ -127,6 +127,16 @@ export interface TaxCaseReconciliationRecordPayload {
 
 export interface TaxCaseFilingSnapshotSealPayload { taxCaseId: string; candidateHash: string; snapshotId?: string; }
 
+export type TaxCaseSourceAssessmentExtractionMode = "MACHINE" | "AGENT_ASSISTED" | "MANUAL";
+export type TaxCaseSourceAssessmentOutcome = "FACTS_PRESENT" | "EMPTY";
+export interface TaxCaseSourceAssessmentPreparePayload {
+  taxCaseId: string; sourceId: string; artifactId: string; contentHash: string; parserIdentity: string; parserVersion: string; modelDescriptor?: string;
+  extractionMode: TaxCaseSourceAssessmentExtractionMode; sourceKind: TaxCaseSourceKind; sourcePeriod?: string; sourceAsOf?: string;
+  recordCount?: number; pageCount?: number; sectionCount?: number; coverage?: Record<string, unknown>; factIds: string[]; issues?: unknown[]; warnings?: unknown[];
+  outcomeCandidate: TaxCaseSourceAssessmentOutcome; supersedesAssessmentId?: string; assessmentId?: string;
+}
+export interface TaxCaseSourceAssessmentDecisionPayload { taxCaseId: string; sourceId: string; assessmentId: string; expectedAssessmentHash: string; reason: string; }
+
 export interface CommandResult<T> {
   resultJson: string;
   resultHash: string;
