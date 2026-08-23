@@ -43,7 +43,7 @@ function rounded(numerator: bigint, denominator: bigint, policy: FxRoundingPolic
   return policy === "HALF_EVEN" && quotient % 2n === 0n ? quotient : quotient + 1n;
 }
 
-export function convertForeignMinor(foreignMinor: bigint, rate: ExactRate, policy: FxRoundingPolicy, baseExponent = 2, foreignExponent = 2): bigint {
+export function convertForeignMinor(foreignMinor: bigint, rate: ExactRate, policy: FxRoundingPolicy, baseExponent: number, foreignExponent = 2): bigint {
   if (foreignMinor <= 0n) throw new DomainError("INVALID_AMOUNT", "foreign amount must be positive");
   const exponentFactor = baseExponent >= foreignExponent ? 10n ** BigInt(baseExponent - foreignExponent) : 1n;
   const denominatorFactor = foreignExponent > baseExponent ? 10n ** BigInt(foreignExponent - baseExponent) : 1n;
@@ -51,7 +51,7 @@ export function convertForeignMinor(foreignMinor: bigint, rate: ExactRate, polic
 }
 
 /** Allocate one document-level rounded total without floating point. */
-export function convertDocumentLines(foreignMinor: readonly bigint[], rate: ExactRate, policy: FxRoundingPolicy, baseExponent = 2, foreignExponent = 2): bigint[] {
+export function convertDocumentLines(foreignMinor: readonly bigint[], rate: ExactRate, policy: FxRoundingPolicy, baseExponent: number, foreignExponent = 2): bigint[] {
   if (foreignMinor.length === 0 || foreignMinor.some((amount) => amount <= 0n)) throw new DomainError("INVALID_AMOUNT", "document lines must contain positive amounts");
   const exponentFactor = baseExponent >= foreignExponent ? 10n ** BigInt(baseExponent - foreignExponent) : 1n;
   const denominatorFactor = foreignExponent > baseExponent ? 10n ** BigInt(foreignExponent - baseExponent) : 1n;

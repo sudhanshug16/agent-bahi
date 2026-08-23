@@ -190,7 +190,7 @@ export async function executeInvoiceCreate(sessionRunner: BusinessSessionRunner,
       await session.execute("INSERT INTO sales_invoice_lines (id, tenant_id, book_set_id, invoice_id, line_number, description, revenue_account_id, amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [lineId, envelope.tenantId, envelope.bookSetId, invoiceId, index + 1, line.description, line.revenueAccountId, fxLines?.baseLines[index] ?? line.amountMinor]);
       if (fxLines) await session.execute("INSERT INTO fx_document_line_amounts (id, tenant_id, book_set_id, document_type, document_id, line_id, line_number, foreign_minor, base_minor, created_at) VALUES (?, ?, ?, 'SALES_INVOICE', ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, invoiceId, lineId, index + 1, fxLines.foreignLines[index], fxLines.baseLines[index], now]);
     }
-    if (fxLines) await session.execute("INSERT INTO fx_document_facts (id, tenant_id, book_set_id, document_type, document_id, currency_code, exponent, rate_snapshot_id, rounding_policy, total_foreign_minor, total_base_minor, created_at) VALUES (?, ?, ?, 'SALES_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, invoiceId, fxLines.currencyCode, fxLines.exponent, fxLines.rateId, fxLines.roundingPolicy, fxLines.totalForeignMinor, fxLines.totalBaseMinor, now]);
+    if (fxLines) await session.execute("INSERT INTO fx_document_facts (id, tenant_id, book_set_id, document_type, document_id, currency_code, exponent, base_exponent, rate_snapshot_id, rounding_policy, total_foreign_minor, total_base_minor, created_at) VALUES (?, ?, ?, 'SALES_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, invoiceId, fxLines.currencyCode, fxLines.exponent, fxLines.baseExponent, fxLines.rateId, fxLines.roundingPolicy, fxLines.totalForeignMinor, fxLines.totalBaseMinor, now]);
     return finishCommand(session, envelope, "invoice.create", requestHash, { invoiceId, invoiceNumber, totalMinor, status: "DRAFT", ...(fxLines ? { currencyCode: fxLines.currencyCode, totalForeignMinor: fxLines.totalForeignMinor } : {}) }, "sales_invoice", invoiceId, now);
   });
 }
@@ -284,7 +284,7 @@ export async function executeReceiptRecord(sessionRunner: BusinessSessionRunner,
       let realizedGainLoss = 0;
       if (allocation.fx) {
         await assertNoUnreversedRevaluation(session, envelope.tenantId, envelope.bookSetId, "SALES_INVOICE", allocation.invoiceId);
-        const fact = await session.querySingle("SELECT currency_code, exponent, total_foreign_minor, total_base_minor FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'SALES_INVOICE' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.invoiceId]);
+        const fact = await session.querySingle("SELECT currency_code, exponent, base_exponent, total_foreign_minor, total_base_minor FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'SALES_INVOICE' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.invoiceId]);
         if (!fact) throw new DomainError("FX_DOCUMENT_REQUIRED", "foreign allocation requires a foreign-currency invoice");
         const foreignMinor = positiveMinor(allocation.fx.foreignAmountMinor, "foreign allocation amount");
         const priorRows = await session.query("SELECT foreign_minor, carrying_base_minor FROM fx_allocation_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'SALES_INVOICE' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.invoiceId]);
@@ -293,7 +293,8 @@ export async function executeReceiptRecord(sessionRunner: BusinessSessionRunner,
         if (foreignMinor > totalForeign - priorForeign) throw new DomainError("OVER_ALLOCATION", "foreign allocation exceeds invoice outstanding amount");
         const rate = await loadRate(session, envelope.tenantId, envelope.bookSetId, allocation.fx.settlementRateSnapshotId, "SETTLEMENT", String(fact.currency_code));
         if (rate.exponent !== Number(fact.exponent)) throw new DomainError("CURRENCY_EXPONENT_MISMATCH", "settlement rate exponent does not match invoice");
-        const calculated = safeNumber(convertForeignMinor(BigInt(foreignMinor), rate.rate, "HALF_UP", 2, rate.exponent), "calculated bank amount");
+        if (rate.baseExponent !== Number(fact.base_exponent)) throw new DomainError("BASE_CURRENCY_DEFINITION_REQUIRED", "settlement rate base exponent does not match invoice");
+        const calculated = safeNumber(convertForeignMinor(BigInt(foreignMinor), rate.rate, "HALF_UP", rate.baseExponent, rate.exponent), "calculated bank amount");
         if (calculated !== allocation.fx.actualBankBaseMinor) throw new DomainError("FX_BANK_AMOUNT_MISMATCH", "actual bank amount does not equal the supplied settlement rate calculation");
         carryingRelief = safeNumber(proportionalCarryingBase(BigInt(String(fact.total_base_minor)), BigInt(totalForeign), BigInt(priorForeign), BigInt(foreignMinor)), "carrying relief");
         if (carryingRelief > totalMinor - paidMinor) throw new DomainError("OVER_ALLOCATION", "FX carrying allocation exceeds invoice outstanding amount");
@@ -319,11 +320,11 @@ export async function executeReceiptRecord(sessionRunner: BusinessSessionRunner,
       if (allocation.fx) {
         const carrying = await session.querySingle("SELECT carrying_base_minor, realized_gain_loss_minor FROM fx_allocation_facts WHERE tenant_id = ? AND book_set_id = ? AND allocation_id = ?", [envelope.tenantId, envelope.bookSetId, allocationId]);
         if (!carrying) {
-          const fact = await session.querySingle("SELECT total_foreign_minor, total_base_minor, currency_code FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'SALES_INVOICE' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.invoiceId]);
+          const fact = await session.querySingle("SELECT total_foreign_minor, total_base_minor, currency_code, base_exponent FROM fx_document_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'SALES_INVOICE' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.invoiceId]);
           const priorRows = await session.query("SELECT foreign_minor FROM fx_allocation_facts WHERE tenant_id = ? AND book_set_id = ? AND document_type = 'SALES_INVOICE' AND document_id = ?", [envelope.tenantId, envelope.bookSetId, allocation.invoiceId]);
           const priorForeign = priorRows.rows.reduce((sum, row) => sum + Number(row.foreign_minor), 0);
           const carryingBaseMinor = safeNumber(proportionalCarryingBase(BigInt(String(fact!.total_base_minor)), BigInt(String(fact!.total_foreign_minor)), BigInt(priorForeign), BigInt(allocation.fx.foreignAmountMinor)), "carrying relief");
-          await session.execute("INSERT INTO fx_allocation_facts (id, tenant_id, book_set_id, allocation_type, allocation_id, document_type, document_id, foreign_minor, carrying_base_minor, actual_bank_base_minor, rate_snapshot_id, realized_gain_loss_minor, gain_loss_account_id, created_at) VALUES (?, ?, ?, 'RECEIPT', ?, 'SALES_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, allocationId, allocation.invoiceId, allocation.fx.foreignAmountMinor, carryingBaseMinor, allocation.fx.actualBankBaseMinor, allocation.fx.settlementRateSnapshotId, allocation.fx.actualBankBaseMinor - carryingBaseMinor, allocation.fx.realizedGainLossAccountId, now]);
+          await session.execute("INSERT INTO fx_allocation_facts (id, tenant_id, book_set_id, allocation_type, allocation_id, document_type, document_id, foreign_minor, carrying_base_minor, actual_bank_base_minor, base_exponent, rate_snapshot_id, realized_gain_loss_minor, gain_loss_account_id, created_at) VALUES (?, ?, ?, 'RECEIPT', ?, 'SALES_INVOICE', ?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, allocationId, allocation.invoiceId, allocation.fx.foreignAmountMinor, carryingBaseMinor, allocation.fx.actualBankBaseMinor, Number(fact!.base_exponent), allocation.fx.settlementRateSnapshotId, allocation.fx.actualBankBaseMinor - carryingBaseMinor, allocation.fx.realizedGainLossAccountId, now]);
         }
       }
     }

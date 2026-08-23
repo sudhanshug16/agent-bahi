@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "2d33dd72-3e99-4ae4-9863-b0a752a243b7",
-  "prevId": "d593d95c-679e-4d19-876f-2916702a3756",
+  "id": "6decc284-0b25-434a-978e-ea33ede3c8d9",
+  "prevId": "2d33dd72-3e99-4ae4-9863-b0a752a243b7",
   "tables": {
     "bank_matches": {
       "name": "bank_matches",
@@ -3872,6 +3872,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "base_exponent": {
+          "name": "base_exponent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "rate_snapshot_id": {
           "name": "rate_snapshot_id",
           "type": "text",
@@ -3986,6 +3993,10 @@
           "name": "chk_fx_allocation_facts_document",
           "value": "\"fx_allocation_facts\".\"document_type\" IN ('SALES_INVOICE', 'VENDOR_BILL')"
         },
+        "chk_fx_allocation_facts_base_exponent": {
+          "name": "chk_fx_allocation_facts_base_exponent",
+          "value": "\"fx_allocation_facts\".\"base_exponent\" BETWEEN 0 AND 6"
+        },
         "chk_fx_allocation_facts_amounts": {
           "name": "chk_fx_allocation_facts_amounts",
           "value": "\"fx_allocation_facts\".\"foreign_minor\" > 0 AND \"fx_allocation_facts\".\"carrying_base_minor\" > 0 AND \"fx_allocation_facts\".\"actual_bank_base_minor\" > 0"
@@ -4039,6 +4050,13 @@
         },
         "exponent": {
           "name": "exponent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "base_exponent": {
+          "name": "base_exponent",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -4147,6 +4165,10 @@
         "chk_fx_document_facts_exponent": {
           "name": "chk_fx_document_facts_exponent",
           "value": "\"fx_document_facts\".\"exponent\" BETWEEN 0 AND 6"
+        },
+        "chk_fx_document_facts_base_exponent": {
+          "name": "chk_fx_document_facts_base_exponent",
+          "value": "\"fx_document_facts\".\"base_exponent\" BETWEEN 0 AND 6"
         },
         "chk_fx_document_facts_rounding": {
           "name": "chk_fx_document_facts_rounding",
@@ -4316,6 +4338,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "base_exponent": {
+          "name": "base_exponent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "foreign_currency_code": {
           "name": "foreign_currency_code",
           "type": "text",
@@ -4409,6 +4438,15 @@
         }
       },
       "indexes": {
+        "uq_fx_rate_snapshots_scope": {
+          "name": "uq_fx_rate_snapshots_scope",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
         "uq_fx_rate_snapshot_hash": {
           "name": "uq_fx_rate_snapshot_hash",
           "columns": [
@@ -4452,7 +4490,11 @@
       "checkConstraints": {
         "chk_fx_rate_snapshot_codes": {
           "name": "chk_fx_rate_snapshot_codes",
-          "value": "length(\"fx_rate_snapshots\".\"base_currency_code\") = 3 AND \"fx_rate_snapshots\".\"base_currency_code\" NOT GLOB '*[^A-Z]*' AND length(\"fx_rate_snapshots\".\"foreign_currency_code\") = 3 AND \"fx_rate_snapshots\".\"foreign_currency_code\" NOT GLOB '*[^A-Z]*' AND \"fx_rate_snapshots\".\"base_currency_code\" <> \"fx_rate_snapshots\".\"foreign_currency_code\""
+          "value": "length(\"fx_rate_snapshots\".\"base_currency_code\") = 3 AND \"fx_rate_snapshots\".\"base_currency_code\" NOT GLOB '*[^A-Z]*' AND length(\"fx_rate_snapshots\".\"foreign_currency_code\") = 3 AND \"fx_rate_snapshots\".\"foreign_currency_code\" NOT GLOB '*[^A-Z]*'"
+        },
+        "chk_fx_rate_snapshot_base_exponent": {
+          "name": "chk_fx_rate_snapshot_base_exponent",
+          "value": "\"fx_rate_snapshots\".\"base_exponent\" BETWEEN 0 AND 6"
         },
         "chk_fx_rate_snapshot_exponent": {
           "name": "chk_fx_rate_snapshot_exponent",
@@ -4560,6 +4602,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "base_exponent": {
+          "name": "base_exponent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "rate_snapshot_id": {
           "name": "rate_snapshot_id",
           "type": "text",
@@ -4628,6 +4677,10 @@
         "chk_fx_revaluation_lines_document": {
           "name": "chk_fx_revaluation_lines_document",
           "value": "\"fx_revaluation_lines\".\"document_type\" IN ('SALES_INVOICE', 'VENDOR_BILL')"
+        },
+        "chk_fx_revaluation_lines_base_exponent": {
+          "name": "chk_fx_revaluation_lines_base_exponent",
+          "value": "\"fx_revaluation_lines\".\"base_exponent\" BETWEEN 0 AND 6"
         },
         "chk_fx_revaluation_lines_open": {
           "name": "chk_fx_revaluation_lines_open",
@@ -4703,6 +4756,15 @@
         }
       },
       "indexes": {
+        "uq_fx_revaluation_policies_scope": {
+          "name": "uq_fx_revaluation_policies_scope",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
         "uq_fx_revaluation_policies_scope_hash": {
           "name": "uq_fx_revaluation_policies_scope_hash",
           "columns": [
@@ -4929,6 +4991,15 @@
         }
       },
       "indexes": {
+        "uq_fx_revaluation_runs_scope": {
+          "name": "uq_fx_revaluation_runs_scope",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
         "uq_fx_revaluation_runs_scope_date_policy": {
           "name": "uq_fx_revaluation_runs_scope_date_policy",
           "columns": [

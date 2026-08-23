@@ -42,6 +42,7 @@ CREATE TABLE `fx_allocation_facts` (
 	`foreign_minor` integer NOT NULL,
 	`carrying_base_minor` integer NOT NULL,
 	`actual_bank_base_minor` integer NOT NULL,
+	`base_exponent` integer NOT NULL,
 	`rate_snapshot_id` text NOT NULL,
 	`realized_gain_loss_minor` integer NOT NULL,
 	`gain_loss_account_id` text NOT NULL,
@@ -51,6 +52,7 @@ CREATE TABLE `fx_allocation_facts` (
 	FOREIGN KEY (`gain_loss_account_id`,`tenant_id`,`book_set_id`) REFERENCES `accounts`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_fx_allocation_facts_type" CHECK("fx_allocation_facts"."allocation_type" IN ('RECEIPT', 'VENDOR_PAYMENT')),
 	CONSTRAINT "chk_fx_allocation_facts_document" CHECK("fx_allocation_facts"."document_type" IN ('SALES_INVOICE', 'VENDOR_BILL')),
+	CONSTRAINT "chk_fx_allocation_facts_base_exponent" CHECK("fx_allocation_facts"."base_exponent" BETWEEN 0 AND 6),
 	CONSTRAINT "chk_fx_allocation_facts_amounts" CHECK("fx_allocation_facts"."foreign_minor" > 0 AND "fx_allocation_facts"."carrying_base_minor" > 0 AND "fx_allocation_facts"."actual_bank_base_minor" > 0)
 );
 --> statement-breakpoint
@@ -64,6 +66,7 @@ CREATE TABLE `fx_document_facts` (
 	`document_id` text NOT NULL,
 	`currency_code` text NOT NULL,
 	`exponent` integer NOT NULL,
+	`base_exponent` integer NOT NULL,
 	`rate_snapshot_id` text NOT NULL,
 	`rounding_policy` text NOT NULL,
 	`total_foreign_minor` integer NOT NULL,
@@ -73,6 +76,7 @@ CREATE TABLE `fx_document_facts` (
 	FOREIGN KEY (`rate_snapshot_id`,`tenant_id`,`book_set_id`) REFERENCES `fx_rate_snapshots`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_fx_document_facts_type" CHECK("fx_document_facts"."document_type" IN ('SALES_INVOICE', 'VENDOR_BILL')),
 	CONSTRAINT "chk_fx_document_facts_exponent" CHECK("fx_document_facts"."exponent" BETWEEN 0 AND 6),
+	CONSTRAINT "chk_fx_document_facts_base_exponent" CHECK("fx_document_facts"."base_exponent" BETWEEN 0 AND 6),
 	CONSTRAINT "chk_fx_document_facts_rounding" CHECK("fx_document_facts"."rounding_policy" IN ('HALF_UP', 'HALF_EVEN', 'FLOOR', 'CEILING')),
 	CONSTRAINT "chk_fx_document_facts_amounts" CHECK("fx_document_facts"."total_foreign_minor" > 0 AND "fx_document_facts"."total_base_minor" > 0)
 );
@@ -102,6 +106,7 @@ CREATE TABLE `fx_rate_snapshots` (
 	`tenant_id` text NOT NULL,
 	`book_set_id` text NOT NULL,
 	`base_currency_code` text NOT NULL,
+	`base_exponent` integer NOT NULL,
 	`foreign_currency_code` text NOT NULL,
 	`foreign_exponent` integer NOT NULL,
 	`rate_decimal` text NOT NULL,
@@ -117,6 +122,7 @@ CREATE TABLE `fx_rate_snapshots` (
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`book_set_id`,`tenant_id`) REFERENCES `book_sets`(`id`,`tenant_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_fx_rate_snapshot_codes" CHECK(length("fx_rate_snapshots"."base_currency_code") = 3 AND "fx_rate_snapshots"."base_currency_code" NOT GLOB '*[^A-Z]*' AND length("fx_rate_snapshots"."foreign_currency_code") = 3 AND "fx_rate_snapshots"."foreign_currency_code" NOT GLOB '*[^A-Z]*'),
+	CONSTRAINT "chk_fx_rate_snapshot_base_exponent" CHECK("fx_rate_snapshots"."base_exponent" BETWEEN 0 AND 6),
 	CONSTRAINT "chk_fx_rate_snapshot_exponent" CHECK("fx_rate_snapshots"."foreign_exponent" BETWEEN 0 AND 6),
 	CONSTRAINT "chk_fx_rate_snapshot_decimal" CHECK(length(trim("fx_rate_snapshots"."rate_decimal")) > 0 AND "fx_rate_snapshots"."rate_decimal" NOT GLOB '*[^0-9.]*'),
 	CONSTRAINT "chk_fx_rate_snapshot_scale" CHECK("fx_rate_snapshots"."scale" BETWEEN 0 AND 18),
@@ -140,11 +146,13 @@ CREATE TABLE `fx_revaluation_lines` (
 	`carrying_base_minor` integer NOT NULL,
 	`revalued_base_minor` integer NOT NULL,
 	`adjustment_minor` integer NOT NULL,
+	`base_exponent` integer NOT NULL,
 	`rate_snapshot_id` text NOT NULL,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`run_id`,`tenant_id`,`book_set_id`) REFERENCES `fx_revaluation_runs`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`rate_snapshot_id`,`tenant_id`,`book_set_id`) REFERENCES `fx_rate_snapshots`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_fx_revaluation_lines_document" CHECK("fx_revaluation_lines"."document_type" IN ('SALES_INVOICE', 'VENDOR_BILL')),
+	CONSTRAINT "chk_fx_revaluation_lines_base_exponent" CHECK("fx_revaluation_lines"."base_exponent" BETWEEN 0 AND 6),
 	CONSTRAINT "chk_fx_revaluation_lines_open" CHECK("fx_revaluation_lines"."foreign_open_minor" > 0 AND "fx_revaluation_lines"."carrying_base_minor" > 0 AND "fx_revaluation_lines"."revalued_base_minor" > 0)
 );
 --> statement-breakpoint
@@ -211,6 +219,10 @@ CREATE TABLE `tenant_currencies` (
 CREATE UNIQUE INDEX `uq_tenant_currencies_code` ON `tenant_currencies` (`tenant_id`,`currency_code`);--> statement-breakpoint
 PRAGMA defer_foreign_keys = ON;--> statement-breakpoint
 CREATE TRIGGER `trg_tenants_base_currency_immutable` BEFORE UPDATE OF `base_currency` ON `tenants` WHEN OLD.`base_currency` <> NEW.`base_currency` BEGIN SELECT RAISE(ABORT, 'BASE_CURRENCY_IMMUTABLE'); END;
+--> statement-breakpoint
+CREATE TRIGGER `trg_tenant_currencies_immutable_update` BEFORE UPDATE ON `tenant_currencies` BEGIN SELECT RAISE(ABORT, 'TENANT_CURRENCY_IMMUTABLE'); END;
+--> statement-breakpoint
+CREATE TRIGGER `trg_tenant_currencies_immutable_delete` BEFORE DELETE ON `tenant_currencies` BEGIN SELECT RAISE(ABORT, 'TENANT_CURRENCY_IMMUTABLE'); END;
 --> statement-breakpoint
 CREATE TRIGGER `trg_fx_rate_snapshots_immutable_update` BEFORE UPDATE ON `fx_rate_snapshots` BEGIN SELECT RAISE(ABORT, 'FX_RATE_SNAPSHOT_IMMUTABLE'); END;
 --> statement-breakpoint
