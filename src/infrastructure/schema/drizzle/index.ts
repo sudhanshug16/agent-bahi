@@ -122,3 +122,4 @@ export { bookSetLedgerRevisions, taxCases, taxCaseMembershipVersions, taxCaseMem
 // Personal Tax Authority Pack + ITR Eligibility V1
 export { personalTaxAuthorityPacks, personalTaxAuthorityPackEvents, taxCaseItrEligibilityFacts, taxCaseItrEligibilityFactEvents, taxCaseItrEligibilityEvaluations, taxCaseItrFormSelections } from "./personal-tax-itr-eligibility-schema";
 export { personalTaxComputationPacks, personalTaxComputationPackEvents, personalTaxComputationInputs, personalTaxComputations, personalTaxComputationEvents } from "./personal-tax-computation-schema";
+export { personalTaxReturnSchemaPacks, personalTaxReturnSchemaPackEvents, personalTaxReturnArtifacts, personalTaxReturnValidationRuns, personalTaxReturnExportActivities } from "./personal-tax-return-artifact-schema";

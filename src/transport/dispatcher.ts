@@ -219,6 +219,17 @@ const handlers: Record<string, Handler> = {
   "tax-case.computation.show": (facade, input) => facade.taxCase.computation.show(tenantId(input), text(input, "taxCaseId"), text(input, "computationId")),
   "tax-case.computation.status": (facade, input) => facade.taxCase.computation.status(tenantId(input), text(input, "taxCaseId"), text(input, "computationId")),
   "tax-case.computation.approve": (facade, input) => facade.taxCase.computation.approve(input as never),
+  "tax-authority.return-schema-pack.register": (facade, input) => facade.taxAuthority.returnSchemaPack.register(input as never),
+  "tax-authority.return-schema-pack.verify": (facade, input) => facade.taxAuthority.returnSchemaPack.verify(input as never),
+  "tax-authority.return-schema-pack.reject": (facade, input) => facade.taxAuthority.returnSchemaPack.reject(input as never),
+  "tax-authority.return-schema-pack.show": (facade, input) => facade.taxAuthority.returnSchemaPack.show(text(input, "packId")),
+  "tax-case.return-artifact.preview": (facade, input) => facade.taxCase.returnArtifact.preview(tenantId(input), (input.payload ?? input) as never),
+  "tax-case.return-artifact.prepare": (facade, input) => facade.taxCase.returnArtifact.prepare(input as never),
+  "tax-case.return-artifact.validate": (facade, input) => facade.taxCase.returnArtifact.validate(input as never),
+  "tax-case.return-artifact.export": (facade, input) => facade.taxCase.returnArtifact.export(input as never),
+  "tax-case.return-artifact.show": (facade, input) => facade.taxCase.returnArtifact.show(tenantId(input), text(input, "taxCaseId"), text(input, "artifactId")),
+  "tax-case.return-artifact.status": (facade, input) => facade.taxCase.returnArtifact.status(tenantId(input), text(input, "taxCaseId"), text(input, "artifactId")),
+  "tax-case.return-artifact.content": (facade, input) => facade.taxCase.returnArtifact.content(tenantId(input), text(input, "taxCaseId"), text(input, "artifactId"), input.revealSensitive === true, input.actor && typeof input.actor === "object" ? String((input.actor as Record<string, unknown>).kind ?? "") : undefined),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

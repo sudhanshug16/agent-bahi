@@ -138,6 +138,11 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "personal_tax_computation_inputs",
   "personal_tax_computations",
   "personal_tax_computation_events",
+  "personal_tax_return_schema_packs",
+  "personal_tax_return_schema_pack_events",
+  "personal_tax_return_artifacts",
+  "personal_tax_return_validation_runs",
+  "personal_tax_return_export_activities",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

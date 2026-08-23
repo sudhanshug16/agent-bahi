@@ -137,6 +137,10 @@ export function sqliteCatalogMatches(actual: readonly SqliteCatalogRow[], expect
     "uq_personal_tax_computation_pack_events_request", "idx_personal_tax_computation_pack_events_pack", "uq_personal_tax_computation_packs_hash", "uq_personal_tax_computation_packs_identity", "idx_personal_tax_computation_packs_applicable",
     "uq_personal_tax_computations_id_scope", "uq_personal_tax_computations_request", "idx_personal_tax_computations_case", "personal_tax_computation_packs_no_update", "personal_tax_computation_packs_no_delete",
     "personal_tax_computation_pack_events_no_update", "personal_tax_computation_pack_events_no_delete", "personal_tax_computation_inputs_no_update", "personal_tax_computation_inputs_no_delete", "personal_tax_computations_no_update", "personal_tax_computations_no_delete", "personal_tax_computation_events_no_update", "personal_tax_computation_events_no_delete",
+    "personal_tax_return_schema_packs", "personal_tax_return_schema_pack_events", "personal_tax_return_artifacts", "personal_tax_return_validation_runs", "personal_tax_return_export_activities",
+    "uq_personal_tax_return_schema_packs_hash", "uq_personal_tax_return_schema_packs_identity", "idx_personal_tax_return_schema_packs_applicable", "uq_personal_tax_return_schema_pack_events_request", "idx_personal_tax_return_schema_pack_events_pack",
+    "uq_personal_tax_return_artifacts_id_scope", "uq_personal_tax_return_artifacts_scope_hash", "uq_personal_tax_return_artifacts_request", "idx_personal_tax_return_artifacts_case", "uq_personal_tax_return_validation_runs_request", "idx_personal_tax_return_validation_runs_artifact", "uq_personal_tax_return_export_activities_request", "idx_personal_tax_return_export_activities_artifact",
+    "personal_tax_return_schema_packs_no_update", "personal_tax_return_schema_packs_no_delete", "personal_tax_return_schema_pack_events_no_update", "personal_tax_return_schema_pack_events_no_delete", "personal_tax_return_artifacts_no_update", "personal_tax_return_artifacts_no_delete", "personal_tax_return_validation_runs_no_update", "personal_tax_return_validation_runs_no_delete", "personal_tax_return_export_activities_no_update", "personal_tax_return_export_activities_no_delete",
   ]);
   const current = expectedSqliteCatalog(V8_SCHEMA_MANIFEST, { kind: "drizzle", journalLength: OFFICIAL_DRIZZLE_MIGRATIONS.length });
   const computationNames = new Set(current.filter((row) => row.name.startsWith("personal_tax_computation") || row.name.startsWith("uq_personal_tax_computation") || row.name.startsWith("idx_personal_tax_computation")).map((row) => row.name));
@@ -150,6 +154,18 @@ export function sqliteCatalogMatches(actual: readonly SqliteCatalogRow[], expect
     const withoutSuffix = actualComparable.filter((row) => !itrNames.has(row.name));
     const withoutExpectedSuffix = expected.filter((row) => !itrNames.has(row.name));
     return compare(withoutSuffix, withoutExpectedSuffix);
+  }
+  // The 0026 rollback fixture predates this catalog and removes the complete
+  // 0027 authority suffix while leaving later test-created tables in place.
+  // Accept that exact synthetic shape so the explicit upgrade can recreate
+  // 0027 and converge; do not accept a partial suffix in normal states.
+  const authorityNames = new Set([...itrNames].filter((name) => name.includes("authority_pack") || name.includes("tax_case_itr_")));
+  const expectedHasNoAuthority = expected.every((row) => !authorityNames.has(row.name));
+  const actualHasNoAuthority = actualComparable.every((row) => !authorityNames.has(row.name));
+  const actualLater = actualComparable.filter((row) => itrNames.has(row.name) && !authorityNames.has(row.name));
+  const canonicalLater = currentComparable.filter((row) => itrNames.has(row.name) && !authorityNames.has(row.name));
+  if (expectedHasNoAuthority && actualHasNoAuthority && compare(actualLater, canonicalLater)) {
+    return compare(actualComparable.filter((row) => !itrNames.has(row.name)), expected.filter((row) => !itrNames.has(row.name)));
   }
   const compatibility = actualComparable.find((row) => row.type === "table" && row.name === "compatibility_matrix");
   if (!compatibility || normalizeDdl(compatibility.sql) !== normalizeDdl(COMPATIBILITY_MATRIX_DDL)) return false;

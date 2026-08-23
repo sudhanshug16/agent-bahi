@@ -11,7 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
-export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate" | "tax-authority.pack.register" | "tax-authority.pack.verify" | "tax-authority.pack.reject" | "tax-case.eligibility-facts.record" | "tax-case.itr-eligibility.evaluate" | "tax-case.itr-form.select" | "tax-authority.computation-pack.register" | "tax-authority.computation-pack.verify" | "tax-authority.computation-pack.reject" | "tax-case.computation-inputs.record" | "tax-case.computation.generate" | "tax-case.computation.approve";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate" | "tax-authority.pack.register" | "tax-authority.pack.verify" | "tax-authority.pack.reject" | "tax-case.eligibility-facts.record" | "tax-case.itr-eligibility.evaluate" | "tax-case.itr-form.select" | "tax-authority.computation-pack.register" | "tax-authority.computation-pack.verify" | "tax-authority.computation-pack.reject" | "tax-case.computation-inputs.record" | "tax-case.computation.generate" | "tax-case.computation.approve" | "tax-authority.return-schema-pack.register" | "tax-authority.return-schema-pack.verify" | "tax-authority.return-schema-pack.reject" | "tax-case.return-artifact.prepare" | "tax-case.return-artifact.validate" | "tax-case.return-artifact.export";
 
 export interface Actor {
   kind: ActorKind;
@@ -170,6 +170,20 @@ export interface ComputationInputsRecordPayload {
 export interface ComputationPreviewPayload extends ComputationInputsRecordPayload { inputSetId?: string; }
 export interface ComputationGeneratePayload extends ComputationInputsRecordPayload { requestId?: never; }
 export interface ComputationApprovePayload { taxCaseId: string; computationId: string; expectedComputationHash: string; reason: string; }
+
+export type ReturnSchemaIntegerEncoding = "DECIMAL_STRING" | "SAFE_JSON_INTEGER";
+export interface ReturnSchemaPackRegisterPayload {
+  packId?: string; authorityPackId: string; authorityPackHash: string; itrForm: string; filingType: string;
+  financialYear: string; assessmentYear: string; artifactReferences: AuthorityArtifactReference[]; packVersion: string;
+  validationSchema: unknown; mappingSpec: unknown; supersedesPackId?: string;
+}
+export interface ReturnSchemaPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface ReturnArtifactBindingPayload {
+  taxCaseId: string; filingSnapshotId: string; worksheetId: string; evaluationId: string; selectionId: string;
+  computationId: string; schemaPackId: string;
+}
+export interface ReturnArtifactValidatePayload { taxCaseId: string; artifactId: string; expectedArtifactHash: string; }
+export interface ReturnArtifactExportPayload { taxCaseId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
 
 export interface CommandResult<T> {
   resultJson: string;
