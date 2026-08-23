@@ -43,9 +43,10 @@ import { previewTaxCaseFilingSnapshot, sealTaxCaseFilingSnapshot, showTaxCaseFil
 import { generateTaxCasePositionWorksheet, previewTaxCasePositionWorksheet, showTaxCasePositionWorksheet, statusTaxCasePositionWorksheet, type TaxPositionWorksheet, type TaxPositionWorksheetView } from "./services/tax-case-position-worksheet-service.ts";
 import { registerPersonalTaxAuthorityPack, verifyPersonalTaxAuthorityPack, rejectPersonalTaxAuthorityPack, showPersonalTaxAuthorityPack, recordTaxCaseEligibilityFact, evaluateTaxCaseItrEligibility, showTaxCaseItrEligibility, selectTaxCaseItrForm, statusTaxCaseItrForm } from "./services/tax-case-itr-eligibility-service.ts";
 import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload, TaxCasePositionGeneratePayload, TaxCaseSourceAssessmentPreparePayload, TaxCaseSourceAssessmentDecisionPayload, AuthorityPackRegisterPayload, AuthorityPackDecisionPayload, TaxCaseEligibilityFactRecordPayload, TaxCaseItrEligibilityEvaluatePayload, TaxCaseItrFormSelectPayload } from "./commands.ts";
-import type { ComputationPackRegisterPayload, ComputationPackDecisionPayload, ComputationInputsRecordPayload, ComputationApprovePayload, ReturnSchemaPackRegisterPayload, ReturnSchemaPackDecisionPayload, ReturnArtifactBindingPayload, ReturnArtifactValidatePayload, ReturnArtifactExportPayload } from "./commands.ts";
+import type { ComputationPackRegisterPayload, ComputationPackDecisionPayload, ComputationInputsRecordPayload, ComputationApprovePayload, ReturnSchemaPackRegisterPayload, ReturnSchemaPackDecisionPayload, ReturnArtifactBindingPayload, ReturnArtifactValidatePayload, ReturnArtifactExportPayload, WithholdingStatementSchemaPackRegisterPayload, WithholdingStatementSchemaPackDecisionPayload, WithholdingStatementFactPayload, WithholdingStatementFactDecisionPayload, WithholdingStatementBindingPayload, WithholdingStatementArtifactValidatePayload, WithholdingStatementArtifactExportPayload } from "./commands.ts";
 import { registerPersonalTaxComputationPack, verifyPersonalTaxComputationPack, rejectPersonalTaxComputationPack, showPersonalTaxComputationPack, recordPersonalTaxComputationInputs, previewPersonalTaxComputation, generatePersonalTaxComputation, showPersonalTaxComputation, statusPersonalTaxComputation, approvePersonalTaxComputation } from "./services/tax-case-computation-service.ts";
 import { registerReturnSchemaPack, verifyReturnSchemaPack, rejectReturnSchemaPack, showReturnSchemaPack, previewReturnArtifact, prepareReturnArtifact, validateReturnArtifact, exportReturnArtifact, showReturnArtifact, statusReturnArtifact, contentReturnArtifact } from "./services/tax-case-return-artifact-service.ts";
+import { registerWithholdingStatementSchemaPack, verifyWithholdingStatementSchemaPack, rejectWithholdingStatementSchemaPack, showWithholdingStatementSchemaPack, proposeWithholdingStatementFact, confirmWithholdingStatementFact, rejectWithholdingStatementFact, listWithholdingStatementFacts, previewWithholdingStatement, prepareWithholdingStatement, validateWithholdingStatement, exportWithholdingStatement, showWithholdingStatement, statusWithholdingStatement, contentWithholdingStatement } from "./services/withholding-statement-artifact-service.ts";
 
 /**
  * Read-only tenant operations
@@ -186,6 +187,11 @@ export interface TaxOperations {
   deposit(envelope: SalesCommandEnvelope<WithholdingDepositPayload>): Promise<CommandResult<unknown>>;
   register(tenantId: TenantId, bookSetId: BookSetId, taxKind: TaxKind): Promise<WithholdingEventRow[]>;
 }
+export interface WithholdingStatementOperations {
+  schemaPack: { register(envelope: CommandEnvelope<WithholdingStatementSchemaPackRegisterPayload>): Promise<CommandResult<Record<string, unknown>>>; verify(envelope: CommandEnvelope<WithholdingStatementSchemaPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; reject(envelope: CommandEnvelope<WithholdingStatementSchemaPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; show(packId: string): Promise<Record<string, unknown>> };
+  fact: { propose(envelope: CommandEnvelope<WithholdingStatementFactPayload>): Promise<CommandResult<Record<string, unknown>>>; confirm(envelope: CommandEnvelope<WithholdingStatementFactDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; reject(envelope: CommandEnvelope<WithholdingStatementFactDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<Record<string, unknown>[]> };
+  statement: { preview(tenantId: TenantId, payload: WithholdingStatementBindingPayload): Promise<Record<string, unknown>>; prepare(envelope: CommandEnvelope<WithholdingStatementBindingPayload>): Promise<CommandResult<Record<string, unknown>>>; validate(envelope: CommandEnvelope<WithholdingStatementArtifactValidatePayload>): Promise<CommandResult<Record<string, unknown>>>; export(envelope: CommandEnvelope<WithholdingStatementArtifactExportPayload>): Promise<CommandResult<Record<string, unknown>>>; show(tenantId: TenantId, bookSetId: BookSetId, artifactId: string): Promise<Record<string, unknown>>; status(tenantId: TenantId, bookSetId: BookSetId, artifactId: string): Promise<Record<string, unknown>>; content(tenantId: TenantId, bookSetId: BookSetId, artifactId: string, revealSensitive?: boolean, actorKind?: string): Promise<Record<string, unknown>> };
+}
 export interface FixedAssetOperations {
   register(envelope: SalesCommandEnvelope<AssetRegisterPayload>): Promise<CommandResult<AssetRegisterResult>>;
   depreciation: { preview(envelope: SalesCommandEnvelope<DepreciationPreviewPayload>): Promise<CommandResult<DepreciationResult>>; post(envelope: SalesCommandEnvelope<DepreciationPreviewPayload>): Promise<CommandResult<DepreciationResult>> };
@@ -306,6 +312,7 @@ export type PublicApplicationFacade = {
   bankReconciliation: BankReconciliationOperations;
   gst: { registration: GstRegistrationOperations; partyProfile: PartyGstProfileOperations; register: GstRegisterOperations; returnReadiness: GstReturnReadinessOperations; gstr1Artifact: GstGstr1ArtifactOperations };
   tax: TaxOperations;
+  withholdingStatement: WithholdingStatementOperations;
   fixedAssets: FixedAssetOperations;
   fx: FxOperations;
   company: CompanyStatusOperations;
@@ -525,6 +532,11 @@ export function createPublicFacade(
       ruleSnapshot: { create: (envelope) => executeTaxRuleSnapshotCreate(sessionRunner, envelope) },
       deposit: (envelope) => executeWithholdingDeposit(sessionRunner, envelope),
       register: (tenantId, bookSetId, taxKind) => listWithholdingRegister(sessionRunner, tenantId, bookSetId, taxKind),
+    },
+    withholdingStatement: {
+      schemaPack: { register: (envelope) => registerWithholdingStatementSchemaPack(sessionRunner, envelope), verify: (envelope) => verifyWithholdingStatementSchemaPack(sessionRunner, envelope), reject: (envelope) => rejectWithholdingStatementSchemaPack(sessionRunner, envelope), show: (packId) => showWithholdingStatementSchemaPack(sessionRunner, packId) },
+      fact: { propose: (envelope) => proposeWithholdingStatementFact(sessionRunner, envelope), confirm: (envelope) => confirmWithholdingStatementFact(sessionRunner, envelope), reject: (envelope) => rejectWithholdingStatementFact(sessionRunner, envelope), list: (tenantId, bookSetId) => listWithholdingStatementFacts(sessionRunner, tenantId, bookSetId) },
+      statement: { preview: (tenantId, payload) => previewWithholdingStatement(sessionRunner, tenantId, payload), prepare: (envelope) => prepareWithholdingStatement(sessionRunner, envelope), validate: (envelope) => validateWithholdingStatement(sessionRunner, envelope), export: (envelope) => exportWithholdingStatement(sessionRunner, envelope), show: (tenantId, bookSetId, artifactId) => showWithholdingStatement(sessionRunner, tenantId, bookSetId, artifactId), status: (tenantId, bookSetId, artifactId) => statusWithholdingStatement(sessionRunner, tenantId, bookSetId, artifactId), content: (tenantId, bookSetId, artifactId, revealSensitive, actorKind) => contentWithholdingStatement(sessionRunner, tenantId, bookSetId, artifactId, revealSensitive, actorKind) },
     },
     fixedAssets: {
       register: (envelope) => executeAssetRegister(sessionRunner, envelope),

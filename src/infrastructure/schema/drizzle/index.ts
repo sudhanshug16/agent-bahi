@@ -124,3 +124,4 @@ export { personalTaxAuthorityPacks, personalTaxAuthorityPackEvents, taxCaseItrEl
 export { personalTaxComputationPacks, personalTaxComputationPackEvents, personalTaxComputationInputs, personalTaxComputations, personalTaxComputationEvents } from "./personal-tax-computation-schema";
 export { personalTaxReturnSchemaPacks, personalTaxReturnSchemaPackEvents, personalTaxReturnArtifacts, personalTaxReturnValidationRuns, personalTaxReturnExportActivities } from "./personal-tax-return-artifact-schema";
 export { gstReturnSchemaPacks, gstReturnSchemaPackEvents, gstGstr1Artifacts, gstGstr1ValidationRuns, gstGstr1ExportActivities } from "./gst-gstr1-artifact-schema";
+export { withholdingStatementSchemaPacks, withholdingStatementSchemaPackEvents, withholdingStatementFacts, withholdingStatementFactEvents, withholdingStatementArtifacts, withholdingStatementValidationRuns, withholdingStatementExportActivities } from "./withholding-statement-artifact-schema";

@@ -148,6 +148,13 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "personal_tax_return_artifacts",
   "personal_tax_return_validation_runs",
   "personal_tax_return_export_activities",
+  "withholding_statement_schema_packs",
+  "withholding_statement_schema_pack_events",
+  "withholding_statement_facts",
+  "withholding_statement_fact_events",
+  "withholding_statement_artifacts",
+  "withholding_statement_validation_runs",
+  "withholding_statement_export_activities",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([
@@ -240,7 +247,7 @@ function validateReadSql(sql: string, allowExpressions = false): void {
   if (tokens[0] !== "select") invalidSql("Only SELECT statements are allowed in read-mode");
   if (!allowExpressions) {
     const hasSubquery = tokens.some((token, index) => token === "(" && tokens[index + 1] === "select");
-    const hasUnsupportedExpression = tokens.some((token, index) => token === "(" && !["in", "coalesce", "sum"].includes(tokens[index - 1] ?? ""));
+    const hasUnsupportedExpression = tokens.some((token, index) => token === "(" && !["in", "coalesce", "sum", "and", "or"].includes(tokens[index - 1] ?? ""));
     if (hasSubquery || hasUnsupportedExpression) invalidSql("Subqueries and expression calls are not allowed in read-mode");
   }
   if (tokens.some((token) => FORBIDDEN_SQL_WORDS.has(token) && token !== "select" && token !== "from" && token !== "join")) invalidSql("Unsupported read SQL construct");

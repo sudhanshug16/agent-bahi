@@ -195,6 +195,23 @@ export interface Gstr1ArtifactBindingPayload { registrationId: string; taxPeriod
 export interface Gstr1ArtifactValidatePayload { artifactId: string; expectedArtifactHash: string; }
 export interface Gstr1ArtifactExportPayload { artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
 
+export type WithholdingStatementForm = "24Q" | "26Q" | "27Q" | "27EQ";
+export type WithholdingStatementQuarter = "Q1" | "Q2" | "Q3" | "Q4";
+export type WithholdingStatementFilingType = "ORIGINAL" | "CORRECTION";
+export interface WithholdingStatementSchemaPackRegisterPayload {
+  packId?: string; jurisdiction: "IN"; form: WithholdingStatementForm; financialYear: string; quarter: WithholdingStatementQuarter; filingType: WithholdingStatementFilingType;
+  authorityRuleSnapshotReference: string; artifactReferences: AuthorityArtifactReference[]; packVersion: string; validationSchema: unknown; mappingSpec: unknown; supersedesPackId?: string;
+}
+export interface WithholdingStatementSchemaPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface WithholdingStatementFactPayload {
+  factId?: string; bookSetId: string; deductorProfileId: string; financialYear: string; quarter: WithholdingStatementQuarter; factType: "CHALLAN" | "RESPONSIBLE_PERSON" | "DEDUCTEE_CLASSIFICATION" | "NIL_STATEMENT" | "REMITTANCE" | "CORRECTION";
+  depositId?: string; tanPanProfileReference?: string; responsiblePerson?: Record<string, unknown>; challan?: Record<string, unknown>; deducteeClassification?: string; remittance?: Record<string, unknown>; correctionLinkage?: Record<string, unknown>; nilStatementAssertion?: boolean; allocations?: Array<{ sourceId: string; amountMinor: string }> ; facts?: Record<string, unknown>;
+}
+export interface WithholdingStatementFactDecisionPayload { bookSetId: string; factId: string; expectedFactHash: string; reason: string; }
+export interface WithholdingStatementBindingPayload { bookSetId: string; deductorProfileId: string; form: WithholdingStatementForm; financialYear: string; quarter: WithholdingStatementQuarter; filingType: WithholdingStatementFilingType; schemaPackId: string; }
+export interface WithholdingStatementArtifactValidatePayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; }
+export interface WithholdingStatementArtifactExportPayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
+
 export interface CommandResult<T> {
   resultJson: string;
   resultHash: string;
