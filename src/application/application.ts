@@ -13,6 +13,8 @@ import { MigrationService } from "../infrastructure/services/migration-service.t
 import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
+import { loadDrizzleBaseline, applyDrizzleBaseline, seedDrizzleMigrationsTable } from "../infrastructure/services/drizzle-baseline.ts";
+import { detectDatabaseState } from "../infrastructure/services/database-state-detector.ts";
 import { FOUNDATION_MIGRATIONS, ORDERED_UPGRADE_STEPS, CURRENT_SCHEMA_MANIFEST } from "../infrastructure/schema/migration-catalog.ts";
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
 import { LedgerReportService } from "./services/ledger-report-service.ts";
@@ -110,7 +112,11 @@ export function createSqliteApplication(
   );
 }
 
-/** Explicit operator/test initialization: creates only the foundation. */
+/**
+ * Explicit operator/test initialization: creates complete v8 schema with Drizzle baseline.
+ * This is the fresh database path; never used for upgrades or existing databases.
+ * Uses official Drizzle baseline migration instead of replaying legacy v0001..v0008 steps.
+ */
 export async function initializeSqliteDatabase(
   dbPath: string,
   options: SqliteDatabaseInitializationOptions = {},
@@ -118,13 +124,27 @@ export async function initializeSqliteDatabase(
   const db = new SqliteAdapter({ path: dbPath });
   const now = options.now ?? new Date();
   try {
-    await new MigrationService(db, "sqlite").migrate(FOUNDATION_MIGRATIONS);
-    const control = new DatabaseControlService(db, "sqlite");
-    await db.withMigrationLease((session) => control.initialize({
-      cliVersion: options.cliVersion ?? "agent-bahi",
-      buildId: options.buildId ?? "initialize",
-      now,
-    }, session).then(() => undefined));
+    // Load and apply the Drizzle v8 baseline
+    const baseline = await loadDrizzleBaseline();
+    await db.withMigrationLease(async (session) => {
+      // Apply the baseline schema via Drizzle's SQL
+      const bunDb = (db as any).db as any;
+      await applyDrizzleBaseline(bunDb, baseline);
+
+      // Seed the Drizzle migrations journal
+      await seedDrizzleMigrationsTable(bunDb, baseline);
+
+      // Initialize database_control metadata
+      const control = new DatabaseControlService(db, "sqlite");
+      await control.initialize(
+        {
+          cliVersion: options.cliVersion ?? "agent-bahi",
+          buildId: options.buildId ?? "initialize",
+          now,
+        },
+        session
+      );
+    });
   } finally {
     await db.close();
   }

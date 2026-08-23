@@ -58,26 +58,32 @@ describe("SQLite migration catalog", () => {
     try {
       await initializeSqliteDatabase(dbPath, { cliVersion: "test", buildId: "catalog" });
       const before = await readFile(dbPath);
+      // With Drizzle baseline, fresh initialization creates complete v8 schema
       await expect(inspectSqliteApplicationCompatibility(dbPath)).resolves.toMatchObject({
-        status: "UPDATE_REQUIRED",
-        currentSchemaVersion: 2,
+        status: "READY",
+        currentSchemaVersion: 8,
         requiredSchemaVersion: 8,
         currentDataFormatVersion: 1,
         requiredDataFormatVersion: 1,
       });
+      // Application operations should succeed without upgrade required
       const application = createSqliteApplication(dbPath);
-      await expect(application.tenant.listActiveTenants()).rejects.toMatchObject({
-        code: "UPDATE_REQUIRED",
-        context: { currentSchemaVersion: 2, requiredSchemaVersion: 8 },
-      });
+      const tenants = await application.tenant.listActiveTenants();
+      expect(tenants).toEqual([]);
+
+      // Database file should not change on inspection
       expect(await readFile(dbPath)).toEqual(before);
 
-      await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "upgrade.sqlite"), cliVersion: "test", buildId: "catalog" });
-      await expect(inspectSqliteApplicationCompatibility(dbPath)).resolves.toMatchObject({ status: "READY" });
+      // Upgrade should be a no-op since already at v8
       await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "no-op.sqlite"), cliVersion: "test", buildId: "catalog" });
       expect(await Bun.file(join(directory, "no-op.sqlite")).exists()).toBe(false);
       const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-      expect(native.query("SELECT id, status FROM schema_migrations ORDER BY rowid").all()).toHaveLength(8);
+      // Fresh Drizzle DB should NOT have legacy schema_migrations table; only drizzle_migrations
+      expect(() => native.query("SELECT COUNT(*) as count FROM schema_migrations").get()).toThrow();
+      // Should have Drizzle migration journal
+      expect(native.query("SELECT COUNT(*) as count FROM drizzle_migrations").get()).toEqual({
+        count: 1,
+      });
       expect(native.query("SELECT schema_version FROM database_control").get()).toEqual({ schema_version: 8n });
       native.close();
     } finally {

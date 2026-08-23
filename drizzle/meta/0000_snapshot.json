@@ -1,0 +1,2804 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "f9b59b76-9d13-45b2-91f9-f5d29426b494",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "bank_matches": {
+      "name": "bank_matches",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "statement_id": {
+          "name": "statement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "statement_line_id": {
+          "name": "statement_line_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bank_account_id": {
+          "name": "bank_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "journal_entry_id": {
+          "name": "journal_entry_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "undone_at": {
+          "name": "undone_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "undo_reason": {
+          "name": "undo_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_bank_match_scope_key": {
+          "name": "uq_bank_match_scope_key",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "uq_bank_match_active_line": {
+          "name": "uq_bank_match_active_line",
+          "columns": [
+            "statement_line_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "uq_bank_match_active_journal_account": {
+          "name": "uq_bank_match_active_journal_account",
+          "columns": [
+            "journal_entry_id",
+            "bank_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_bank_matches_scope_status": {
+          "name": "idx_bank_matches_scope_status",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "status",
+            "statement_id",
+            "statement_line_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "bank_matches_statement_id_tenant_id_book_set_id_bank_account_id_bank_statements_id_tenant_id_book_set_id_bank_account_id_fk": {
+          "name": "bank_matches_statement_id_tenant_id_book_set_id_bank_account_id_bank_statements_id_tenant_id_book_set_id_bank_account_id_fk",
+          "tableFrom": "bank_matches",
+          "tableTo": "bank_statements",
+          "columnsFrom": [
+            "statement_id",
+            "tenant_id",
+            "book_set_id",
+            "bank_account_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id",
+            "bank_account_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bank_matches_statement_line_id_tenant_id_book_set_id_statement_id_bank_statement_lines_id_tenant_id_book_set_id_statement_id_fk": {
+          "name": "bank_matches_statement_line_id_tenant_id_book_set_id_statement_id_bank_statement_lines_id_tenant_id_book_set_id_statement_id_fk",
+          "tableFrom": "bank_matches",
+          "tableTo": "bank_statement_lines",
+          "columnsFrom": [
+            "statement_line_id",
+            "tenant_id",
+            "book_set_id",
+            "statement_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id",
+            "statement_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bank_matches_journal_entry_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk": {
+          "name": "bank_matches_journal_entry_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk",
+          "tableFrom": "bank_matches",
+          "tableTo": "journal_entries",
+          "columnsFrom": [
+            "journal_entry_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "bank_statement_lines": {
+      "name": "bank_statement_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "statement_id": {
+          "name": "statement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_number": {
+          "name": "line_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "transaction_date": {
+          "name": "transaction_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reference": {
+          "name": "reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "signed_amount_minor": {
+          "name": "signed_amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_bank_statement_line_number": {
+          "name": "uq_bank_statement_line_number",
+          "columns": [
+            "statement_id",
+            "line_number"
+          ],
+          "isUnique": true
+        },
+        "uq_bank_statement_line_scope_key": {
+          "name": "uq_bank_statement_line_scope_key",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id",
+            "statement_id"
+          ],
+          "isUnique": true
+        },
+        "idx_bank_statement_lines_scope_date": {
+          "name": "idx_bank_statement_lines_scope_date",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "statement_id",
+            "transaction_date",
+            "line_number"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "bank_statement_lines_statement_id_tenant_id_book_set_id_bank_statements_id_tenant_id_book_set_id_fk": {
+          "name": "bank_statement_lines_statement_id_tenant_id_book_set_id_bank_statements_id_tenant_id_book_set_id_fk",
+          "tableFrom": "bank_statement_lines",
+          "tableTo": "bank_statements",
+          "columnsFrom": [
+            "statement_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "bank_statements": {
+      "name": "bank_statements",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bank_account_id": {
+          "name": "bank_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "external_statement_id": {
+          "name": "external_statement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period_start": {
+          "name": "period_start",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period_end": {
+          "name": "period_end",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "opening_balance_minor": {
+          "name": "opening_balance_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "closing_balance_minor": {
+          "name": "closing_balance_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_bank_statement_external": {
+          "name": "uq_bank_statement_external",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "bank_account_id",
+            "external_statement_id"
+          ],
+          "isUnique": true
+        },
+        "uq_bank_statement_scope_key": {
+          "name": "uq_bank_statement_scope_key",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "uq_bank_statement_account_key": {
+          "name": "uq_bank_statement_account_key",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id",
+            "bank_account_id"
+          ],
+          "isUnique": true
+        },
+        "idx_bank_statements_scope_period": {
+          "name": "idx_bank_statements_scope_period",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "period_start",
+            "period_end",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "bank_statements_book_set_id_tenant_id_book_sets_id_tenant_id_fk": {
+          "name": "bank_statements_book_set_id_tenant_id_book_sets_id_tenant_id_fk",
+          "tableFrom": "bank_statements",
+          "tableTo": "book_sets",
+          "columnsFrom": [
+            "book_set_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bank_statements_bank_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "bank_statements_bank_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "bank_statements",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "bank_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "accounts": {
+      "name": "accounts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_type": {
+          "name": "account_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "parent_account_id": {
+          "name": "parent_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_account_code_scope": {
+          "name": "uq_account_code_scope",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "code"
+          ],
+          "isUnique": true
+        },
+        "idx_accounts_tenant_book_set": {
+          "name": "idx_accounts_tenant_book_set",
+          "columns": [
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "accounts_tenant_id_tenants_id_fk": {
+          "name": "accounts_tenant_id_tenants_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "accounts_book_set_id_book_sets_id_fk": {
+          "name": "accounts_book_set_id_book_sets_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "book_sets",
+          "columnsFrom": [
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "accounts_parent_account_id_accounts_id_fk": {
+          "name": "accounts_parent_account_id_accounts_id_fk",
+          "tableFrom": "accounts",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "parent_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "audit_records": {
+      "name": "audit_records",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "change_summary": {
+          "name": "change_summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "evidence_ids": {
+          "name": "evidence_ids",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_audit_records_tenant": {
+          "name": "idx_audit_records_tenant",
+          "columns": [
+            "tenant_id"
+          ],
+          "isUnique": false
+        },
+        "idx_audit_records_request_id": {
+          "name": "idx_audit_records_request_id",
+          "columns": [
+            "request_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "audit_records_tenant_id_tenants_id_fk": {
+          "name": "audit_records_tenant_id_tenants_id_fk",
+          "tableFrom": "audit_records",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "book_sets": {
+      "name": "book_sets",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lifecycle": {
+          "name": "lifecycle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_book_set_tenant_kind": {
+          "name": "uq_book_set_tenant_kind",
+          "columns": [
+            "tenant_id",
+            "kind"
+          ],
+          "isUnique": true
+        },
+        "idx_book_sets_tenant": {
+          "name": "idx_book_sets_tenant",
+          "columns": [
+            "tenant_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "book_sets_tenant_id_tenants_id_fk": {
+          "name": "book_sets_tenant_id_tenants_id_fk",
+          "tableFrom": "book_sets",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "database_control": {
+      "name": "database_control",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "data_format_version": {
+          "name": "data_format_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reader_compatibility_min": {
+          "name": "reader_compatibility_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reader_compatibility_max": {
+          "name": "reader_compatibility_max",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "required_writer_protocol": {
+          "name": "required_writer_protocol",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_migration_id": {
+          "name": "last_migration_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_migration_checksum": {
+          "name": "last_migration_checksum",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_writer_cli_version": {
+          "name": "last_writer_cli_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_writer_build_id": {
+          "name": "last_writer_build_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_writer_at": {
+          "name": "last_writer_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recovery_reason": {
+          "name": "recovery_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "evidence": {
+      "name": "evidence",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "storage_reference": {
+          "name": "storage_reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "metadata_json": {
+          "name": "metadata_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "evidence_content_hash_unique": {
+          "name": "evidence_content_hash_unique",
+          "columns": [
+            "content_hash"
+          ],
+          "isUnique": true
+        },
+        "idx_evidence_tenant": {
+          "name": "idx_evidence_tenant",
+          "columns": [
+            "tenant_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "evidence_tenant_id_tenants_id_fk": {
+          "name": "evidence_tenant_id_tenants_id_fk",
+          "tableFrom": "evidence",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "gst_registrations": {
+      "name": "gst_registrations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "gstin": {
+          "name": "gstin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "scheme": {
+          "name": "scheme",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "effective_to": {
+          "name": "effective_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fingerprint_key_id": {
+          "name": "fingerprint_key_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_four": {
+          "name": "last_four",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "redacted_display": {
+          "name": "redacted_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_gst_registrations_tenant": {
+          "name": "idx_gst_registrations_tenant",
+          "columns": [
+            "tenant_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "gst_registrations_tenant_id_tenants_id_fk": {
+          "name": "gst_registrations_tenant_id_tenants_id_fk",
+          "tableFrom": "gst_registrations",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "idempotency_records": {
+      "name": "idempotency_records",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_json": {
+          "name": "result_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_hash": {
+          "name": "result_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_idempotency_key": {
+          "name": "uq_idempotency_key",
+          "columns": [
+            "tenant_id",
+            "request_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "idempotency_records_tenant_id_tenants_id_fk": {
+          "name": "idempotency_records_tenant_id_tenants_id_fk",
+          "tableFrom": "idempotency_records",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "legal_identities": {
+      "name": "legal_identities",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "identity_type": {
+          "name": "identity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint_key_id": {
+          "name": "fingerprint_key_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_four": {
+          "name": "last_four",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "redacted_display": {
+          "name": "redacted_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "legal_identities_fingerprint_unique": {
+          "name": "legal_identities_fingerprint_unique",
+          "columns": [
+            "fingerprint"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "tenant_creation_requests": {
+      "name": "tenant_creation_requests",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "result_json": {
+          "name": "result_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "result_hash": {
+          "name": "result_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "tenant_creation_requests_request_id_unique": {
+          "name": "tenant_creation_requests_request_id_unique",
+          "columns": [
+            "request_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "tenant_creation_requests_tenant_id_tenants_id_fk": {
+          "name": "tenant_creation_requests_tenant_id_tenants_id_fk",
+          "tableFrom": "tenant_creation_requests",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "tenants": {
+      "name": "tenants",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lifecycle": {
+          "name": "lifecycle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "base_currency": {
+          "name": "base_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'INR'"
+        },
+        "default_book_set_id": {
+          "name": "default_book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "bank_receipts": {
+      "name": "bank_receipts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bank_account_id": {
+          "name": "bank_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "receipt_date": {
+          "name": "receipt_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reference": {
+          "name": "reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "journal_id": {
+          "name": "journal_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_bank_receipts_id_tenant_book_set_v6": {
+          "name": "uq_bank_receipts_id_tenant_book_set_v6",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_bank_receipts_scope_date_v6": {
+          "name": "idx_bank_receipts_scope_date_v6",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "receipt_date",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "bank_receipts_customer_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk": {
+          "name": "bank_receipts_customer_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk",
+          "tableFrom": "bank_receipts",
+          "tableTo": "parties",
+          "columnsFrom": [
+            "customer_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bank_receipts_bank_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "bank_receipts_bank_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "bank_receipts",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "bank_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bank_receipts_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk": {
+          "name": "bank_receipts_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk",
+          "tableFrom": "bank_receipts",
+          "tableTo": "journal_entries",
+          "columnsFrom": [
+            "journal_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "journal_entries": {
+      "name": "journal_entries",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "posting_date": {
+          "name": "posting_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reference": {
+          "name": "reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "narration": {
+          "name": "narration",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "posted_at": {
+          "name": "posted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_journal_entries_id_tenant_book_set_v5": {
+          "name": "uq_journal_entries_id_tenant_book_set_v5",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_journal_entries_scope_date": {
+          "name": "idx_journal_entries_scope_date",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "posting_date",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "journal_entries_book_set_id_tenant_id_book_sets_id_tenant_id_fk": {
+          "name": "journal_entries_book_set_id_tenant_id_book_sets_id_tenant_id_fk",
+          "tableFrom": "journal_entries",
+          "tableTo": "book_sets",
+          "columnsFrom": [
+            "book_set_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "journal_lines": {
+      "name": "journal_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "journal_entry_id": {
+          "name": "journal_entry_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "debit_minor": {
+          "name": "debit_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "credit_minor": {
+          "name": "credit_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "idx_journal_lines_entry": {
+          "name": "idx_journal_lines_entry",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "journal_entry_id"
+          ],
+          "isUnique": false
+        },
+        "idx_journal_lines_account": {
+          "name": "idx_journal_lines_account",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "account_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "journal_lines_journal_entry_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk": {
+          "name": "journal_lines_journal_entry_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk",
+          "tableFrom": "journal_lines",
+          "tableTo": "journal_entries",
+          "columnsFrom": [
+            "journal_entry_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "journal_lines_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "journal_lines_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "journal_lines",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "parties": {
+      "name": "parties",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "party_role": {
+          "name": "party_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'CUSTOMER'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_parties_id_tenant_book_set_v6": {
+          "name": "uq_parties_id_tenant_book_set_v6",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_parties_scope_name_v6": {
+          "name": "idx_parties_scope_name_v6",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "display_name"
+          ],
+          "isUnique": false
+        },
+        "idx_parties_scope_role_v7": {
+          "name": "idx_parties_scope_role_v7",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "party_role",
+            "display_name"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "parties_book_set_id_tenant_id_book_sets_id_tenant_id_fk": {
+          "name": "parties_book_set_id_tenant_id_book_sets_id_tenant_id_fk",
+          "tableFrom": "parties",
+          "tableTo": "book_sets",
+          "columnsFrom": [
+            "book_set_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "sales_invoice_lines": {
+      "name": "sales_invoice_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "invoice_id": {
+          "name": "invoice_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_number": {
+          "name": "line_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revenue_account_id": {
+          "name": "revenue_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_sales_invoice_line_number": {
+          "name": "uq_sales_invoice_line_number",
+          "columns": [
+            "invoice_id",
+            "line_number"
+          ],
+          "isUnique": true
+        },
+        "idx_sales_invoice_lines_invoice_v6": {
+          "name": "idx_sales_invoice_lines_invoice_v6",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "invoice_id",
+            "line_number"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "sales_invoice_lines_invoice_id_tenant_id_book_set_id_sales_invoices_id_tenant_id_book_set_id_fk": {
+          "name": "sales_invoice_lines_invoice_id_tenant_id_book_set_id_sales_invoices_id_tenant_id_book_set_id_fk",
+          "tableFrom": "sales_invoice_lines",
+          "tableTo": "sales_invoices",
+          "columnsFrom": [
+            "invoice_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sales_invoice_lines_revenue_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "sales_invoice_lines_revenue_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "sales_invoice_lines",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "revenue_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "sales_invoices": {
+      "name": "sales_invoices",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "invoice_number": {
+          "name": "invoice_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "issue_date": {
+          "name": "issue_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "narration": {
+          "name": "narration",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "total_minor": {
+          "name": "total_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paid_minor": {
+          "name": "paid_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "receivable_account_id": {
+          "name": "receivable_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "posted_journal_id": {
+          "name": "posted_journal_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "posted_at": {
+          "name": "posted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_sales_invoice_number_scope": {
+          "name": "uq_sales_invoice_number_scope",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "invoice_number"
+          ],
+          "isUnique": true
+        },
+        "uq_sales_invoices_id_tenant_book_set_v6": {
+          "name": "uq_sales_invoices_id_tenant_book_set_v6",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_sales_invoice_scope_status_v6": {
+          "name": "idx_sales_invoice_scope_status_v6",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "status",
+            "issue_date",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "sales_invoices_book_set_id_tenant_id_book_sets_id_tenant_id_fk": {
+          "name": "sales_invoices_book_set_id_tenant_id_book_sets_id_tenant_id_fk",
+          "tableFrom": "sales_invoices",
+          "tableTo": "book_sets",
+          "columnsFrom": [
+            "book_set_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sales_invoices_customer_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk": {
+          "name": "sales_invoices_customer_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk",
+          "tableFrom": "sales_invoices",
+          "tableTo": "parties",
+          "columnsFrom": [
+            "customer_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sales_invoices_receivable_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "sales_invoices_receivable_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "sales_invoices",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "receivable_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sales_invoices_posted_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk": {
+          "name": "sales_invoices_posted_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk",
+          "tableFrom": "sales_invoices",
+          "tableTo": "journal_entries",
+          "columnsFrom": [
+            "posted_journal_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "vendor_bill_lines": {
+      "name": "vendor_bill_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bill_id": {
+          "name": "bill_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "line_number": {
+          "name": "line_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expense_account_id": {
+          "name": "expense_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_vendor_bill_line_number": {
+          "name": "uq_vendor_bill_line_number",
+          "columns": [
+            "bill_id",
+            "line_number"
+          ],
+          "isUnique": true
+        },
+        "idx_vendor_bill_lines_bill_v7": {
+          "name": "idx_vendor_bill_lines_bill_v7",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "bill_id",
+            "line_number"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "vendor_bill_lines_bill_id_tenant_id_book_set_id_vendor_bills_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_bill_lines_bill_id_tenant_id_book_set_id_vendor_bills_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_bill_lines",
+          "tableTo": "vendor_bills",
+          "columnsFrom": [
+            "bill_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_bill_lines_expense_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_bill_lines_expense_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_bill_lines",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "expense_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "vendor_bills": {
+      "name": "vendor_bills",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bill_number": {
+          "name": "bill_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "vendor_id": {
+          "name": "vendor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bill_date": {
+          "name": "bill_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "narration": {
+          "name": "narration",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "total_minor": {
+          "name": "total_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paid_minor": {
+          "name": "paid_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "payable_account_id": {
+          "name": "payable_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "posted_journal_id": {
+          "name": "posted_journal_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "posted_at": {
+          "name": "posted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_vendor_bill_number_scope": {
+          "name": "uq_vendor_bill_number_scope",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "bill_number"
+          ],
+          "isUnique": true
+        },
+        "uq_vendor_bills_id_tenant_book_set_v7": {
+          "name": "uq_vendor_bills_id_tenant_book_set_v7",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_vendor_bills_scope_status_v7": {
+          "name": "idx_vendor_bills_scope_status_v7",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "status",
+            "bill_date",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "vendor_bills_book_set_id_tenant_id_book_sets_id_tenant_id_fk": {
+          "name": "vendor_bills_book_set_id_tenant_id_book_sets_id_tenant_id_fk",
+          "tableFrom": "vendor_bills",
+          "tableTo": "book_sets",
+          "columnsFrom": [
+            "book_set_id",
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_bills_vendor_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_bills_vendor_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_bills",
+          "tableTo": "parties",
+          "columnsFrom": [
+            "vendor_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_bills_payable_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_bills_payable_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_bills",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "payable_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_bills_posted_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_bills_posted_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_bills",
+          "tableTo": "journal_entries",
+          "columnsFrom": [
+            "posted_journal_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "vendor_payments": {
+      "name": "vendor_payments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "book_set_id": {
+          "name": "book_set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "vendor_id": {
+          "name": "vendor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_date": {
+          "name": "payment_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bank_account_id": {
+          "name": "bank_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reference": {
+          "name": "reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "journal_id": {
+          "name": "journal_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_vendor_payments_id_tenant_book_set_v7": {
+          "name": "uq_vendor_payments_id_tenant_book_set_v7",
+          "columns": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "idx_vendor_payments_scope_date_v7": {
+          "name": "idx_vendor_payments_scope_date_v7",
+          "columns": [
+            "tenant_id",
+            "book_set_id",
+            "payment_date",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "vendor_payments_vendor_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_payments_vendor_id_tenant_id_book_set_id_parties_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_payments",
+          "tableTo": "parties",
+          "columnsFrom": [
+            "vendor_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_payments_bank_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_payments_bank_account_id_tenant_id_book_set_id_accounts_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_payments",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "bank_account_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_payments_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk": {
+          "name": "vendor_payments_journal_id_tenant_id_book_set_id_journal_entries_id_tenant_id_book_set_id_fk",
+          "tableFrom": "vendor_payments",
+          "tableTo": "journal_entries",
+          "columnsFrom": [
+            "journal_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "columnsTo": [
+            "id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}
