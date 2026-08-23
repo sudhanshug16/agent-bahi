@@ -3,7 +3,7 @@
  * Determines readiness based on database state and migration source.
  *
  * Fresh Drizzle databases:
- * - Validated via drizzle_migrations table and database_control metadata
+ * - Validated via the official __drizzle_migrations table and database_control metadata
  * - Never require schema_migrations legacy table
  * - Drizzle journal is sole source of truth
  *
@@ -32,7 +32,7 @@ export function checkDatabaseCompatibility(db: BunDatabase): DatabaseCompatibili
   try {
     // Check for Drizzle baseline
     const hasDrizzleTable = db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drizzle_migrations'"
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'"
     ).get() as { "1": number } | undefined;
 
     // Check for legacy table
@@ -62,11 +62,16 @@ export function checkDatabaseCompatibility(db: BunDatabase): DatabaseCompatibili
 
     // Fresh Drizzle database: has drizzle_migrations but no legacy table
     if (hasDrizzleTable && !hasLegacyTable && hasControl && hasCoreSchema) {
-      const control = db.prepare("SELECT schema_version FROM database_control").get() as {
-        schema_version: number;
+      const control = db.prepare("SELECT schema_version, data_format_version, state, last_migration_id, last_migration_checksum FROM database_control WHERE id = 1").get() as {
+        schema_version: number | bigint;
+        data_format_version: number | bigint;
+        state: string;
+        last_migration_id: string;
+        last_migration_checksum: string;
       } | undefined;
+      const journal = db.prepare("SELECT id, hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC, id DESC").all() as Array<{ id: number | bigint; hash: string; created_at: number | bigint }>;
 
-      if (!control) {
+      if (!control || journal.length !== 1) {
         return {
           status: "UNAVAILABLE",
           schemaVersion: 0,
@@ -76,8 +81,13 @@ export function checkDatabaseCompatibility(db: BunDatabase): DatabaseCompatibili
       }
 
       return {
-        status: control.schema_version === 8 ? "READY" : "UPDATE_REQUIRED",
-        schemaVersion: control.schema_version,
+        status: Number(control.schema_version) === 8
+          && Number(control.data_format_version) === 1
+          && control.state === "READY"
+          && control.last_migration_id === "0009_drizzle_v8_baseline"
+          && control.last_migration_checksum === journal[0]?.hash
+          && /^[0-9a-f]{64}$/.test(journal[0]?.hash ?? "") ? "READY" : "UPDATE_REQUIRED",
+        schemaVersion: Number(control.schema_version),
         source: "DRIZZLE",
         requiresLegacyBridge: false,
       };

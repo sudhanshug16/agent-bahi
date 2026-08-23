@@ -5,8 +5,8 @@
  * - EMPTY: No schema_migrations table (fresh DB)
  * - LEGACY_V2: schema_migrations exists with 2 entries (foundation only)
  * - LEGACY_V3_TO_V7: schema_migrations has 3-7 entries (legacy upgrade path)
- * - CUSTOM_V8_WITHOUT_DRIZZLE: schema_migrations has 8 entries, no drizzle_migrations
- * - DRIZZLE_MANAGED: drizzle_migrations table exists (official path)
+ * - CUSTOM_V8_WITHOUT_DRIZZLE: schema_migrations has 8 entries, no Drizzle journal
+ * - DRIZZLE_MANAGED: __drizzle_migrations table exists (official path)
  * - UNKNOWN: Tampered/hybrid/malformed (fails closed)
  */
 
@@ -47,7 +47,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
 
     // Check for Drizzle migrations table
     const drizzleTableExists = db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drizzle_migrations'"
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'"
     ).get() as { "1": number } | undefined;
 
     // Check for database_control table (v8 marker)
@@ -67,7 +67,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
     // If only Drizzle migrations exist, it's Drizzle-managed
     if (drizzleTableExists && !legacyTableExists) {
       const drizzleCount = (
-        db.prepare("SELECT COUNT(*) as count FROM drizzle_migrations").get() as {
+        db.prepare("SELECT COUNT(*) as count FROM __drizzle_migrations").get() as {
           count: number;
         }
       ).count;
@@ -96,7 +96,7 @@ export function detectDatabaseState(db: BunDatabase): DatabaseStateSummary {
           hasDrizzleMigrations: true,
           legacyMigrationCount: migrationCount,
           drizzleMigrationCount: (
-            db.prepare("SELECT COUNT(*) as count FROM drizzle_migrations").get() as {
+            db.prepare("SELECT COUNT(*) as count FROM __drizzle_migrations").get() as {
               count: number;
             }
           ).count,

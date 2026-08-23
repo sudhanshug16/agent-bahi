@@ -78,11 +78,11 @@ describe("SQLite migration catalog", () => {
       await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "no-op.sqlite"), cliVersion: "test", buildId: "catalog" });
       expect(await Bun.file(join(directory, "no-op.sqlite")).exists()).toBe(false);
       const native = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
-      // Fresh Drizzle DB should NOT have legacy schema_migrations table; only drizzle_migrations
+      // Fresh Drizzle DB should NOT have legacy schema_migrations table; only the official journal
       expect(() => native.query("SELECT COUNT(*) as count FROM schema_migrations").get()).toThrow();
-      // Should have Drizzle migration journal
-      expect(native.query("SELECT COUNT(*) as count FROM drizzle_migrations").get()).toEqual({
-        count: 1,
+      // Should have the official Drizzle migration journal
+      expect(native.query("SELECT COUNT(*) as count FROM __drizzle_migrations").get()).toEqual({
+        count: 1n,
       });
       expect(native.query("SELECT schema_version FROM database_control").get()).toEqual({ schema_version: 8n });
       native.close();

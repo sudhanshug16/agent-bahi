@@ -1,3 +1,5 @@
+import { Database as BunDatabase } from "bun:sqlite";
+import { assertSafeSqlitePath } from "../infrastructure/sqlite/path-policy.ts";
 import type { AccountService } from "./services/account-service.ts";
 import type { BookSetService } from "./services/book-set-service.ts";
 import type { TenantService } from "./services/tenant-service.ts";
@@ -13,7 +15,10 @@ import { MigrationService } from "../infrastructure/services/migration-service.t
 import { DatabaseControlService } from "../infrastructure/services/database-control-service.ts";
 import { BackupService } from "../infrastructure/services/backup-service.ts";
 import { UpgradeCoordinator } from "../infrastructure/services/upgrade-coordinator.ts";
-import { loadDrizzleBaseline, applyDrizzleBaseline, seedDrizzleMigrationsTable } from "../infrastructure/services/drizzle-baseline.ts";
+import {
+  DRIZZLE_MIGRATIONS_TABLE,
+  initializeDrizzleControl,
+} from "../infrastructure/services/drizzle-baseline.ts";
 import { detectDatabaseState } from "../infrastructure/services/database-state-detector.ts";
 import { FOUNDATION_MIGRATIONS, ORDERED_UPGRADE_STEPS, CURRENT_SCHEMA_MANIFEST } from "../infrastructure/schema/migration-catalog.ts";
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
@@ -124,27 +129,32 @@ export async function initializeSqliteDatabase(
   const db = new SqliteAdapter({ path: dbPath });
   const now = options.now ?? new Date();
   try {
-    // Load and apply the Drizzle v8 baseline
-    const baseline = await loadDrizzleBaseline();
-    await db.withMigrationLease(async (session) => {
-      // Apply the baseline schema via Drizzle's SQL
-      const bunDb = (db as any).db as any;
-      await applyDrizzleBaseline(bunDb, baseline);
-
-      // Seed the Drizzle migrations journal
-      await seedDrizzleMigrationsTable(bunDb, baseline);
-
-      // Initialize database_control metadata
+    const state = databaseState(dbPath);
+    if (state.hasLegacyMigrations) {
+      // Existing legacy fixtures/databases remain on the legacy foundation
+      // path until the separately scoped bridge is implemented.
+      await new MigrationService(db, "sqlite").migrate(FOUNDATION_MIGRATIONS);
       const control = new DatabaseControlService(db, "sqlite");
-      await control.initialize(
-        {
-          cliVersion: options.cliVersion ?? "agent-bahi",
-          buildId: options.buildId ?? "initialize",
-          now,
-        },
-        session
-      );
-    });
+      await db.withMigrationLease((session) => control.initialize({
+        cliVersion: options.cliVersion ?? "agent-bahi",
+        buildId: options.buildId ?? "initialize",
+        now,
+      }, session).then(() => undefined));
+      return;
+    }
+
+    if (state.state !== "EMPTY" && state.state !== "DRIZZLE_MANAGED") {
+      throw new Error("Database is neither empty nor a recognized Drizzle-managed database");
+    }
+
+    // The official migrator owns DDL, transaction boundaries, and its journal.
+    db.runFreshDrizzleMigrations();
+    // Control metadata is initialized only after the migrator has committed.
+    await db.withMigrationLease((session) => initializeDrizzleControl(session, {
+      cliVersion: options.cliVersion ?? "agent-bahi",
+      buildId: options.buildId ?? "initialize",
+      now,
+    }).then(() => undefined));
   } finally {
     await db.close();
   }
@@ -161,6 +171,12 @@ export async function upgradeSqliteDatabase(
   const db = new SqliteAdapter({ path: dbPath });
   const now = options.now ?? new Date();
   try {
+    const state = databaseState(dbPath);
+    if (state.state === "DRIZZLE_MANAGED" && !state.hasLegacyMigrations) {
+      // No legacy bridge or Drizzle upgrade migration is part of this slice.
+      // Fresh v8 databases are already at the current product baseline.
+      return;
+    }
     const control = new DatabaseControlService(db, "sqlite");
     const inspection = await control.inspect();
     if (inspection.status !== "AVAILABLE" || !inspection.record) {
@@ -222,31 +238,78 @@ export async function inspectSqliteApplicationCompatibility(dbPath: string): Pro
   currentDataFormatVersion?: number;
   requiredDataFormatVersion: number;
 }> {
-  const db = new SqliteAdapter({ path: dbPath });
+  const canonicalPath = assertSafeSqlitePath(dbPath);
+  if (!(await Bun.file(canonicalPath).exists())) {
+    return {
+      status: "UNINITIALIZED",
+      requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+      requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+    };
+  }
+  const native = new BunDatabase(canonicalPath, { readonly: true });
   try {
-    const inspection = await new DatabaseControlService(db, "sqlite").inspect();
-    if (inspection.status !== "AVAILABLE" || !inspection.record) {
+    const state = detectDatabaseState(native);
+    if (state.state === "EMPTY") {
       return {
-        status: inspection.status === "UNINITIALIZED" ? "UNINITIALIZED" : "UNAVAILABLE",
+        status: "UNINITIALIZED",
         requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
         requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       };
     }
-    const currentSchemaVersion = inspection.record.schemaVersion;
-    const currentDataFormatVersion = inspection.record.dataFormatVersion;
+    if (state.state === "DRIZZLE_MANAGED" && !state.hasLegacyMigrations) {
+      const journal = native.query(`SELECT hash FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at DESC, id DESC LIMIT 1`).get() as { hash?: unknown } | undefined;
+      const control = native.query("SELECT schema_version, data_format_version, state FROM database_control WHERE id = 1").get() as { schema_version?: unknown; data_format_version?: unknown; state?: unknown } | undefined;
+      if (!journal || !control) {
+        return {
+          status: "UNAVAILABLE",
+          requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+          requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+        };
+      }
+      const ready = Number(control.schema_version) === 8
+        && Number(control.data_format_version) === 1
+        && String(control.state) === "READY"
+        && /^[0-9a-f]{64}$/.test(String(journal.hash));
+      return {
+        status: ready ? "READY" : "UPDATE_REQUIRED",
+        currentSchemaVersion: Number(control.schema_version),
+        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        currentDataFormatVersion: Number(control.data_format_version),
+        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+      };
+    }
+    const control = native.query("SELECT schema_version, data_format_version, state FROM database_control WHERE id = 1").get() as { schema_version?: unknown; data_format_version?: unknown; state?: unknown } | undefined;
+    if (!control) {
+      return {
+        status: "UNAVAILABLE",
+        requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
+        requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
+      };
+    }
+    const currentSchemaVersion = Number(control.schema_version);
+    const currentDataFormatVersion = Number(control.data_format_version);
     return {
-      status: currentSchemaVersion === CURRENT_SCHEMA_MANIFEST.schemaVersion && currentDataFormatVersion === CURRENT_SCHEMA_MANIFEST.dataFormatVersion ? "READY" : "UPDATE_REQUIRED",
+      status: currentSchemaVersion === CURRENT_SCHEMA_MANIFEST.schemaVersion && currentDataFormatVersion === CURRENT_SCHEMA_MANIFEST.dataFormatVersion && String(control.state) === "READY" ? "READY" : "UPDATE_REQUIRED",
       currentSchemaVersion,
       requiredSchemaVersion: CURRENT_SCHEMA_MANIFEST.schemaVersion,
       currentDataFormatVersion,
       requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
     };
   } finally {
-    await db.close();
+    native.close();
   }
 }
 
 /** Normal construction is side-effect free; callers must choose explicit upgrade separately. */
 export function bootstrapSqliteApplication(dbPath: string): PublicApplicationFacade {
   return createSqliteApplication(dbPath);
+}
+
+function databaseState(dbPath: string): ReturnType<typeof detectDatabaseState> {
+  const native = new BunDatabase(dbPath);
+  try {
+    return detectDatabaseState(native);
+  } finally {
+    native.close();
+  }
 }

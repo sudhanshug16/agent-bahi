@@ -7,6 +7,7 @@ import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { DatabaseControlService } from "../services/database-control-service.ts";
 import { MigrationService, MIGRATION_SCHEMA_SQLITE } from "../services/migration-service.ts";
 import { CURRENT_SCHEMA_MANIFEST, type SqliteSchemaManifest } from "../schema/current-manifest.ts";
+import { DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_MIGRATIONS_TABLE } from "../services/drizzle-baseline.ts";
 
 const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tenants",
@@ -383,7 +384,15 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
   private validateDatabaseControl(connection: BunDatabase): GateRecord {
     try {
       const controlMetadata = nativeTableMetadata(connection, "database_control");
-      if (!controlMetadata || DatabaseControlService.validateDatabaseControlTableSchema(controlMetadata)) {
+      if (!controlMetadata) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control schema is unavailable");
+      }
+      const drizzleMetadata = nativeTableMetadata(connection, DRIZZLE_MIGRATIONS_TABLE);
+      const legacyMetadata = nativeTableMetadata(connection, "schema_migrations");
+      if (drizzleMetadata && !legacyMetadata) {
+        return this.validateFreshDrizzleDatabase(connection, controlMetadata, drizzleMetadata);
+      }
+      if (DatabaseControlService.validateDatabaseControlTableSchema(controlMetadata)) {
         throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control schema is unavailable");
       }
       const migrationMetadata = nativeTableMetadata(connection, "schema_migrations");
@@ -439,5 +448,67 @@ export class SqliteBusinessSessionRunner implements BusinessSessionRunner {
       if (error instanceof DomainError) throw error;
       throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database compatibility validation failed");
     }
+  }
+
+  private validateFreshDrizzleDatabase(
+    connection: BunDatabase,
+    controlMetadata: TableMetadata,
+    journalMetadata: TableMetadata,
+  ): GateRecord {
+    const expectedControlColumns = [
+      ["id", "INTEGER", 1, 1],
+      ["schema_version", "INTEGER", 1, 0],
+      ["data_format_version", "INTEGER", 1, 0],
+      ["reader_compatibility_min", "INTEGER", 1, 0],
+      ["reader_compatibility_max", "INTEGER", 1, 0],
+      ["required_writer_protocol", "INTEGER", 1, 0],
+      ["state", "TEXT", 1, 0],
+      ["revision", "INTEGER", 1, 0],
+      ["generation", "INTEGER", 1, 0],
+      ["last_migration_id", "TEXT", 1, 0],
+      ["last_migration_checksum", "TEXT", 1, 0],
+      ["last_writer_cli_version", "TEXT", 1, 0],
+      ["last_writer_build_id", "TEXT", 1, 0],
+      ["last_writer_at", "TEXT", 1, 0],
+      ["created_at", "TEXT", 1, 0],
+      ["updated_at", "TEXT", 1, 0],
+      ["recovery_reason", "TEXT", 0, 0],
+    ] as const;
+    if (controlMetadata.kind !== "TABLE" || controlMetadata.columns.length !== expectedControlColumns.length) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Fresh Drizzle control schema is unavailable");
+    }
+    expectedControlColumns.forEach(([name, type, notnull, pk], index) => {
+      const actual = controlMetadata.columns[index];
+      if (!actual || actual.name !== name || actual.type.toUpperCase() !== type || actual.notnull !== notnull || actual.pk !== pk) {
+        throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Fresh Drizzle control schema is not canonical");
+      }
+    });
+    if (journalMetadata.kind !== "TABLE" || journalMetadata.columns.map((column) => column.name).join(",") !== "id,hash,created_at") {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Official Drizzle journal schema is not canonical");
+    }
+
+    const controlRows = connection.prepare("SELECT * FROM database_control").all() as Array<Record<string, unknown>>;
+    if (controlRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Database control row cardinality is invalid");
+    const control = controlRows[0];
+    const journalRows = connection.prepare(`SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`).all() as Array<Record<string, unknown>>;
+    if (journalRows.length !== 1) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Drizzle migration journal cardinality is invalid");
+    const journal = journalRows[0];
+    if (String(control.last_migration_id) !== DRIZZLE_BASELINE_MIGRATION_ID
+      || String(control.last_migration_checksum) !== String(journal.hash)
+      || !/^[0-9a-f]{64}$/.test(String(journal.hash))) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Drizzle migration journal and control metadata do not match");
+    }
+    const integer = (value: unknown): number => {
+      const number = typeof value === "bigint" ? Number(value) : Number(value);
+      if (!Number.isSafeInteger(number)) throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Drizzle control integer metadata is malformed");
+      return number;
+    };
+    if (integer(control.id) !== 1 || integer(control.schema_version) !== 8 || integer(control.data_format_version) !== 1
+      || integer(control.reader_compatibility_min) !== 1 || integer(control.reader_compatibility_max) !== 1
+      || integer(control.required_writer_protocol) !== 1 || integer(control.revision) !== 7 || integer(control.generation) !== 1
+      || String(control.state) !== "READY" || control.recovery_reason != null) {
+      throw new DomainError("DATABASE_CONTROL_UNAVAILABLE", "Fresh Drizzle control metadata is not ready");
+    }
+    return { readerCompatibilityMin: 1, readerCompatibilityMax: 1, requiredWriterProtocol: 1 };
   }
 }

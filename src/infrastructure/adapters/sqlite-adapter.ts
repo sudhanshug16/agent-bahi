@@ -5,6 +5,7 @@ import type { SqliteConfig } from "../config/database.ts";
 import { DomainError, MigrationLockedError } from "../../core/types.ts";
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { classifySqliteError, toDomainError } from "../sqlite/error-classifier.ts";
+import { migrateFreshDrizzleDatabase } from "../services/drizzle-baseline.ts";
 
 function normalizeSqliteError(error: unknown, operation: string): DomainError {
   return error instanceof DomainError
@@ -488,6 +489,15 @@ export class SqliteAdapter implements Database {
 
   unitOfWork(config?: TransactionConfig): UnitOfWork {
     return new SqliteUnitOfWork(this.db);
+  }
+
+  /**
+   * Explicit fresh-database operation: run Drizzle's official migrator on
+   * this adapter's configured SQLite connection. The migrator owns its
+   * transaction and __drizzle_migrations journal.
+   */
+  runFreshDrizzleMigrations(): void {
+    migrateFreshDrizzleDatabase(this.db);
   }
 
   async withMigrationLease<T>(

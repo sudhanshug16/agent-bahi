@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, foreignKey, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, foreignKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 import { bookSets, accounts } from "./foundation-schema";
 import { journalEntries } from "./ledger-schema";
 import { parties } from "./sales-schema";
@@ -36,6 +37,11 @@ export const vendorBills = sqliteTable(
     uqBillNumber: uniqueIndex("uq_vendor_bill_number_scope").on(table.tenantId, table.bookSetId, table.billNumber),
     uqIdTenantBookSet: uniqueIndex("uq_vendor_bills_id_tenant_book_set_v7").on(table.id, table.tenantId, table.bookSetId),
     idxScopeStatus: index("idx_vendor_bills_scope_status_v7").on(table.tenantId, table.bookSetId, table.status, table.billDate, table.id),
+    chkTotal: check("chk_vendor_bill_total", sql`typeof(${table.totalMinor}) = 'integer' AND ${table.totalMinor} > 0`),
+    chkPaid: check("chk_vendor_bill_paid", sql`typeof(${table.paidMinor}) = 'integer' AND ${table.paidMinor} >= 0 AND ${table.paidMinor} <= ${table.totalMinor}`),
+    chkStatus: check("chk_vendor_bill_status", sql`${table.status} IN ('DRAFT', 'POSTED', 'PARTIALLY_PAID', 'PAID')`),
+    chkStatusFields: check("chk_vendor_bill_status_fields", sql`(${table.status} = 'DRAFT' AND ${table.payableAccountId} IS NULL AND ${table.postedJournalId} IS NULL AND ${table.postedAt} IS NULL AND ${table.paidMinor} = 0) OR (${table.status} IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND ${table.payableAccountId} IS NOT NULL AND ${table.postedJournalId} IS NOT NULL AND ${table.postedAt} IS NOT NULL)`),
+    chkPaidStatus: check("chk_vendor_bill_paid_status", sql`(${table.status} = 'POSTED' AND ${table.paidMinor} = 0) OR (${table.status} = 'PARTIALLY_PAID' AND ${table.paidMinor} > 0 AND ${table.paidMinor} < ${table.totalMinor}) OR (${table.status} = 'PAID' AND ${table.paidMinor} = ${table.totalMinor}) OR ${table.status} = 'DRAFT'`),
   })
 );
 
@@ -56,6 +62,9 @@ export const vendorBillLines = sqliteTable(
     fkExpense: foreignKey({ columns: [table.expenseAccountId, table.tenantId, table.bookSetId], foreignColumns: [accounts.id, accounts.tenantId, accounts.bookSetId] }).onDelete("no action"),
     uqLineNumber: uniqueIndex("uq_vendor_bill_line_number").on(table.billId, table.lineNumber),
     idxBill: index("idx_vendor_bill_lines_bill_v7").on(table.tenantId, table.bookSetId, table.billId, table.lineNumber),
+    chkLineNumber: check("chk_vendor_bill_line_number", sql`typeof(${table.lineNumber}) = 'integer' AND ${table.lineNumber} > 0`),
+    chkDescription: check("chk_vendor_bill_line_description", sql`length(${table.description}) > 0`),
+    chkAmount: check("chk_vendor_bill_line_amount", sql`typeof(${table.amountMinor}) = 'integer' AND ${table.amountMinor} > 0`),
   })
 );
 
@@ -79,5 +88,25 @@ export const vendorPayments = sqliteTable(
     fkJournal: foreignKey({ columns: [table.journalId, table.tenantId, table.bookSetId], foreignColumns: [journalEntries.id, journalEntries.tenantId, journalEntries.bookSetId] }).onDelete("no action"),
     uqIdTenantBookSet: uniqueIndex("uq_vendor_payments_id_tenant_book_set_v7").on(table.id, table.tenantId, table.bookSetId),
     idxScope: index("idx_vendor_payments_scope_date_v7").on(table.tenantId, table.bookSetId, table.paymentDate, table.id),
+    chkAmount: check("chk_vendor_payment_amount", sql`typeof(${table.amountMinor}) = 'integer' AND ${table.amountMinor} > 0`),
   })
+);
+
+export const vendorPaymentAllocations = sqliteTable(
+  "vendor_payment_allocations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    bookSetId: text("book_set_id").notNull(),
+    paymentId: text("payment_id").notNull(),
+    billId: text("bill_id").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+  },
+  (table) => ({
+    fkPayment: foreignKey({ columns: [table.paymentId, table.tenantId, table.bookSetId], foreignColumns: [vendorPayments.id, vendorPayments.tenantId, vendorPayments.bookSetId] }).onDelete("no action"),
+    fkBill: foreignKey({ columns: [table.billId, table.tenantId, table.bookSetId], foreignColumns: [vendorBills.id, vendorBills.tenantId, vendorBills.bookSetId] }).onDelete("no action"),
+    uqBill: uniqueIndex("uq_vendor_payment_allocation_bill").on(table.paymentId, table.billId),
+    idxBill: index("idx_vendor_payment_allocations_bill_v7").on(table.tenantId, table.bookSetId, table.billId),
+    chkAmount: check("chk_vendor_payment_allocation_amount", sql`typeof(${table.amountMinor}) = 'integer' AND ${table.amountMinor} > 0`),
+  }),
 );

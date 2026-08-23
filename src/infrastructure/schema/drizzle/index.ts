@@ -22,10 +22,10 @@ export {
 export { journalEntries, journalLines } from "./ledger-schema";
 
 // Sales schema
-export { parties, salesInvoices, salesInvoiceLines, bankReceipts } from "./sales-schema";
+export { parties, salesInvoices, salesInvoiceLines, bankReceipts, bankReceiptAllocations } from "./sales-schema";
 
 // Purchase schema
-export { vendorBills, vendorBillLines, vendorPayments } from "./purchase-schema";
+export { vendorBills, vendorBillLines, vendorPayments, vendorPaymentAllocations } from "./purchase-schema";
 
 // Bank reconciliation schema
 export { bankStatements, bankStatementLines, bankMatches } from "./bank-reconciliation-schema";

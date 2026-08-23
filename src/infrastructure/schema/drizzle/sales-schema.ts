@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, foreignKey, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, foreignKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 import { bookSets, accounts } from "./foundation-schema";
 import { journalEntries } from "./ledger-schema";
 
@@ -26,6 +27,9 @@ export const parties = sqliteTable(
     uqIdTenantBookSet: uniqueIndex("uq_parties_id_tenant_book_set_v6").on(table.id, table.tenantId, table.bookSetId),
     idxScopeName: index("idx_parties_scope_name_v6").on(table.tenantId, table.bookSetId, table.displayName),
     idxScopeRole: index("idx_parties_scope_role_v7").on(table.tenantId, table.bookSetId, table.partyRole, table.displayName),
+    chkDisplayName: check("chk_party_display_name", sql`length(${table.displayName}) > 0 AND ${table.displayName} = trim(${table.displayName})`),
+    chkRole: check("chk_party_role", sql`${table.partyRole} IN ('CUSTOMER', 'VENDOR', 'BOTH')`),
+    chkStatus: check("chk_party_status", sql`${table.status} IN ('ACTIVE', 'ARCHIVED')`),
   })
 );
 
@@ -57,6 +61,11 @@ export const salesInvoices = sqliteTable(
     uqInvoiceNumber: uniqueIndex("uq_sales_invoice_number_scope").on(table.tenantId, table.bookSetId, table.invoiceNumber),
     uqIdTenantBookSet: uniqueIndex("uq_sales_invoices_id_tenant_book_set_v6").on(table.id, table.tenantId, table.bookSetId),
     idxScopeStatus: index("idx_sales_invoice_scope_status_v6").on(table.tenantId, table.bookSetId, table.status, table.issueDate, table.id),
+    chkTotal: check("chk_sales_invoice_total", sql`typeof(${table.totalMinor}) = 'integer' AND ${table.totalMinor} > 0`),
+    chkPaid: check("chk_sales_invoice_paid", sql`typeof(${table.paidMinor}) = 'integer' AND ${table.paidMinor} >= 0 AND ${table.paidMinor} <= ${table.totalMinor}`),
+    chkStatus: check("chk_sales_invoice_status", sql`${table.status} IN ('DRAFT', 'POSTED', 'PARTIALLY_PAID', 'PAID')`),
+    chkStatusFields: check("chk_sales_invoice_status_fields", sql`(${table.status} = 'DRAFT' AND ${table.receivableAccountId} IS NULL AND ${table.postedJournalId} IS NULL AND ${table.postedAt} IS NULL AND ${table.paidMinor} = 0) OR (${table.status} IN ('POSTED', 'PARTIALLY_PAID', 'PAID') AND ${table.receivableAccountId} IS NOT NULL AND ${table.postedJournalId} IS NOT NULL AND ${table.postedAt} IS NOT NULL)`),
+    chkPaidStatus: check("chk_sales_invoice_paid_status", sql`(${table.status} = 'POSTED' AND ${table.paidMinor} = 0) OR (${table.status} = 'PARTIALLY_PAID' AND ${table.paidMinor} > 0 AND ${table.paidMinor} < ${table.totalMinor}) OR (${table.status} = 'PAID' AND ${table.paidMinor} = ${table.totalMinor}) OR ${table.status} = 'DRAFT'`),
   })
 );
 
@@ -77,6 +86,9 @@ export const salesInvoiceLines = sqliteTable(
     fkRevenue: foreignKey({ columns: [table.revenueAccountId, table.tenantId, table.bookSetId], foreignColumns: [accounts.id, accounts.tenantId, accounts.bookSetId] }).onDelete("no action"),
     uqLineNumber: uniqueIndex("uq_sales_invoice_line_number").on(table.invoiceId, table.lineNumber),
     idxInvoice: index("idx_sales_invoice_lines_invoice_v6").on(table.tenantId, table.bookSetId, table.invoiceId, table.lineNumber),
+    chkLineNumber: check("chk_sales_invoice_line_number", sql`typeof(${table.lineNumber}) = 'integer' AND ${table.lineNumber} > 0`),
+    chkDescription: check("chk_sales_invoice_line_description", sql`length(${table.description}) > 0`),
+    chkAmount: check("chk_sales_invoice_line_amount", sql`typeof(${table.amountMinor}) = 'integer' AND ${table.amountMinor} > 0`),
   })
 );
 
@@ -100,5 +112,25 @@ export const bankReceipts = sqliteTable(
     fkJournal: foreignKey({ columns: [table.journalId, table.tenantId, table.bookSetId], foreignColumns: [journalEntries.id, journalEntries.tenantId, journalEntries.bookSetId] }).onDelete("no action"),
     uqIdTenantBookSet: uniqueIndex("uq_bank_receipts_id_tenant_book_set_v6").on(table.id, table.tenantId, table.bookSetId),
     idxScope: index("idx_bank_receipts_scope_date_v6").on(table.tenantId, table.bookSetId, table.receiptDate, table.id),
+    chkAmount: check("chk_bank_receipt_amount", sql`typeof(${table.amountMinor}) = 'integer' AND ${table.amountMinor} > 0`),
   })
+);
+
+export const bankReceiptAllocations = sqliteTable(
+  "bank_receipt_allocations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    bookSetId: text("book_set_id").notNull(),
+    receiptId: text("receipt_id").notNull(),
+    invoiceId: text("invoice_id").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+  },
+  (table) => ({
+    fkReceipt: foreignKey({ columns: [table.receiptId, table.tenantId, table.bookSetId], foreignColumns: [bankReceipts.id, bankReceipts.tenantId, bankReceipts.bookSetId] }).onDelete("no action"),
+    fkInvoice: foreignKey({ columns: [table.invoiceId, table.tenantId, table.bookSetId], foreignColumns: [salesInvoices.id, salesInvoices.tenantId, salesInvoices.bookSetId] }).onDelete("no action"),
+    uqInvoice: uniqueIndex("uq_bank_receipt_allocation_invoice").on(table.receiptId, table.invoiceId),
+    idxInvoice: index("idx_bank_receipt_allocations_invoice_v6").on(table.tenantId, table.bookSetId, table.invoiceId),
+    chkAmount: check("chk_bank_receipt_allocation_amount", sql`typeof(${table.amountMinor}) = 'integer' AND ${table.amountMinor} > 0`),
+  }),
 );
