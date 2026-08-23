@@ -4,6 +4,7 @@ import { createSqliteApplication, initializeSqliteDatabase, inspectSqliteApplica
 import type { PublicApplicationFacade } from "../application/public-facade.ts";
 import { DomainError, brandAccountId, brandBookSetId, brandTenantId } from "../core/types.ts";
 import { BUSINESS_OPERATION_CATALOG, findOperation } from "./catalog.ts";
+import { SKILL_GUIDES, checkSkillGuide, findSkillGuide, listOperations, listSkillGuides, operationForDisplay } from "./skills.ts";
 import type { DispatchEnvelope } from "./types.ts";
 
 type Input = Record<string, unknown>;
@@ -26,6 +27,32 @@ function tenantId(input: Input) { return brandTenantId(text(input, "tenantId"));
 function bookSetId(input: Input) { return brandBookSetId(text(input, "bookSetId")); }
 
 const handlers: Record<string, Handler> = {
+  "agent.skill.list": async () => ({ schemaVersion: 1, guides: listSkillGuides() }),
+  "agent.skill.show": async (_facade, input) => {
+    const id = text(input, "id");
+    const guide = findSkillGuide(id);
+    if (!guide) throw new DomainError("UNKNOWN_SKILL", `Unknown skill guide: ${id}`);
+    return { schemaVersion: 1, guide };
+  },
+  "agent.skill.check": async (_facade, input) => {
+    const id = optionalText(input, "id");
+    if (id) {
+      const guide = findSkillGuide(id);
+      if (!guide) throw new DomainError("UNKNOWN_SKILL", `Unknown skill guide: ${id}`);
+      const report = checkSkillGuide(guide);
+      return { schemaVersion: 1, status: report.status, reports: [report] };
+    }
+    const reports = SKILL_GUIDES.map(checkSkillGuide);
+    const status = reports.some((report) => report.status === "BROKEN") ? "BROKEN" : reports.some((report) => report.status === "PARTIAL") ? "PARTIAL" : "READY";
+    return { schemaVersion: 1, status, reports };
+  },
+  "agent.operation.list": async () => ({ schemaVersion: 1, operations: listOperations() }),
+  "agent.operation.show": async (_facade, input) => {
+    const operationId = text(input, "operationId");
+    const operation = operationForDisplay(operationId);
+    if (!operation) throw new DomainError("UNKNOWN_OPERATION", `Unknown or unavailable operation: ${operationId}`);
+    return { schemaVersion: 1, operation: { ...operation, scope: operation.requiredScope, output: operation.outputDescription } };
+  },
   "tenant.get": (facade, input) => facade.tenant.getTenant(tenantId(input)),
   "tenant.list-active": (facade) => facade.tenant.listActiveTenants(),
   "tenant.create": (facade, input) => facade.tenant.create(input as never),
@@ -278,6 +305,8 @@ function readinessError(operationId: string, status: string, requiredSchemaVersi
   return { ok: false, operationId, error: { code, message: `Database is ${status}; normal business operations do not mutate it.`, details: { status, requiredSchemaVersion, remediation: code === "UNINITIALIZED" ? "Run database.init explicitly." : "Run database.upgrade with an explicit verified backup." } } };
 }
 
+const metadataOperationIds = new Set(["agent.skill.list", "agent.skill.show", "agent.skill.check", "agent.operation.list", "agent.operation.show"]);
+
 export interface DispatcherOptions {
   readonly databasePath: string;
   readonly allowOperatorOperations?: boolean;
@@ -295,6 +324,7 @@ export class OperationDispatcher {
       input = inputObject(rawInput);
       validateRequired(operationId, input);
       if (entry.operatorOnly) return this.dispatchOperator(entry.id, input);
+      if (metadataOperationIds.has(operationId)) return this.dispatchMetadata(operationId, input);
       const compatibility = await inspectSqliteApplicationCompatibility(this.options.databasePath);
       if (compatibility.status !== "READY") return readinessError(operationId, compatibility.status, compatibility.requiredSchemaVersion);
       const facade = createSqliteApplication(this.options.databasePath);
@@ -303,6 +333,15 @@ export class OperationDispatcher {
       const result = isCommand ? JSON.parse(String((commandResult as { resultJson: string }).resultJson)) : jsonValue(commandResult);
       const resultHash = isCommand ? String((commandResult as { resultHash: string }).resultHash) : computeResultHash(canonicalJson(result));
       return { ok: true, operationId, result, resultHash, ...((commandResult as { replayed?: boolean } | undefined)?.replayed !== undefined ? { replayed: (commandResult as { replayed?: boolean }).replayed } : {}) };
+    } catch (error) {
+      return errorEnvelope(operationId, error);
+    }
+  }
+
+  private async dispatchMetadata(operationId: string, input: Input): Promise<DispatchEnvelope> {
+    try {
+      const result = jsonValue(await handlers[operationId](undefined as never, input));
+      return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
     } catch (error) {
       return errorEnvelope(operationId, error);
     }

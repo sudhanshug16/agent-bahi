@@ -12,6 +12,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "validate:skills": "bun scripts/validate-skills.ts",
     "test:gate0": "bun test tests/gate0/gate0.test.ts",
     "test:commands": "bun test tests/application/bookset-command.test.ts",
     "test": "bun test",

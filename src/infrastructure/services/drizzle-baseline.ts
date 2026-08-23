@@ -11,13 +11,16 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate as migrateDrizzle } from "drizzle-orm/bun-sqlite/migrator";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { Database as BunDatabase } from "bun:sqlite";
 import type { MigrationSession } from "../../application/ports/persistence.ts";
 import { DomainError } from "../../core/types.ts";
 
 export const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations" as const;
-const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
+const packagedDrizzleDirectory = join(import.meta.dir, "../../..", "drizzle");
+/** Bun compile keeps typed registries embedded while existing Drizzle source
+ * assets remain beside the distribution at its explicit launch root. */
+const DRIZZLE_MIGRATIONS_DIRECTORY = existsSync(join(packagedDrizzleDirectory, "meta", "_journal.json")) ? packagedDrizzleDirectory : join(process.cwd(), "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
 \t\t\t\tid INTEGER PRIMARY KEY,
 \t\t\t\thash text NOT NULL,
