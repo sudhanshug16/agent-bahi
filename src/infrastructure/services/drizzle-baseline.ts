@@ -98,6 +98,9 @@ export const DRIZZLE_PERSONAL_TAX_POSITION_WORKSHEET_V1_MIGRATION_ID = descripto
 export const DRIZZLE_PERSONAL_TAX_ITR_ELIGIBILITY_V1_MIGRATION_ID = descriptorAt(19).id;
 export const DRIZZLE_PERSONAL_TAX_COMPUTATION_V1_MIGRATION_ID = descriptorAt(20).id;
 export const DRIZZLE_PERSONAL_TAX_RETURN_ARTIFACT_V1_MIGRATION_ID = descriptorAt(21).id;
+export const DRIZZLE_GST_GSTR1_RETURN_ARTIFACT_V1_MIGRATION_ID = descriptorAt(22).id;
+export const DRIZZLE_GST_GSTR1_RETURN_ARTIFACT_V1_HASH = descriptorAt(22).hash;
+export const DRIZZLE_GST_GSTR1_RETURN_ARTIFACT_V1_CREATED_AT = descriptorAt(22).createdAt;
 /** Backwards-compatible name for the current official Drizzle migration. */
 export const DRIZZLE_GST_MIGRATION_ID = drizzleCurrentMigration().id;
 

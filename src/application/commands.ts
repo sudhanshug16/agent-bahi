@@ -185,6 +185,16 @@ export interface ReturnArtifactBindingPayload {
 export interface ReturnArtifactValidatePayload { taxCaseId: string; artifactId: string; expectedArtifactHash: string; }
 export interface ReturnArtifactExportPayload { taxCaseId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
 
+export interface GstReturnSchemaPackRegisterPayload {
+  packId?: string; jurisdiction: "IN"; returnType: "GSTR1"; applicableFrom: string; applicableTo?: string;
+  readinessContractVersion: string; ruleSnapshotReference?: string; artifactReferences: AuthorityArtifactReference[];
+  packVersion: string; validationSchema: unknown; mappingSpec: unknown; supersedesPackId?: string;
+}
+export interface GstReturnSchemaPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface Gstr1ArtifactBindingPayload { registrationId: string; taxPeriodFrom: string; taxPeriodTo: string; readinessSnapshotId: string; schemaPackId: string; }
+export interface Gstr1ArtifactValidatePayload { artifactId: string; expectedArtifactHash: string; }
+export interface Gstr1ArtifactExportPayload { artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
+
 export interface CommandResult<T> {
   resultJson: string;
   resultHash: string;
