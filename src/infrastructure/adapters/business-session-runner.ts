@@ -105,6 +105,9 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "compliance_obligation_artifacts",
   "compliance_obligation_events",
   "period_close_events",
+  "close_pack_manifests",
+  "close_pack_sections",
+  "close_pack_bodies",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

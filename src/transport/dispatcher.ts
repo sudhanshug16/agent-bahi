@@ -172,6 +172,9 @@ const handlers: Record<string, Handler> = {
   "payroll.bank-export.create": (facade, input) => facade.payroll.paymentBatch.export(input as never),
   "payroll.remittance.create": (facade, input) => facade.payroll.remittance.create(input as never),
   "payroll.remittance.update": (facade, input) => facade.payroll.remittance.update(input as never),
+  "report.close-pack.export": (facade, input) => facade.closePack.export(input as never),
+  "report.close-pack.get": (facade, input) => facade.closePack.getManifest(tenantId(input), bookSetId(input), text(input, "manifestId")),
+  "report.close-pack.section": (facade, input) => facade.closePack.getSection(tenantId(input), bookSetId(input), text(input, "manifestId"), text(input, "sectionName")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

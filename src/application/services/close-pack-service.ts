@@ -48,7 +48,7 @@ function nonblank(value: unknown, field: string): string {
 
 function escapeCSV(value: unknown): string {
   const str = value === null || value === undefined ? "" : String(value);
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) return `"${str.replace(/"/g, '""')}"`;
+  if (str.includes(",") || str.includes('"') || str.includes("\r") || str.includes("\n")) return `"${str.replace(/"/g, '""')}"`;
   return str;
 }
 
@@ -84,7 +84,7 @@ function generateTrialBalanceCSV(report: TrialBalanceReport): string {
   lines.push("");
   lines.push(rowToCSV(["TOTALS", "", "", "", report.totalDebitMinor, report.totalCreditMinor, ""]));
   lines.push(rowToCSV(["Is Balanced", "", "", "", report.isBalanced ? "Yes" : "No", "", ""]));
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 function generateProfitAndLossCSV(report: ProfitAndLossReport): string {
@@ -102,7 +102,7 @@ function generateProfitAndLossCSV(report: ProfitAndLossReport): string {
   lines.push(rowToCSV(["EXPENSE TOTAL", "", "", "", report.expenseMinor]));
   lines.push("");
   lines.push(rowToCSV(["NET PROFIT/LOSS", "", "", "", report.netProfitLossMinor]));
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 function generateBalanceSheetCSV(report: BalanceSheetReport): string {
@@ -129,107 +129,152 @@ function generateBalanceSheetCSV(report: BalanceSheetReport): string {
   lines.push(rowToCSV(["TOTAL LIABILITIES AND EQUITY", "", "", "", report.totalLiabilitiesAndEquityMinor]));
   lines.push("");
   lines.push(rowToCSV(["Is Balanced", "", "", "", report.isBalanced ? "Yes" : "No"]));
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 async function generateARAgingCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<string> {
   const lines: string[] = [];
-  lines.push(rowToCSV(["Customer ID", "Party ID", "Invoice ID", "Invoice Date", "Amount Outstanding (Minor Units)", "Days Overdue", "Bucket"]));
+  lines.push(rowToCSV(["Customer ID", "Invoice ID", "Invoice Date", "Due Date", "Amount Outstanding (Minor Units)", "Aging Bucket"]));
   const invoices = await session.query(
-    `SELECT i.id, i.party_id, i.issue_date,
-            COALESCE(i.invoice_amount_minor - COALESCE(SUM(CASE WHEN a.receipt_date <= ? THEN a.allocated_amount_minor ELSE 0 END), 0), i.invoice_amount_minor) as outstanding
+    `SELECT i.id, i.customer_id, i.issue_date, i.due_date,
+            i.total_minor - COALESCE(SUM(CASE WHEN br.receipt_date <= ? THEN a.amount_minor ELSE 0 END), 0) as outstanding
      FROM sales_invoices i
      LEFT JOIN bank_receipt_allocations a ON a.invoice_id = i.id AND a.tenant_id = i.tenant_id AND a.book_set_id = i.book_set_id
-     WHERE i.tenant_id = ? AND i.book_set_id = ? AND i.status = 'POSTED'
-     GROUP BY i.id, i.party_id, i.issue_date
+     LEFT JOIN bank_receipts br ON a.receipt_id = br.id AND br.tenant_id = i.tenant_id AND br.book_set_id = i.book_set_id
+     WHERE i.tenant_id = ? AND i.book_set_id = ? AND i.issue_date <= ? AND i.status != 'DRAFT'
+     GROUP BY i.id, i.customer_id, i.issue_date, i.due_date
      HAVING outstanding > 0
      ORDER BY i.issue_date, i.id`,
-    [asOfDate, tenantId, bookSetId],
+    [asOfDate, tenantId, bookSetId, asOfDate],
   );
 
   for (const inv of invoices.rows as Array<Record<string, unknown>>) {
     const issueDate = String(inv.issue_date);
-    const daysSinceDue = Math.max(0, Math.floor((new Date(`${asOfDate}T00:00:00Z`).getTime() - new Date(`${issueDate}T00:00:00Z`).getTime()) / (1000 * 60 * 60 * 24)));
+    const dueDate = inv.due_date ? String(inv.due_date) : issueDate;
+    const ageFromDate = inv.due_date ? dueDate : issueDate;
+    const daysSinceDue = Math.floor((new Date(`${asOfDate}T00:00:00Z`).getTime() - new Date(`${ageFromDate}T00:00:00Z`).getTime()) / (1000 * 60 * 60 * 24));
     let bucket = "CURRENT";
-    if (daysSinceDue > 91) bucket = "91_PLUS";
-    else if (daysSinceDue > 60) bucket = "61_90";
-    else if (daysSinceDue > 30) bucket = "31_60";
-    else if (daysSinceDue > 0) bucket = "1_30";
+    if (daysSinceDue >= 91) bucket = "91_PLUS";
+    else if (daysSinceDue >= 61) bucket = "61_90";
+    else if (daysSinceDue >= 31) bucket = "31_60";
+    else if (daysSinceDue >= 1) bucket = "1_30";
 
-    lines.push(rowToCSV([String(inv.id), String(inv.party_id), String(inv.id), issueDate, inv.outstanding, daysSinceDue, bucket]));
+    lines.push(rowToCSV([String(inv.customer_id), String(inv.id), issueDate, dueDate, inv.outstanding, bucket]));
   }
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 async function generateAPAgingCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, asOfDate: string): Promise<string> {
   const lines: string[] = [];
-  lines.push(rowToCSV(["Vendor ID", "Party ID", "Bill ID", "Bill Date", "Amount Outstanding (Minor Units)", "Days Overdue", "Bucket"]));
+  lines.push(rowToCSV(["Vendor ID", "Bill ID", "Bill Date", "Due Date", "Amount Outstanding (Minor Units)", "Aging Bucket"]));
   const bills = await session.query(
-    `SELECT b.id, b.party_id, b.bill_date,
-            COALESCE(b.bill_amount_minor - COALESCE(SUM(CASE WHEN p.payment_date <= ? THEN p.allocated_amount_minor ELSE 0 END), 0), b.bill_amount_minor) as outstanding
+    `SELECT b.id, b.vendor_id, b.bill_date, b.due_date,
+            b.total_minor - COALESCE(SUM(CASE WHEN vp.payment_date <= ? THEN a.amount_minor ELSE 0 END), 0) as outstanding
      FROM vendor_bills b
-     LEFT JOIN vendor_payment_allocations p ON p.bill_id = b.id AND p.tenant_id = b.tenant_id AND p.book_set_id = b.book_set_id
-     WHERE b.tenant_id = ? AND b.book_set_id = ? AND b.status = 'POSTED'
-     GROUP BY b.id, b.party_id, b.bill_date
+     LEFT JOIN vendor_payment_allocations a ON a.bill_id = b.id AND a.tenant_id = b.tenant_id AND a.book_set_id = b.book_set_id
+     LEFT JOIN vendor_payments vp ON a.payment_id = vp.id AND vp.tenant_id = b.tenant_id AND vp.book_set_id = b.book_set_id
+     WHERE b.tenant_id = ? AND b.book_set_id = ? AND b.bill_date <= ? AND b.status != 'DRAFT'
+     GROUP BY b.id, b.vendor_id, b.bill_date, b.due_date
      HAVING outstanding > 0
      ORDER BY b.bill_date, b.id`,
-    [asOfDate, tenantId, bookSetId],
+    [asOfDate, tenantId, bookSetId, asOfDate],
   );
 
   for (const bill of bills.rows as Array<Record<string, unknown>>) {
     const billDate = String(bill.bill_date);
-    const daysSinceDue = Math.max(0, Math.floor((new Date(`${asOfDate}T00:00:00Z`).getTime() - new Date(`${billDate}T00:00:00Z`).getTime()) / (1000 * 60 * 60 * 24)));
+    const dueDate = bill.due_date ? String(bill.due_date) : billDate;
+    const ageFromDate = bill.due_date ? dueDate : billDate;
+    const daysSinceDue = Math.floor((new Date(`${asOfDate}T00:00:00Z`).getTime() - new Date(`${ageFromDate}T00:00:00Z`).getTime()) / (1000 * 60 * 60 * 24));
     let bucket = "CURRENT";
-    if (daysSinceDue > 91) bucket = "91_PLUS";
-    else if (daysSinceDue > 60) bucket = "61_90";
-    else if (daysSinceDue > 30) bucket = "31_60";
-    else if (daysSinceDue > 0) bucket = "1_30";
+    if (daysSinceDue >= 91) bucket = "91_PLUS";
+    else if (daysSinceDue >= 61) bucket = "61_90";
+    else if (daysSinceDue >= 31) bucket = "31_60";
+    else if (daysSinceDue >= 1) bucket = "1_30";
 
-    lines.push(rowToCSV([String(bill.id), String(bill.party_id), String(bill.id), billDate, bill.outstanding, daysSinceDue, bucket]));
+    lines.push(rowToCSV([String(bill.vendor_id), String(bill.id), billDate, dueDate, bill.outstanding, bucket]));
   }
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
-async function generateBankReconciliationSummaryCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId): Promise<string> {
+async function generateBankReconciliationSummaryCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<string> {
   const lines: string[] = [];
-  lines.push(rowToCSV(["Bank Account ID", "Account Code", "Total Statements", "Total Transactions", "Matched Transactions", "Unmatched Transactions"]));
-  const statements = await session.query("SELECT DISTINCT account_id FROM bank_statements WHERE tenant_id = ? AND book_set_id = ? ORDER BY account_id", [tenantId, bookSetId]);
+  lines.push(rowToCSV(["Bank Account ID", "Account Code", "Matched Amount (Minor Units)", "Unmatched Amount (Minor Units)", "Matched Count", "Unmatched Count"]));
+  const accounts = await session.query("SELECT DISTINCT bank_account_id FROM bank_statements WHERE tenant_id = ? AND book_set_id = ? ORDER BY bank_account_id", [tenantId, bookSetId]);
 
-  for (const stmt of statements.rows as Array<Record<string, unknown>>) {
-    const accountId = String(stmt.account_id);
+  for (const acct of accounts.rows as Array<Record<string, unknown>>) {
+    const accountId = String(acct.bank_account_id);
     const acc = await session.querySingle("SELECT code FROM accounts WHERE id = ? AND tenant_id = ? AND book_set_id = ?", [accountId, tenantId, bookSetId]);
     const code = acc ? String(acc.code) : "";
 
-    const stmtCount = await session.querySingle("SELECT COUNT(*) as cnt FROM bank_statements WHERE tenant_id = ? AND book_set_id = ? AND account_id = ?", [tenantId, bookSetId, accountId]);
-    const txnCount = await session.querySingle("SELECT COUNT(*) as cnt FROM bank_statement_lines WHERE tenant_id = ? AND book_set_id = ? AND statement_id IN (SELECT id FROM bank_statements WHERE account_id = ?)", [tenantId, bookSetId, accountId]);
-    const matchedCount = await session.querySingle("SELECT COUNT(DISTINCT statement_line_id) as cnt FROM bank_matches WHERE tenant_id = ? AND book_set_id = ? AND status = 'ACTIVE' AND statement_line_id IN (SELECT id FROM bank_statement_lines WHERE statement_id IN (SELECT id FROM bank_statements WHERE account_id = ?))", [tenantId, bookSetId, accountId]);
+    const stmt = await session.query(
+      `SELECT bs.id
+       FROM bank_statements bs
+       WHERE bs.tenant_id = ? AND bs.book_set_id = ? AND bs.bank_account_id = ?
+       ORDER BY bs.id`,
+      [tenantId, bookSetId, accountId],
+    );
+    const statementIds = stmt.rows.map((s: Record<string, unknown>) => String(s.id));
 
-    const total = Number(txnCount?.cnt ?? 0);
-    const matched = Number(matchedCount?.cnt ?? 0);
-    lines.push(rowToCSV([accountId, code, stmtCount?.cnt ?? 0, total, matched, total - matched]));
+    if (statementIds.length === 0) continue;
+
+    const summary = await session.querySingle(
+      `SELECT
+         COALESCE(SUM(CASE WHEN bm.id IS NOT NULL THEN bsl.signed_amount_minor ELSE 0 END), 0) as matched_amount,
+         COALESCE(SUM(CASE WHEN bm.id IS NULL THEN bsl.signed_amount_minor ELSE 0 END), 0) as unmatched_amount,
+         COUNT(CASE WHEN bm.id IS NOT NULL THEN 1 END) as matched_count,
+         COUNT(CASE WHEN bm.id IS NULL THEN 1 END) as unmatched_count
+       FROM bank_statement_lines bsl
+       LEFT JOIN bank_matches bm ON bm.statement_line_id = bsl.id AND bm.tenant_id = bsl.tenant_id AND bm.book_set_id = bsl.book_set_id AND bm.status = 'ACTIVE'
+       WHERE bsl.tenant_id = ? AND bsl.book_set_id = ? AND bsl.statement_id IN (${statementIds.map(() => "?").join(",")}) AND bsl.transaction_date >= ? AND bsl.transaction_date <= ?`,
+      [tenantId, bookSetId, ...statementIds, periodStart, periodEnd],
+    );
+
+    const matchedAmt = Number(summary?.matched_amount ?? 0);
+    const unmatchedAmt = Number(summary?.unmatched_amount ?? 0);
+    const matchedCnt = Number(summary?.matched_count ?? 0);
+    const unmatchedCnt = Number(summary?.unmatched_count ?? 0);
+    lines.push(rowToCSV([accountId, code, matchedAmt, unmatchedAmt, matchedCnt, unmatchedCnt]));
   }
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
-async function generateComplianceReadinessSummaryCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId): Promise<string> {
+async function generateComplianceReadinessSummaryCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<string> {
   const lines: string[] = [];
-  lines.push(rowToCSV(["Category", "Total Items", "Resolved", "Unresolved", "Status"]));
+  lines.push(rowToCSV(["Category", "Total Items", "Ready", "Unresolved", "Status"]));
 
-  const gstReturns = await session.query("SELECT COUNT(*) as cnt, SUM(CASE WHEN readiness_status = 'READY' THEN 1 ELSE 0 END) as resolved FROM gst_return_validations WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  const gstReturns = await session.query(
+    `SELECT COUNT(*) as cnt, SUM(CASE WHEN grv.readiness_status = 'READY' THEN 1 ELSE 0 END) as resolved
+     FROM gst_return_validations grv
+     JOIN gst_returns gr ON gr.id = grv.return_id AND gr.tenant_id = grv.tenant_id AND gr.book_set_id = grv.book_set_id
+     WHERE grv.tenant_id = ? AND grv.book_set_id = ? AND gr.tax_period_from >= ? AND gr.tax_period_to <= ?`,
+    [tenantId, bookSetId, periodStart, periodEnd],
+  );
   const gstCount = Number(gstReturns.rows?.[0]?.cnt ?? 0);
   const gstResolved = Number(gstReturns.rows?.[0]?.resolved ?? 0);
-  lines.push(rowToCSV(["GST Returns", gstCount, gstResolved, gstCount - gstResolved, gstCount === gstResolved ? "READY" : "PENDING"]));
+  const gstStatus = gstCount === 0 ? "NOT_AVAILABLE" : gstCount === gstResolved ? "READY" : "REVIEW_REQUIRED";
+  lines.push(rowToCSV(["GST Returns", gstCount, gstResolved, gstCount - gstResolved, gstStatus]));
 
-  const tdsEvents = await session.query("SELECT COUNT(*) as cnt, SUM(CASE WHEN state = 'ACCEPTED' THEN 1 ELSE 0 END) as resolved FROM withholding_compliance_cases WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  const tdsEvents = await session.query(
+    `SELECT COUNT(*) as cnt, SUM(CASE WHEN wcc.state = 'ACCEPTED' THEN 1 ELSE 0 END) as resolved
+     FROM withholding_compliance_cases wcc
+     WHERE wcc.tenant_id = ? AND wcc.book_set_id = ? AND wcc.effective_date >= ? AND wcc.effective_date <= ?`,
+    [tenantId, bookSetId, periodStart, periodEnd],
+  );
   const tdsCount = Number(tdsEvents.rows?.[0]?.cnt ?? 0);
   const tdsResolved = Number(tdsEvents.rows?.[0]?.resolved ?? 0);
-  lines.push(rowToCSV(["TDS/TCS Compliance", tdsCount, tdsResolved, tdsCount - tdsResolved, tdsCount === tdsResolved ? "READY" : "PENDING"]));
+  const tdsStatus = tdsCount === 0 ? "NOT_AVAILABLE" : tdsCount === tdsResolved ? "READY" : "REVIEW_REQUIRED";
+  lines.push(rowToCSV(["TDS/TCS Compliance", tdsCount, tdsResolved, tdsCount - tdsResolved, tdsStatus]));
 
-  const obligations = await session.query("SELECT COUNT(*) as cnt FROM compliance_obligations WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]);
+  const obligations = await session.query(
+    `SELECT COUNT(*) as cnt FROM compliance_obligations
+     WHERE tenant_id = ? AND book_set_id = ? AND effective_date >= ? AND effective_date <= ?`,
+    [tenantId, bookSetId, periodStart, periodEnd],
+  );
   const obligationCount = Number(obligations.rows?.[0]?.cnt ?? 0);
-  lines.push(rowToCSV(["Compliance Obligations", obligationCount, 0, obligationCount, obligationCount === 0 ? "READY" : "PENDING"]));
+  const obligStatus = obligationCount === 0 ? "NOT_AVAILABLE" : "REVIEW_REQUIRED";
+  lines.push(rowToCSV(["Compliance Obligations", obligationCount, 0, obligationCount, obligStatus]));
 
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 async function generatePeriodCloseChecklistCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<string> {
@@ -246,7 +291,7 @@ async function generatePeriodCloseChecklistCSV(session: BusinessSession, tenantI
   const tds = await session.query("SELECT COUNT(*) as cnt FROM withholding_compliance_cases WHERE tenant_id = ? AND book_set_id = ? AND state <> 'ACCEPTED'", [tenantId, bookSetId]);
   lines.push(rowToCSV(["TDS/TCS Cases Resolved", Number(tds.rows[0].cnt) === 0 ? "✓" : "✗", tds.rows[0].cnt]));
 
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 async function generateAuditIndexCSV(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, periodStart: string, periodEnd: string): Promise<string> {
@@ -260,14 +305,14 @@ async function generateAuditIndexCSV(session: BusinessSession, tenantId: TenantI
   ];
 
   for (const report of reports) {
-    const result = await session.query(`SELECT COUNT(*) as cnt, GROUP_CONCAT(id) as ids FROM ${report.table} ${report.where} ORDER BY id`, report.params);
-    const count = Number(result.rows[0]?.cnt ?? 0);
-    const ids = String(result.rows[0]?.ids ?? "");
-    const hash = count === 0 ? createHash("sha256").update("").digest("hex") : createHash("sha256").update(ids).digest("hex");
+    const result = await session.query(`SELECT id FROM ${report.table} ${report.where} ORDER BY id`, report.params);
+    const idList = result.rows.map((r: Record<string, unknown>) => String(r.id)).sort();
+    const count = idList.length;
+    const hash = count === 0 ? createHash("sha256").update("").digest("hex") : createHash("sha256").update(idList.join(",")).digest("hex");
     lines.push(rowToCSV([report.name, count, hash]));
   }
 
-  return lines.join("\n");
+  return lines.join("\r\n");
 }
 
 async function replay(session: BusinessSession, envelope: ClosePackEnvelope<unknown>, requestHash: string): Promise<CommandResult<ClosePackExportResult> | undefined> {
@@ -309,17 +354,18 @@ export class ClosePackService {
       sections.push({ name: "balance_sheet", csv: generateBalanceSheetCSV(ledger.balanceSheet) });
       sections.push({ name: "ar_aging", csv: await generateARAgingCSV(session, envelope.tenantId, envelope.bookSetId, payload.asOfDate) });
       sections.push({ name: "ap_aging", csv: await generateAPAgingCSV(session, envelope.tenantId, envelope.bookSetId, payload.asOfDate) });
-      sections.push({ name: "bank_reconciliation_summary", csv: await generateBankReconciliationSummaryCSV(session, envelope.tenantId, envelope.bookSetId) });
-      sections.push({ name: "compliance_readiness_summary", csv: await generateComplianceReadinessSummaryCSV(session, envelope.tenantId, envelope.bookSetId) });
+      sections.push({ name: "bank_reconciliation_summary", csv: await generateBankReconciliationSummaryCSV(session, envelope.tenantId, envelope.bookSetId, payload.periodStart, payload.periodEnd) });
+      sections.push({ name: "compliance_readiness_summary", csv: await generateComplianceReadinessSummaryCSV(session, envelope.tenantId, envelope.bookSetId, payload.periodStart, payload.periodEnd) });
       sections.push({ name: "period_close_checklist", csv: await generatePeriodCloseChecklistCSV(session, envelope.tenantId, envelope.bookSetId, payload.periodStart, payload.periodEnd) });
       sections.push({ name: "audit_index", csv: await generateAuditIndexCSV(session, envelope.tenantId, envelope.bookSetId, payload.periodStart, payload.periodEnd) });
 
       const sectionMetadata = sections.map((sec) => {
-        const lines = sec.csv.split("\n").filter((line) => line.length > 0);
+        const lines = sec.csv.split("\r\n").filter((line) => line.length > 0);
         return { name: sec.name, rowCount: Math.max(0, lines.length - 1), hash: createHash("sha256").update(sec.csv).digest("hex"), size: Buffer.byteLength(sec.csv, "utf8") };
       });
 
-      const manifestBody = { manifestFormat: "NEUTRAL_CA_CLOSE_PACK_V1", schemaVersion: 1, scope: { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId }, dates: { periodStart: payload.periodStart, periodEnd: payload.periodEnd, asOfDate: payload.asOfDate }, basis: "ACCRUAL", status: { periodCloseStateHash, periodCloseLabel: periodStatus }, sections: sectionMetadata, metadata: { governmentCompatible: false, submitted: false } };
+      const sortedSectionMetadata = [...sectionMetadata].sort((a, b) => a.name.localeCompare(b.name));
+      const manifestBody = { manifestFormat: "NEUTRAL_CA_CLOSE_PACK_V1", schemaVersion: 1, scope: { tenantId: envelope.tenantId, bookSetId: envelope.bookSetId }, dates: { periodStart: payload.periodStart, periodEnd: payload.periodEnd, asOfDate: payload.asOfDate }, basis: "ACCRUAL", status: { periodCloseStateHash, periodCloseLabel: periodStatus }, sections: sortedSectionMetadata, metadata: { governmentCompatible: false, submitted: false } };
       const manifestHash = hashJson(manifestBody);
 
       const now = new Date().toISOString();
@@ -341,6 +387,11 @@ export class ClosePackService {
       }
 
       await session.execute("INSERT INTO idempotency_records (id, tenant_id, request_id, request_hash, result_json, result_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.requestId, requestHash, resultJson, resultHash, now]);
+
+      await session.execute(
+        "INSERT INTO audit_records (id, tenant_id, book_set_id, occurred_at, action, actor_type, actor_id, request_id, entity_type, entity_id, source, reason, command, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [randomUUID(), envelope.tenantId, envelope.bookSetId, now, "CLOSE_PACK_EXPORT", "SYSTEM", null, envelope.requestId, "CLOSE_PACK", manifestId, "REPORT_API", "Period close pack generation", "report.close-pack.export", now],
+      );
 
       return { resultJson, resultHash };
     });
@@ -369,7 +420,9 @@ export class ClosePackService {
 
   async getSection(tenantId: TenantId, bookSetId: BookSetId, manifestId: string, sectionName: string): Promise<string | null> {
     return this.sessionRunner.withBusinessSession("read", async (session) => {
-      const body = await session.querySingle("SELECT csv_body FROM close_pack_bodies WHERE section_id IN (SELECT id FROM close_pack_sections WHERE manifest_id = ? AND section_name = ? AND tenant_id = ? AND book_set_id = ?) LIMIT 1", [manifestId, sectionName, tenantId, bookSetId]);
+      const section = await session.querySingle("SELECT id FROM close_pack_sections WHERE manifest_id = ? AND section_name = ? AND tenant_id = ? AND book_set_id = ?", [manifestId, sectionName, tenantId, bookSetId]);
+      if (!section) return null;
+      const body = await session.querySingle("SELECT csv_body FROM close_pack_bodies WHERE section_id = ? AND tenant_id = ? AND book_set_id = ?", [section.id, tenantId, bookSetId]);
       return body ? String(body.csv_body) : null;
     });
   }

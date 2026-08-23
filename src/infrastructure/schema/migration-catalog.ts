@@ -7,6 +7,7 @@ import { JOURNAL_V5_MIGRATION } from "./journal-v5-migration.ts";
 import { SALES_V6_MIGRATION } from "./sales-v6-migration.ts";
 import { PURCHASE_V7_MIGRATION } from "./purchase-v7-migration.ts";
 import { BANK_RECONCILIATION_V8_MIGRATION } from "./bank-reconciliation-v8-migration.ts";
+import { CLOSE_PACK_V9_MIGRATION } from "./close-pack-v9-migration.ts";
 import type { MigrationDefinition, MigrationVerificationManifest } from "../../application/ports/persistence.ts";
 import type { UpgradePlan, UpgradePreflightProbe } from "../../application/ports/upgrade.ts";
 
@@ -142,6 +143,20 @@ export const MIGRATION_CATALOG: readonly MigrationCatalogEntry[] = Object.freeze
     preflightProbes: Object.freeze([{
       id: "source-vendor-payments-table",
       sql: "SELECT CAST(COUNT(*) AS TEXT) AS table_count FROM sqlite_master WHERE type = 'table' AND name = 'vendor_payments' LIMIT 1",
+      expectedRows: [{ table_count: "1" }],
+    }]),
+  }),
+  Object.freeze({
+    sequence: 9,
+    id: CLOSE_PACK_V9_MIGRATION.id,
+    sqlite: CLOSE_PACK_V9_MIGRATION.sqlite,
+    manifest: CLOSE_PACK_V9_MIGRATION.manifest,
+    schemaVersion: 9,
+    ...foundationMetadata,
+    revision: 8,
+    preflightProbes: Object.freeze([{
+      id: "source-period-close-events-table",
+      sql: "SELECT CAST(COUNT(*) AS TEXT) AS table_count FROM sqlite_master WHERE type = 'table' AND name = 'period_close_events' LIMIT 1",
       expectedRows: [{ table_count: "1" }],
     }]),
   }),
@@ -291,6 +306,7 @@ export const V5_SCHEMA_MANIFEST = HISTORICAL_SCHEMA_MANIFESTS[3];
 export const V6_SCHEMA_MANIFEST = HISTORICAL_SCHEMA_MANIFESTS[4];
 export const V7_SCHEMA_MANIFEST = HISTORICAL_SCHEMA_MANIFESTS[5];
 export const V8_SCHEMA_MANIFEST = HISTORICAL_SCHEMA_MANIFESTS[6];
+export const V9_SCHEMA_MANIFEST = HISTORICAL_SCHEMA_MANIFESTS[7];
 export const V3_SCHEMA_VERSION = V3_SCHEMA_MANIFEST.schemaVersion;
 export const V3_DATABASE_REVISION = V3_SCHEMA_MANIFEST.revision;
 export const V4_SCHEMA_VERSION = V4_SCHEMA_MANIFEST.schemaVersion;

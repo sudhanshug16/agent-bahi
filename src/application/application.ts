@@ -200,7 +200,7 @@ export async function upgradeSqliteDatabase(
     if (state.state === "EMPTY") throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Empty databases must be explicitly initialized before upgrade");
     const version = state.schemaVersion;
     sourceManifest = version === undefined ? undefined : KNOWN_SCHEMA_MANIFESTS.find((manifest) => manifest.schemaVersion === version);
-    if (!sourceManifest || version === undefined || version < 2 || version > 8) throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Database state is not an exact supported legacy manifest");
+    if (!sourceManifest || version === undefined || version < 2 || version > 9) throw new UpgradeError("UPGRADE_SOURCE_MISMATCH", "Database state is not an exact supported legacy manifest");
 
     const initialBackupService = new BackupService({ sourcePath: dbPath, expectedSourceManifest: sourceManifest });
     backup = await initialBackupService.createBackup(options.backupDestinationPath, sourceManifest);
