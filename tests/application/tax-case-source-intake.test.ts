@@ -99,18 +99,18 @@ describe("Personal Tax source evidence intake V1", () => {
     }
   });
 
-  test("preserves source bytes through backup/restore and upgrades a 0022 fixture to 0023", async () => {
+  test("preserves source bytes through backup/restore and upgrades a 0023 fixture to 0024", async () => {
     const directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-source-backup-"));
     const dbPath = join(directory, "books.sqlite");
     try {
       await initializeSqliteDatabase(dbPath, { cliVersion: "test", buildId: "source-upgrade" });
       const downgrade = new Database(dbPath, { safeIntegers: true });
-      downgrade.exec("DROP TRIGGER tax_case_fact_reconciliations_no_overallocation; DROP TRIGGER tax_case_fact_reconciliations_confirmed_only; DROP TRIGGER tax_case_fact_reconciliations_no_delete; DROP TRIGGER tax_case_fact_reconciliations_no_update; DROP TRIGGER tax_case_fact_events_no_delete; DROP TRIGGER tax_case_fact_events_no_update; DROP TRIGGER tax_case_facts_no_delete; DROP TRIGGER tax_case_facts_no_update; DROP INDEX uq_tax_case_facts_id_scope; DROP INDEX uq_journal_lines_id_tenant_book_set_v1; DROP TABLE tax_case_fact_reconciliations; DROP TABLE tax_case_fact_events; DROP TABLE tax_case_facts");
+      downgrade.exec("DROP TRIGGER filing_snapshot_reconciliations_no_delete; DROP TRIGGER filing_snapshot_reconciliations_no_update; DROP TRIGGER filing_snapshot_facts_no_delete; DROP TRIGGER filing_snapshot_facts_no_update; DROP TRIGGER filing_snapshot_sources_no_delete; DROP TRIGGER filing_snapshot_sources_no_update; DROP TRIGGER filing_snapshot_book_sets_no_delete; DROP TRIGGER filing_snapshot_book_sets_no_update; DROP TRIGGER filing_snapshots_no_delete; DROP TRIGGER filing_snapshots_no_update; DROP TABLE filing_snapshot_reconciliations; DROP TABLE filing_snapshot_facts; DROP TABLE filing_snapshot_sources; DROP TABLE filing_snapshot_book_sets; DROP TABLE filing_snapshots; DROP INDEX uq_tax_case_fact_reconciliations_id_scope;");
       downgrade.query("DELETE FROM __drizzle_migrations WHERE id = ?").run(OFFICIAL_DRIZZLE_MIGRATIONS.length);
       const previous = OFFICIAL_DRIZZLE_MIGRATIONS[OFFICIAL_DRIZZLE_MIGRATIONS.length - 2]!;
       downgrade.query("UPDATE database_control SET last_migration_id = ?, last_migration_checksum = ? WHERE id = 1").run(previous.id, previous.hash);
       downgrade.close();
-      await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "0022.backup"), cliVersion: "test", buildId: "source-upgrade" });
+      await upgradeSqliteDatabase(dbPath, { backupDestinationPath: join(directory, "0023.backup"), cliVersion: "test", buildId: "source-upgrade" });
       const app = createSqliteApplication(dbPath);
       const scope = await individualCase(app, `tenant-${randomUUID()}`, "0005");
       const imported = JSON.parse((await app.taxCase.source.import(envelope(scope.tenantId, "restore-source", { taxCaseId: scope.taxCaseId, sourceKind: "AIS", mediaType: "application/octet-stream", originalFilename: "raw.bin", contentBase64: Buffer.from([8, 7, 6, 0, 5]).toString("base64") }))).resultJson);

@@ -119,6 +119,11 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tax_case_facts",
   "tax_case_fact_events",
   "tax_case_fact_reconciliations",
+  "filing_snapshots",
+  "filing_snapshot_book_sets",
+  "filing_snapshot_sources",
+  "filing_snapshot_facts",
+  "filing_snapshot_reconciliations",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

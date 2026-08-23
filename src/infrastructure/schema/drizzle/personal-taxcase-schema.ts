@@ -1,6 +1,7 @@
 import { sqliteTable, text, integer, blob, foreignKey, primaryKey, uniqueIndex, index, check } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { tenants, bookSets } from "./foundation-schema";
+import { tenantPanProfiles } from "./tenant-pan-schema";
 import { journalLines } from "./ledger-schema";
 
 /** Personal TaxCase foundation: live BookSet membership and ledger cursors only. */
@@ -260,6 +261,7 @@ export const taxCaseFactReconciliations = sqliteTable(
     fkFact: foreignKey({ columns: [table.factId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseFacts.id, taxCaseFacts.tenantId, taxCaseFacts.taxCaseId] }).onDelete("no action"),
     fkBookSet: foreignKey({ columns: [table.bookSetId, table.tenantId], foreignColumns: [bookSets.id, bookSets.tenantId] }).onDelete("no action"),
     fkJournalLine: foreignKey({ columns: [table.journalLineId, table.tenantId, table.bookSetId], foreignColumns: [journalLines.id, journalLines.tenantId, journalLines.bookSetId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_tax_case_fact_reconciliations_id_scope").on(table.id, table.tenantId, table.taxCaseId),
     uqRequest: uniqueIndex("uq_tax_case_fact_reconciliations_request").on(table.tenantId, table.requestId),
     idxFact: index("idx_tax_case_fact_reconciliations_fact").on(table.tenantId, table.taxCaseId, table.factId, table.createdAt, table.id),
     idxTarget: index("idx_tax_case_fact_reconciliations_target").on(table.tenantId, table.bookSetId, table.journalLineId),
@@ -267,5 +269,153 @@ export const taxCaseFactReconciliations = sqliteTable(
     chkCurrency: check("chk_tax_case_fact_reconciliation_currency", sql`length(currency) = 3 AND currency = upper(currency)`),
     chkActor: check("chk_tax_case_fact_reconciliation_actor", sql`${table.actorKind} = 'HUMAN' AND length(trim(actor_id)) > 0`),
     chkHash: check("chk_tax_case_fact_reconciliation_hash", sql`length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+/** Personal Tax Filing Snapshot V1: immutable, reproducible filing-input basis. */
+export const filingSnapshots = sqliteTable(
+  "filing_snapshots",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    membershipVersionId: text("membership_version_id").notNull(),
+    membershipVersion: integer("membership_version").notNull(),
+    membershipHash: text("membership_hash").notNull(),
+    panProfileId: text("pan_profile_id").notNull(),
+    panProfileVersion: text("pan_profile_version").notNull(),
+    panLookupHash: text("pan_lookup_hash").notNull(),
+    panLastFour: text("pan_last_four").notNull(),
+    panMaskedDisplay: text("pan_masked_display").notNull(),
+    candidateHash: text("candidate_hash").notNull(),
+    candidateJson: text("candidate_json").notNull(),
+    creationMetadataJson: text("creation_metadata_json").notNull(),
+    sealRequestId: text("seal_request_id").notNull(),
+    sealRequestHash: text("seal_request_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+  },
+  (table) => ({
+    fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
+    fkCase: foreignKey({ columns: [table.taxCaseId, table.tenantId], foreignColumns: [taxCases.id, taxCases.tenantId] }).onDelete("no action"),
+    fkMembership: foreignKey({ columns: [table.membershipVersionId, table.taxCaseId, table.tenantId], foreignColumns: [taxCaseMembershipVersions.id, taxCaseMembershipVersions.taxCaseId, taxCaseMembershipVersions.tenantId] }).onDelete("no action"),
+    fkPan: foreignKey({ columns: [table.panProfileId, table.tenantId], foreignColumns: [tenantPanProfiles.id, tenantPanProfiles.tenantId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_filing_snapshots_id_scope").on(table.id, table.tenantId, table.taxCaseId),
+    idxCase: index("idx_filing_snapshots_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
+    chkMembershipVersion: check("chk_filing_snapshot_membership_version", sql`typeof(${table.membershipVersion}) = 'integer' AND ${table.membershipVersion} >= 1`),
+    chkHashes: check("chk_filing_snapshot_hashes", sql`length(${table.membershipHash}) = 64 AND ${table.membershipHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.panLookupHash}) = 64 AND ${table.panLookupHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.candidateHash}) = 64 AND ${table.candidateHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.sealRequestHash}) = 64 AND ${table.sealRequestHash} NOT GLOB '*[^0-9a-f]*'`),
+    chkPanMasked: check("chk_filing_snapshot_pan_masked", sql`${table.panMaskedDisplay} = '******' || ${table.panLastFour}`),
+  }),
+);
+
+export const filingSnapshotBookSets = sqliteTable(
+  "filing_snapshot_book_sets",
+  {
+    id: text("id").primaryKey(),
+    snapshotId: text("snapshot_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    membershipVersionId: text("membership_version_id").notNull(),
+    membershipVersion: integer("membership_version").notNull(),
+    bookSetId: text("book_set_id").notNull(),
+    bookSetKind: text("book_set_kind").notNull(),
+    ledgerRevision: integer("ledger_revision").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkSnapshot: foreignKey({ columns: [table.snapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    fkMembership: foreignKey({ columns: [table.membershipVersionId, table.taxCaseId, table.tenantId], foreignColumns: [taxCaseMembershipVersions.id, taxCaseMembershipVersions.taxCaseId, taxCaseMembershipVersions.tenantId] }).onDelete("no action"),
+    fkBookSet: foreignKey({ columns: [table.bookSetId, table.tenantId], foreignColumns: [bookSets.id, bookSets.tenantId] }).onDelete("no action"),
+    uqMember: uniqueIndex("uq_filing_snapshot_book_sets_member").on(table.snapshotId, table.tenantId, table.taxCaseId, table.bookSetId),
+    idxSnapshot: index("idx_filing_snapshot_book_sets_snapshot").on(table.tenantId, table.taxCaseId, table.snapshotId, table.bookSetId),
+    chkVersion: check("chk_filing_snapshot_book_set_version", sql`typeof(${table.membershipVersion}) = 'integer' AND ${table.membershipVersion} >= 1`),
+    chkRevision: check("chk_filing_snapshot_book_set_revision", sql`typeof(${table.ledgerRevision}) = 'integer' AND ${table.ledgerRevision} >= 0`),
+  }),
+);
+
+export const filingSnapshotSources = sqliteTable(
+  "filing_snapshot_sources",
+  {
+    id: text("id").primaryKey(),
+    snapshotId: text("snapshot_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    contentHash: text("content_hash").notNull(),
+    sourceStatus: text("source_status").notNull(),
+    parserStatus: text("parser_status").notNull(),
+    parserIdentity: text("parser_identity").notNull(),
+    parserVersion: text("parser_version").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkSnapshot: foreignKey({ columns: [table.snapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    fkSource: foreignKey({ columns: [table.sourceId, table.taxCaseId, table.tenantId], foreignColumns: [taxCaseExternalSources.id, taxCaseExternalSources.taxCaseId, taxCaseExternalSources.tenantId] }).onDelete("no action"),
+    fkArtifact: foreignKey({ columns: [table.artifactId, table.tenantId], foreignColumns: [personalTaxSourceArtifacts.id, personalTaxSourceArtifacts.tenantId] }).onDelete("no action"),
+    uqSource: uniqueIndex("uq_filing_snapshot_sources_source").on(table.snapshotId, table.tenantId, table.taxCaseId, table.sourceId, table.artifactId),
+    idxSnapshot: index("idx_filing_snapshot_sources_snapshot").on(table.tenantId, table.taxCaseId, table.snapshotId, table.sourceId),
+    chkHash: check("chk_filing_snapshot_source_hash", sql`length(${table.contentHash}) = 64 AND ${table.contentHash} NOT GLOB '*[^0-9a-f]*'`),
+  }),
+);
+
+export const filingSnapshotFacts = sqliteTable(
+  "filing_snapshot_facts",
+  {
+    id: text("id").primaryKey(),
+    snapshotId: text("snapshot_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    factId: text("fact_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    normalizedPayloadHash: text("normalized_payload_hash").notNull(),
+    lifecycle: text("lifecycle").notNull(),
+    terminalEventId: text("terminal_event_id").notNull(),
+    terminalEventType: text("terminal_event_type").notNull(),
+    terminalEventHash: text("terminal_event_hash").notNull(),
+    grossAmountMinor: integer("gross_amount_minor").notNull(),
+    allocatedAmountMinor: integer("allocated_amount_minor").notNull(),
+    reconciliationStatus: text("reconciliation_status").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkSnapshot: foreignKey({ columns: [table.snapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    fkFact: foreignKey({ columns: [table.factId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseFacts.id, taxCaseFacts.tenantId, taxCaseFacts.taxCaseId] }).onDelete("no action"),
+    uqFact: uniqueIndex("uq_filing_snapshot_facts_fact").on(table.snapshotId, table.tenantId, table.taxCaseId, table.factId),
+    idxSnapshot: index("idx_filing_snapshot_facts_snapshot").on(table.tenantId, table.taxCaseId, table.snapshotId, table.factId),
+    chkLifecycle: check("chk_filing_snapshot_fact_lifecycle", sql`${table.lifecycle} IN ('PROPOSED', 'HUMAN_CONFIRMED', 'REJECTED')`),
+    chkTerminal: check("chk_filing_snapshot_fact_terminal", sql`${table.terminalEventType} IN ('PROPOSED', 'HUMAN_CONFIRMED', 'REJECTED') AND length(${table.terminalEventHash}) = 64 AND ${table.terminalEventHash} NOT GLOB '*[^0-9a-f]*'`),
+    chkAmounts: check("chk_filing_snapshot_fact_amounts", sql`typeof(${table.grossAmountMinor}) = 'integer' AND ${table.grossAmountMinor} >= 0 AND typeof(${table.allocatedAmountMinor}) = 'integer' AND ${table.allocatedAmountMinor} >= 0`),
+  }),
+);
+
+export const filingSnapshotReconciliations = sqliteTable(
+  "filing_snapshot_reconciliations",
+  {
+    id: text("id").primaryKey(),
+    snapshotId: text("snapshot_id").notNull(),
+    tenantId: text("tenant_id").notNull(),
+    taxCaseId: text("tax_case_id").notNull(),
+    reconciliationId: text("reconciliation_id").notNull(),
+    factId: text("fact_id").notNull(),
+    bookSetId: text("book_set_id").notNull(),
+    journalLineId: text("journal_line_id").notNull(),
+    allocatedAmountMinor: integer("allocated_amount_minor").notNull(),
+    currency: text("currency").notNull(),
+    requestId: text("request_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    fkSnapshot: foreignKey({ columns: [table.snapshotId, table.tenantId, table.taxCaseId], foreignColumns: [filingSnapshots.id, filingSnapshots.tenantId, filingSnapshots.taxCaseId] }).onDelete("no action"),
+    fkReconciliation: foreignKey({ columns: [table.reconciliationId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseFactReconciliations.id, taxCaseFactReconciliations.tenantId, taxCaseFactReconciliations.taxCaseId] }).onDelete("no action"),
+    fkFact: foreignKey({ columns: [table.factId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseFacts.id, taxCaseFacts.tenantId, taxCaseFacts.taxCaseId] }).onDelete("no action"),
+    fkBookSet: foreignKey({ columns: [table.bookSetId, table.tenantId], foreignColumns: [bookSets.id, bookSets.tenantId] }).onDelete("no action"),
+    uqReconciliation: uniqueIndex("uq_filing_snapshot_reconciliations_row").on(table.snapshotId, table.tenantId, table.taxCaseId, table.reconciliationId),
+    idxSnapshot: index("idx_filing_snapshot_reconciliations_snapshot").on(table.tenantId, table.taxCaseId, table.snapshotId, table.factId),
+    chkAmount: check("chk_filing_snapshot_reconciliation_amount", sql`typeof(${table.allocatedAmountMinor}) = 'integer' AND ${table.allocatedAmountMinor} > 0`),
+    chkCurrency: check("chk_filing_snapshot_reconciliation_currency", sql`length(${table.currency}) = 3 AND ${table.currency} = upper(${table.currency})`),
+    chkHash: check("chk_filing_snapshot_reconciliation_hash", sql`length(${table.requestHash}) = 64 AND ${table.requestHash} NOT GLOB '*[^0-9a-f]*'`),
   }),
 );

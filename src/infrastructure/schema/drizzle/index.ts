@@ -117,4 +117,4 @@ export { periodCloseEvents } from "./period-close-schema";
 export { closePackManifests, closePackSections, closePackBodies } from "./close-pack-schema";
 
 // Personal TaxCase foundation V1
-export { bookSetLedgerRevisions, taxCases, taxCaseMembershipVersions, taxCaseMemberships, personalTaxSourceArtifacts, taxCaseExternalSources, taxCaseSourceArtifacts, taxCaseFacts, taxCaseFactEvents, taxCaseFactReconciliations } from "./personal-taxcase-schema";
+export { bookSetLedgerRevisions, taxCases, taxCaseMembershipVersions, taxCaseMemberships, personalTaxSourceArtifacts, taxCaseExternalSources, taxCaseSourceArtifacts, taxCaseFacts, taxCaseFactEvents, taxCaseFactReconciliations, filingSnapshots, filingSnapshotBookSets, filingSnapshotSources, filingSnapshotFacts, filingSnapshotReconciliations } from "./personal-taxcase-schema";

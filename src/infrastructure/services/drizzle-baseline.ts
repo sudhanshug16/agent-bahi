@@ -91,7 +91,8 @@ export const DRIZZLE_TENANT_PAN_V1_MIGRATION_ID = descriptorAt(11).id;
 export const DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID = descriptorAt(12).id;
 export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID = descriptorAt(13).id;
 export const DRIZZLE_PERSONAL_TAX_SOURCE_INTAKE_V1_MIGRATION_ID = descriptorAt(14).id;
-export const DRIZZLE_PERSONAL_TAX_FACTS_RECONCILIATION_V1_MIGRATION_ID = drizzleCurrentMigration().id;
+export const DRIZZLE_PERSONAL_TAX_FACTS_RECONCILIATION_V1_MIGRATION_ID = descriptorAt(15).id;
+export const DRIZZLE_PERSONAL_TAX_FILING_SNAPSHOT_V1_MIGRATION_ID = drizzleCurrentMigration().id;
 /** Backwards-compatible name for the current official Drizzle migration. */
 export const DRIZZLE_GST_MIGRATION_ID = drizzleCurrentMigration().id;
 
@@ -123,8 +124,10 @@ export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_HASH = descriptorAt(13).hash
 export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_CREATED_AT = descriptorAt(13).createdAt;
 export const DRIZZLE_PERSONAL_TAX_SOURCE_INTAKE_V1_HASH = descriptorAt(14).hash;
 export const DRIZZLE_PERSONAL_TAX_SOURCE_INTAKE_V1_CREATED_AT = descriptorAt(14).createdAt;
-export const DRIZZLE_PERSONAL_TAX_FACTS_RECONCILIATION_V1_HASH = drizzleCurrentMigration().hash;
-export const DRIZZLE_PERSONAL_TAX_FACTS_RECONCILIATION_V1_CREATED_AT = drizzleCurrentMigration().createdAt;
+export const DRIZZLE_PERSONAL_TAX_FACTS_RECONCILIATION_V1_HASH = descriptorAt(15).hash;
+export const DRIZZLE_PERSONAL_TAX_FACTS_RECONCILIATION_V1_CREATED_AT = descriptorAt(15).createdAt;
+export const DRIZZLE_PERSONAL_TAX_FILING_SNAPSHOT_V1_HASH = drizzleCurrentMigration().hash;
+export const DRIZZLE_PERSONAL_TAX_FILING_SNAPSHOT_V1_CREATED_AT = drizzleCurrentMigration().createdAt;
 export const DRIZZLE_COMPLIANCE_HASH = descriptorAt(9).hash;
 export const DRIZZLE_GST_HASH = drizzleCurrentMigration().hash;
 export const DRIZZLE_GST_CREATED_AT = drizzleCurrentMigration().createdAt;

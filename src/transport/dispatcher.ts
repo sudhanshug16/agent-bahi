@@ -188,6 +188,10 @@ const handlers: Record<string, Handler> = {
   "tax-case.reconciliation.record": (facade, input) => facade.taxCase.reconciliation.record(input as never),
   "tax-case.reconciliation.list": (facade, input) => facade.taxCase.reconciliation.list(tenantId(input), text(input, "taxCaseId"), optionalText(input, "factId")),
   "tax-case.reconciliation.summary": (facade, input) => facade.taxCase.reconciliation.summary(tenantId(input), text(input, "taxCaseId")),
+  "tax-case.filing-snapshot.preview": (facade, input) => facade.taxCase.filingSnapshot.preview(tenantId(input), text(input, "taxCaseId")),
+  "tax-case.filing-snapshot.seal": (facade, input) => facade.taxCase.filingSnapshot.seal(input as never),
+  "tax-case.filing-snapshot.show": (facade, input) => facade.taxCase.filingSnapshot.show(tenantId(input), text(input, "taxCaseId"), text(input, "snapshotId")),
+  "tax-case.filing-snapshot.status": (facade, input) => facade.taxCase.filingSnapshot.status(tenantId(input), text(input, "taxCaseId"), text(input, "snapshotId")),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

@@ -36,7 +36,8 @@ import { ClosePackService, type ClosePackExportPayload, type ClosePackExportResu
 import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
 import { createTaxCase, refreshTaxCaseMembership, taxCaseStatus, importTaxCaseSource, listTaxCaseSources, taxCaseSourceStatus, type TaxCaseStatus } from "./services/tax-case-service.ts";
 import { proposeTaxCaseFact, confirmTaxCaseFact, rejectTaxCaseFact, listTaxCaseFacts, recordTaxCaseReconciliation, listTaxCaseReconciliations, taxCaseFactSummary } from "./services/tax-case-facts-service.ts";
-import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload } from "./commands.ts";
+import { previewTaxCaseFilingSnapshot, sealTaxCaseFilingSnapshot, showTaxCaseFilingSnapshot, statusTaxCaseFilingSnapshot, type FilingSnapshotPreview } from "./services/tax-case-filing-snapshot-service.ts";
+import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload } from "./commands.ts";
 
 /**
  * Read-only tenant operations
@@ -240,6 +241,12 @@ export interface TaxCaseOperations {
     list(tenantId: TenantId, taxCaseId: string, factId?: string): Promise<Record<string, unknown>[]>;
     summary(tenantId: TenantId, taxCaseId: string): Promise<Record<string, unknown>>;
   };
+  filingSnapshot: {
+    preview(tenantId: TenantId, taxCaseId: string): Promise<FilingSnapshotPreview>;
+    seal(envelope: CommandEnvelope<TaxCaseFilingSnapshotSealPayload>): Promise<CommandResult<Record<string, unknown>>>;
+    show(tenantId: TenantId, taxCaseId: string, snapshotId: string): Promise<Record<string, unknown>>;
+    status(tenantId: TenantId, taxCaseId: string, snapshotId: string): Promise<Record<string, unknown>>;
+  };
 }
 
 /**
@@ -438,6 +445,12 @@ export function createPublicFacade(
         record: (envelope) => recordTaxCaseReconciliation(sessionRunner, envelope),
         list: (tenantId, taxCaseId, factId) => listTaxCaseReconciliations(sessionRunner, tenantId, taxCaseId, factId),
         summary: (tenantId, taxCaseId) => taxCaseFactSummary(sessionRunner, tenantId, taxCaseId),
+      },
+      filingSnapshot: {
+        preview: (tenantId, taxCaseId) => previewTaxCaseFilingSnapshot(sessionRunner, tenantId, taxCaseId),
+        seal: (envelope) => sealTaxCaseFilingSnapshot(sessionRunner, envelope),
+        show: (tenantId, taxCaseId, snapshotId) => showTaxCaseFilingSnapshot(sessionRunner, tenantId, taxCaseId, snapshotId),
+        status: (tenantId, taxCaseId, snapshotId) => statusTaxCaseFilingSnapshot(sessionRunner, tenantId, taxCaseId, snapshotId),
       },
     },
     fx: {
