@@ -24,7 +24,7 @@ import { DatabaseControlService, type DatabaseControlRecord } from "./database-c
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, MIGRATION_CATALOG, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
-import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_BASELINE_HASH, DRIZZLE_BASELINE_MIGRATION_ID, DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_JOURNAL_DDL, DRIZZLE_MIGRATIONS_TABLE, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 
 type CatalogRow = {
   type: string;
@@ -367,12 +367,13 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
   let controlRecord: DatabaseControlRecord;
   let historyRows: MigrationRow[] = [];
   let history: string;
-  if (state.state === "DRIZZLE_MANAGED") {
+  if (state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED") {
     manifest = expectedManifest ?? CURRENT_SCHEMA_MANIFEST;
     if (manifest.schemaVersion !== CURRENT_SCHEMA_MANIFEST.schemaVersion) throw new DomainError("BACKUP_HISTORY_MISMATCH", "Drizzle-managed backup requires the current manifest");
     const journalRows = queryRows<Record<string, unknown>>(db, `SELECT id, hash, created_at FROM ${DRIZZLE_MIGRATIONS_TABLE} ORDER BY created_at ASC, id ASC`);
     try { validateOfficialDrizzleJournal(journalRows); } catch { throw new DomainError("BACKUP_HISTORY_MISMATCH", "Official Drizzle migration journal is not exact"); }
-    controlRecord = drizzleControlRecord(db);
+    const current = journalRows.length === officialDrizzleJournal().length;
+    controlRecord = drizzleControlRecord(db, current, state.state === "DRIZZLE_BRIDGED");
     history = canonicalHash(journalRows);
   } else {
     const port = readonlyPort(db);
@@ -419,7 +420,9 @@ async function captureExpectation(db: BunDatabase, expectedManifest?: SqliteSche
     WHERE name NOT LIKE 'sqlite_%'
     ORDER BY type ASC, name ASC, tbl_name ASC, sql ASC
   `);
-  validateCanonicalSchema(catalogRows, manifest, state.state === "DRIZZLE_MANAGED");
+  const drizzleManaged = state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED";
+  const drizzleCurrent = drizzleManaged && queryRows<Record<string, unknown>>(db, `SELECT id FROM ${DRIZZLE_MIGRATIONS_TABLE}`).length === officialDrizzleJournal().length;
+  validateCanonicalSchema(catalogRows, manifest, drizzleManaged, drizzleCurrent);
 
   return {
     control: controlRecord,
@@ -465,12 +468,15 @@ function looseControlRecord(db: BunDatabase): DatabaseControlRecord {
   };
 }
 
-function drizzleControlRecord(db: BunDatabase): DatabaseControlRecord {
+function drizzleControlRecord(db: BunDatabase, current = true, bridged = false): DatabaseControlRecord {
   const row = db.prepare(`SELECT schema_version, data_format_version,
     reader_compatibility_min, reader_compatibility_max, required_writer_protocol,
     state, revision, generation, last_migration_id, last_migration_checksum,
     last_writer_cli_version, last_writer_build_id, last_writer_at, created_at,
     updated_at, recovery_reason FROM database_control WHERE id = 1`).get() as Record<string, unknown> | undefined;
+  const legacyLast = CURRENT_SCHEMA_MANIFEST.migrations.at(-1)!;
+  const expectedId = current ? DRIZZLE_GST_MIGRATION_ID : bridged ? legacyLast.id : DRIZZLE_BASELINE_MIGRATION_ID;
+  const expectedHash = current ? DRIZZLE_GST_HASH : bridged ? legacyLast.checksum : DRIZZLE_BASELINE_HASH;
   if (!row || safeInteger(row.schema_version) !== CURRENT_SCHEMA_MANIFEST.schemaVersion
     || safeInteger(row.data_format_version) !== CURRENT_SCHEMA_MANIFEST.dataFormatVersion
     || safeInteger(row.reader_compatibility_min) !== CURRENT_SCHEMA_MANIFEST.readerCompatibilityMin
@@ -478,8 +484,8 @@ function drizzleControlRecord(db: BunDatabase): DatabaseControlRecord {
     || safeInteger(row.required_writer_protocol) !== CURRENT_SCHEMA_MANIFEST.writerProtocol
     || safeInteger(row.revision) !== CURRENT_SCHEMA_MANIFEST.revision
     || safeInteger(row.generation) !== CURRENT_SCHEMA_MANIFEST.generation
-    || row.state !== "READY" || row.last_migration_id !== DRIZZLE_GST_MIGRATION_ID
-    || row.last_migration_checksum !== DRIZZLE_GST_HASH
+    || row.state !== "READY" || row.last_migration_id !== expectedId
+    || row.last_migration_checksum !== expectedHash
     || typeof row.last_writer_cli_version !== "string" || typeof row.last_writer_build_id !== "string"
     || typeof row.last_writer_at !== "string" || typeof row.created_at !== "string" || typeof row.updated_at !== "string"
     || row.recovery_reason !== null) {
@@ -494,8 +500,8 @@ function drizzleControlRecord(db: BunDatabase): DatabaseControlRecord {
     state: "READY",
     revision: CURRENT_SCHEMA_MANIFEST.revision,
     generation: CURRENT_SCHEMA_MANIFEST.generation,
-    lastMigrationId: DRIZZLE_GST_MIGRATION_ID,
-    lastMigrationChecksum: DRIZZLE_GST_HASH,
+    lastMigrationId: expectedId,
+    lastMigrationChecksum: expectedHash,
     lastWriterCliVersion: row.last_writer_cli_version as string,
     lastWriterBuildId: row.last_writer_build_id as string,
     lastWriterAt: row.last_writer_at as string,
@@ -524,8 +530,8 @@ function validateMigrationHistory(rows: MigrationRow[], expectedManifest: Sqlite
   }
 }
 
-function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false): void {
-  const expected = expectedCatalog(expectedManifest, drizzle);
+function validateCanonicalSchema(catalog: CatalogRow[], expectedManifest: SqliteSchemaManifest, drizzle = false, current = true): void {
+  const expected = expectedCatalog(expectedManifest, drizzle, current);
   const actualByName = new Map(catalog.map((row) => [`${row.type}:${row.name}`, row]));
   for (const expectedRow of expected) {
     const actual = actualByName.get(`${expectedRow.type}:${expectedRow.name}`);
@@ -549,8 +555,8 @@ function validateExactCatalogMatch(actual: CatalogRow[], expected: CatalogRow[])
 }
 
 const cachedExpectedCatalog = new Map<string, CatalogRow[]>();
-function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST, drizzle = false): CatalogRow[] {
-  const key = `${drizzle ? "drizzle" : "legacy"}:${expectedManifest.schemaVersion}:${expectedManifest.revision}`;
+function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA_MANIFEST, drizzle = false, current = true): CatalogRow[] {
+  const key = `${drizzle ? "drizzle" : "legacy"}:${expectedManifest.schemaVersion}:${expectedManifest.revision}:${current ? "current" : "baseline"}`;
   const cached = cachedExpectedCatalog.get(key);
   if (cached) return cached;
   const db = new BunDatabase(":memory:", { strict: true, safeIntegers: true });
@@ -560,8 +566,10 @@ function expectedCatalog(expectedManifest: SqliteSchemaManifest = CURRENT_SCHEMA
       db.exec(DRIZZLE_JOURNAL_DDL);
       const baseline = readFileSync(join(import.meta.dir, "../../..", "drizzle", "0009_drizzle_v8_baseline.sql"), "utf8");
       for (const statement of baseline.split("--> statement-breakpoint")) db.exec(statement);
-      const gst = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`), "utf8");
-      for (const statement of gst.split("--> statement-breakpoint")) db.exec(statement);
+      if (current) {
+        const gst = readFileSync(join(import.meta.dir, "../../..", "drizzle", `${DRIZZLE_GST_MIGRATION_ID}.sql`), "utf8");
+        for (const statement of gst.split("--> statement-breakpoint")) db.exec(statement);
+      }
     } else {
       db.exec(MIGRATION_SCHEMA_SQLITE);
       db.exec(RECOVERY_AUDIT_SCHEMA_SQLITE);

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "57917f11-27a5-441b-bc6e-3f185692053c",
-  "prevId": "cbc03479-4267-4211-acd9-673c258fdc80",
+  "id": "6ccb4998-f09b-4111-9415-10abfe93c724",
+  "prevId": "57917f11-27a5-441b-bc6e-3f185692053c",
   "tables": {
     "bank_matches": {
       "name": "bank_matches",
@@ -1896,40 +1896,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "gst_tax_components_document_line_id_tenant_id_book_set_id_sales_invoice_lines_id_tenant_id_book_set_id_fk": {
-          "name": "gst_tax_components_document_line_id_tenant_id_book_set_id_sales_invoice_lines_id_tenant_id_book_set_id_fk",
-          "tableFrom": "gst_tax_components",
-          "tableTo": "sales_invoice_lines",
-          "columnsFrom": [
-            "document_line_id",
-            "tenant_id",
-            "book_set_id"
-          ],
-          "columnsTo": [
-            "id",
-            "tenant_id",
-            "book_set_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "gst_tax_components_document_line_id_tenant_id_book_set_id_vendor_bill_lines_id_tenant_id_book_set_id_fk": {
-          "name": "gst_tax_components_document_line_id_tenant_id_book_set_id_vendor_bill_lines_id_tenant_id_book_set_id_fk",
-          "tableFrom": "gst_tax_components",
-          "tableTo": "vendor_bill_lines",
-          "columnsFrom": [
-            "document_line_id",
-            "tenant_id",
-            "book_set_id"
-          ],
-          "columnsTo": [
-            "id",
-            "tenant_id",
-            "book_set_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1999,6 +1965,48 @@
         },
         "buyer_profile_id": {
           "name": "buyer_profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "seller_gstin": {
+          "name": "seller_gstin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "seller_state_code": {
+          "name": "seller_state_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "buyer_gstin": {
+          "name": "buyer_gstin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "buyer_treatment": {
+          "name": "buyer_treatment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "buyer_state_code": {
+          "name": "buyer_state_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "local_component": {
+          "name": "local_component",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -2082,6 +2090,15 @@
           "name": "uq_gst_snapshot_vendor_bill",
           "columns": [
             "vendor_bill_id",
+            "tenant_id",
+            "book_set_id"
+          ],
+          "isUnique": true
+        },
+        "uq_gst_snapshot_scope_key": {
+          "name": "uq_gst_snapshot_scope_key",
+          "columns": [
+            "id",
             "tenant_id",
             "book_set_id"
           ],
@@ -2173,6 +2190,14 @@
         "chk_gst_snapshot_geometry": {
           "name": "chk_gst_snapshot_geometry",
           "value": "\"gst_tax_snapshots\".\"geometry\" IN ('INTRA_STATE', 'INTER_STATE')"
+        },
+        "chk_gst_snapshot_buyer_treatment": {
+          "name": "chk_gst_snapshot_buyer_treatment",
+          "value": "\"gst_tax_snapshots\".\"buyer_treatment\" IN ('REGISTERED', 'UNREGISTERED', 'CONSUMER')"
+        },
+        "chk_gst_snapshot_local_component": {
+          "name": "chk_gst_snapshot_local_component",
+          "value": "\"gst_tax_snapshots\".\"local_component\" IS NULL OR \"gst_tax_snapshots\".\"local_component\" IN ('SGST', 'UTGST')"
         },
         "chk_gst_snapshot_amounts": {
           "name": "chk_gst_snapshot_amounts",

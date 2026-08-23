@@ -193,14 +193,26 @@ function exactFreshDrizzle(db: BunDatabase, current = false): boolean {
 
 function exactBridgedCurrent(db: BunDatabase, manifest: SqliteSchemaManifest): boolean {
   if (!exactHistory(db, manifest) || !exactControl(db, manifest, DRIZZLE_GST_MIGRATION_ID, DRIZZLE_GST_HASH) || !exactDrizzleJournal(db)) return false;
-  // Legacy bridges retain schema_migrations, whose historical DDL can differ
+  // Legacy bridges retain schema_migrations, whose non-GST DDL can differ
   // textually from a fresh Drizzle database after table-rebuild upgrades. The
-  // immutable history/control/journal checks above remain exact; verify every
-  // GST-owned object is present before accepting the bridge.
-  const has = (name: string): boolean => !!db.prepare("SELECT 1 FROM sqlite_schema WHERE name = ?").get(name);
-  return has("party_gst_profiles") && has("gst_tax_snapshots") && has("gst_tax_components")
-    && has("gst_tax_snapshots_no_update") && has("gst_tax_snapshots_no_delete")
-    && has("gst_tax_components_no_update") && has("gst_tax_components_no_delete");
+  // GST migration itself is still compared exactly, including table columns,
+  // indexes, checks, and triggers, so same-name corruption fails closed.
+  const gstObjects = new Set([
+    "party_gst_profiles", "gst_tax_snapshots", "gst_tax_components",
+    "uq_party_gst_profiles_scope_key", "idx_party_gst_profiles_scope_date",
+    "uq_gst_snapshot_sales_invoice", "uq_gst_snapshot_vendor_bill", "uq_gst_snapshot_scope_key", "idx_gst_snapshots_register",
+    "idx_gst_tax_components_snapshot",
+    "party_gst_profiles_no_overlap", "party_gst_profiles_no_overlap_upd",
+    "gst_registrations_posted_snapshot_no_update", "gst_registrations_posted_snapshot_no_delete",
+    "party_gst_profiles_posted_snapshot_no_update", "party_gst_profiles_posted_snapshot_no_delete",
+    "sales_invoices_posted_fields_immutable", "vendor_bills_posted_fields_immutable",
+    "gst_tax_snapshots_no_update", "gst_tax_snapshots_no_delete",
+    "gst_tax_components_no_update", "gst_tax_components_no_delete",
+  ]);
+  const expected = expectedCatalog(manifest, true, true).filter((row) => gstObjects.has(row.name));
+  const actual = catalog(db).filter((row) => gstObjects.has(row.name));
+  if (!sameCatalog(actual, expected)) return false;
+  return ["sales_invoices", "vendor_bills"].every((table) => normalizeDdl(tableDdl(db, table)).includes("gst_input_json"));
 }
 
 /** Detect the current state without creating tables, repairing rows, or running migrations. */

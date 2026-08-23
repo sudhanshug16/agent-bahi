@@ -171,6 +171,18 @@ export async function upgradeSqliteDatabase(
     const state = databaseState(dbPath);
     sourceState = state;
     if (state.state === "DRIZZLE_MANAGED" || state.state === "DRIZZLE_BRIDGED") {
+      const journal = new BunDatabase(dbPath, { readonly: true, safeIntegers: true });
+      let pending = false;
+      try {
+        const count = journal.query(`SELECT COUNT(*) AS count FROM ${DRIZZLE_MIGRATIONS_TABLE}`).get() as { count?: number | bigint } | undefined;
+        pending = Number(count?.count ?? 0) < officialDrizzleJournal().length;
+      } finally { journal.close(); }
+      if (pending) {
+        const initialBackupService = new BackupService({ sourcePath: dbPath });
+        backup = await initialBackupService.createBackup(options.backupDestinationPath);
+        if (backup.status !== "SUCCESS" || !backup.path || !backup.manifest?.files[0]) throw new UpgradeError("UPGRADE_BACKUP_FAILED", "Verified invocation-start backup could not be created");
+        await initialBackupService.verifyBackup(backup.path);
+      }
       await options.faults?.beforeOfficialMigration?.();
       db.runFreshDrizzleMigrations();
       await db.withMigrationLease((session) => synchronizeDrizzleControl(session, {
@@ -222,7 +234,7 @@ export async function upgradeSqliteDatabase(
     await options.faults?.beforeFinalVerification?.();
     if (databaseState(dbPath).state !== "DRIZZLE_BRIDGED") throw new UpgradeError("UPGRADE_APPLY_FAILED", "Explicit bridge did not reach exact DRIZZLE_BRIDGED state");
   } catch (error) {
-    if (!backup?.path || !sourceManifest || !sourceState) throw error;
+    if (!backup?.path || !sourceState || (sourceState.state !== "DRIZZLE_MANAGED" && sourceState.state !== "DRIZZLE_BRIDGED" && !sourceManifest)) throw error;
     const original = error instanceof Error ? error.message : String(error);
     try {
       await db?.close();

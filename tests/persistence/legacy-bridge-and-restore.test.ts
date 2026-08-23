@@ -24,6 +24,7 @@ import { DatabaseControlService } from "../../src/infrastructure/services/databa
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
 import { detectLegacyState, inspectLegacyDatabase } from "../../src/infrastructure/services/legacy-bridge-service.ts";
 import { MIGRATION_CATALOG, KNOWN_SCHEMA_MANIFESTS } from "../../src/infrastructure/schema/migration-catalog.ts";
+import { DRIZZLE_GST_HASH } from "../../src/infrastructure/services/drizzle-baseline.ts";
 
 async function createLegacyFixture(path: string, schemaVersion: number): Promise<void> {
   const manifest = KNOWN_SCHEMA_MANIFESTS.find((candidate) => candidate.schemaVersion === schemaVersion)!;
@@ -232,8 +233,21 @@ describe("Legacy Bridge and Restore", () => {
       expect(db.query("SELECT id, name FROM tenants").all()).toEqual(beforeTenant);
       expect(db.query("SELECT id, hash FROM __drizzle_migrations").all()).toEqual([
         { id: null, hash: "4cba3569223df5dd548a2b9ab6bb953566e3c0ff8e539319342d722b04600577" },
-        { id: null, hash: "5033e76e739bf92015cf305c485ea2e63d619e07abed72a1edd82a9bca76ddf9" },
+        { id: null, hash: DRIZZLE_GST_HASH },
       ]);
+    } finally { db.close(); }
+  });
+
+  test("fails closed when a bridged GST-owned trigger is corrupted", async () => {
+    const path = join(tempDir, `custom-v8-gst-corrupt-${randomUUID()}.sqlite`);
+    const backup = join(tempDir, `custom-v8-gst-corrupt-${randomUUID()}.backup`);
+    await createLegacyFixture(path, 8);
+    await upgradeSqliteDatabase(path, { backupDestinationPath: backup, cliVersion: "test", buildId: "custom-v8-gst-corrupt" });
+    const db = new BunDatabase(path);
+    try {
+      db.exec("DROP TRIGGER gst_tax_snapshots_no_update");
+      db.exec("CREATE TRIGGER gst_tax_snapshots_no_update BEFORE UPDATE ON gst_tax_snapshots BEGIN SELECT 1; END");
+      expect(detectDatabaseState(db).state).toBe("UNKNOWN");
     } finally { db.close(); }
   });
 

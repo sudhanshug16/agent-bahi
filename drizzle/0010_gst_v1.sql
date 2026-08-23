@@ -27,6 +27,12 @@ CREATE TABLE `gst_tax_snapshots` (
 	`vendor_bill_id` text,
 	`seller_registration_id` text,
 	`buyer_profile_id` text,
+	`seller_gstin` text NOT NULL,
+	`seller_state_code` text NOT NULL,
+	`buyer_gstin` text,
+	`buyer_treatment` text NOT NULL,
+	`buyer_state_code` text NOT NULL,
+	`local_component` text,
 	`geometry` text NOT NULL,
 	`rounding_policy` text NOT NULL,
 	`taxable_minor` integer NOT NULL,
@@ -42,6 +48,8 @@ CREATE TABLE `gst_tax_snapshots` (
 	FOREIGN KEY (`vendor_bill_id`,`tenant_id`,`book_set_id`) REFERENCES `vendor_bills`(`id`,`tenant_id`,`book_set_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_gst_snapshot_document_type" CHECK("gst_tax_snapshots"."document_type" IN ('SALE', 'PURCHASE')),
 	CONSTRAINT "chk_gst_snapshot_geometry" CHECK("gst_tax_snapshots"."geometry" IN ('INTRA_STATE', 'INTER_STATE')),
+	CONSTRAINT "chk_gst_snapshot_buyer_treatment" CHECK("gst_tax_snapshots"."buyer_treatment" IN ('REGISTERED', 'UNREGISTERED', 'CONSUMER')),
+	CONSTRAINT "chk_gst_snapshot_local_component" CHECK("gst_tax_snapshots"."local_component" IS NULL OR "gst_tax_snapshots"."local_component" IN ('SGST', 'UTGST')),
 	CONSTRAINT "chk_gst_snapshot_amounts" CHECK(typeof("gst_tax_snapshots"."taxable_minor") = 'integer' AND "gst_tax_snapshots"."taxable_minor" > 0 AND typeof("gst_tax_snapshots"."tax_minor") = 'integer' AND "gst_tax_snapshots"."tax_minor" >= 0 AND typeof("gst_tax_snapshots"."gross_minor") = 'integer' AND "gst_tax_snapshots"."gross_minor" = "gst_tax_snapshots"."taxable_minor" + "gst_tax_snapshots"."tax_minor"),
 	CONSTRAINT "chk_gst_snapshot_itc" CHECK("gst_tax_snapshots"."itc_treatment" IS NULL OR "gst_tax_snapshots"."itc_treatment" IN ('ELIGIBLE', 'INELIGIBLE', 'PENDING_REVIEW'))
 );
@@ -98,6 +106,22 @@ BEGIN
   ) THEN RAISE(ABORT, 'overlapping party GST profile effective date ranges') END;
 END;
 --> statement-breakpoint
+CREATE TRIGGER `gst_registrations_posted_snapshot_no_update` BEFORE UPDATE ON `gst_registrations`
+WHEN EXISTS (SELECT 1 FROM gst_tax_snapshots s WHERE s.tenant_id = OLD.tenant_id AND s.seller_registration_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'GST registration facts are immutable after posting'); END;
+--> statement-breakpoint
+CREATE TRIGGER `gst_registrations_posted_snapshot_no_delete` BEFORE DELETE ON `gst_registrations`
+WHEN EXISTS (SELECT 1 FROM gst_tax_snapshots s WHERE s.tenant_id = OLD.tenant_id AND s.seller_registration_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'GST registration facts are immutable after posting'); END;
+--> statement-breakpoint
+CREATE TRIGGER `party_gst_profiles_posted_snapshot_no_update` BEFORE UPDATE ON `party_gst_profiles`
+WHEN EXISTS (SELECT 1 FROM gst_tax_snapshots s WHERE s.tenant_id = OLD.tenant_id AND s.book_set_id = OLD.book_set_id AND s.buyer_profile_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'party GST facts are immutable after posting'); END;
+--> statement-breakpoint
+CREATE TRIGGER `party_gst_profiles_posted_snapshot_no_delete` BEFORE DELETE ON `party_gst_profiles`
+WHEN EXISTS (SELECT 1 FROM gst_tax_snapshots s WHERE s.tenant_id = OLD.tenant_id AND s.book_set_id = OLD.book_set_id AND s.buyer_profile_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'party GST facts are immutable after posting'); END;
+--> statement-breakpoint
 DROP TRIGGER `sales_invoices_posted_fields_immutable`;
 --> statement-breakpoint
 CREATE TRIGGER `sales_invoices_posted_fields_immutable` BEFORE UPDATE ON `sales_invoices`
@@ -111,6 +135,8 @@ WHEN OLD.status <> 'DRAFT' AND NOT (
   AND NEW.created_at IS OLD.created_at AND NEW.posted_at IS OLD.posted_at
   AND NEW.updated_at IS NOT OLD.updated_at AND NEW.paid_minor >= OLD.paid_minor
   AND NEW.status IN ('POSTED', 'PARTIALLY_PAID', 'PAID')
+  AND NEW.paid_minor IS (SELECT COALESCE(SUM(amount_minor), 0) FROM bank_receipt_allocations WHERE tenant_id = OLD.tenant_id AND book_set_id = OLD.book_set_id AND invoice_id = OLD.id)
+  AND NEW.status IS CASE WHEN NEW.paid_minor = 0 THEN 'POSTED' WHEN NEW.paid_minor = NEW.total_minor THEN 'PAID' ELSE 'PARTIALLY_PAID' END
 )
 BEGIN SELECT RAISE(ABORT, 'posted sales invoice financial fields are immutable'); END;
 --> statement-breakpoint
@@ -127,6 +153,8 @@ WHEN OLD.status <> 'DRAFT' AND NOT (
   AND NEW.created_at IS OLD.created_at AND NEW.posted_at IS OLD.posted_at
   AND NEW.updated_at IS NOT OLD.updated_at AND NEW.paid_minor >= OLD.paid_minor
   AND NEW.status IN ('POSTED', 'PARTIALLY_PAID', 'PAID')
+  AND NEW.paid_minor IS (SELECT COALESCE(SUM(amount_minor), 0) FROM vendor_payment_allocations WHERE tenant_id = OLD.tenant_id AND book_set_id = OLD.book_set_id AND bill_id = OLD.id)
+  AND NEW.status IS CASE WHEN NEW.paid_minor = 0 THEN 'POSTED' WHEN NEW.paid_minor = NEW.total_minor THEN 'PAID' ELSE 'PARTIALLY_PAID' END
 )
 BEGIN SELECT RAISE(ABORT, 'posted vendor bill financial fields are immutable'); END;
 --> statement-breakpoint
