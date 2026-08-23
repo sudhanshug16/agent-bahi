@@ -36,21 +36,25 @@ describe.serial("remote MCP Streamable HTTP", () => {
     const initialized = spawn(binary, ["--database", path, "database.init", "--json"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     const initializedCode = await new Promise<number | null>((resolve) => initialized.once("close", resolve));
     expect(initializedCode).toBe(0);
-    const child = spawn(binary, ["--database", path, "mcp", "serve", "--port", "39106"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(binary, ["--database", path, "mcp", "serve", "--port", "0"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     try {
-      await new Promise<void>((resolve, reject) => {
+      const diagnostic = await new Promise<Record<string, unknown>>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`compiled MCP startup timed out: ${Buffer.concat(stderr).toString()}`)), 10_000);
         child.stderr.on("data", (chunk) => {
-          if (Buffer.from(chunk).toString().includes('"event":"mcp.server.started"')) {
+          const line = Buffer.from(chunk).toString().split("\n").find((value) => value.includes('"event":"mcp.server.started"'));
+          if (line) {
             clearTimeout(timer);
-            resolve();
+            resolve(JSON.parse(line));
           }
         });
         child.once("exit", (code) => reject(new Error(`compiled MCP exited before startup: ${code}`)));
       });
-      expect((await fetch("http://127.0.0.1:39106/healthz")).status).toBe(200);
+      const bindUrl = new URL(String(diagnostic.bindUrl));
+      expect(bindUrl.hostname).toBe("127.0.0.1");
+      expect(bindUrl.port).not.toBe("0");
+      expect((await fetch(`${bindUrl.origin}/healthz`)).status).toBe(200);
     } finally {
       child.kill("SIGTERM");
       await new Promise<void>((resolve) => child.once("close", () => resolve()));
@@ -60,26 +64,28 @@ describe.serial("remote MCP Streamable HTTP", () => {
 
   it("starts through the documented CLI command, emits safe JSON diagnostics, and shuts down on SIGTERM", async () => {
     const database = await initializedDatabase();
-    const port = 39104;
-    const child = spawn(process.execPath, [join(root, "src/cli.ts"), "--database", database.path, "mcp", "serve", "--port", String(port)], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(process.execPath, [join(root, "src/cli.ts"), "--database", database.path, "mcp", "serve", "--port", "0"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     try {
-      await new Promise<void>((resolve, reject) => {
+      const diagnostic = await new Promise<Record<string, unknown>>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`MCP startup timed out: ${Buffer.concat(stderr).toString()}`)), 10_000);
         child.stderr.on("data", (chunk) => {
-          if (Buffer.from(chunk).toString().includes('"event":"mcp.server.started"')) {
+          const line = Buffer.from(chunk).toString().split("\n").find((value) => value.includes('"event":"mcp.server.started"'));
+          if (line) {
             clearTimeout(timer);
-            resolve();
+            resolve(JSON.parse(line));
           }
         });
         child.once("exit", (code) => reject(new Error(`MCP exited before startup: ${code}`)));
       });
-      const diagnostic = JSON.parse(Buffer.concat(stderr).toString().split("\n").find((line) => line.includes('"mcp.server.started"'))!) as Record<string, unknown>;
-      expect(diagnostic.bindUrl).toBe(`http://127.0.0.1:${port}/mcp`);
+      const bindUrl = new URL(String(diagnostic.bindUrl));
+      expect(bindUrl.hostname).toBe("127.0.0.1");
+      expect(bindUrl.pathname).toBe("/mcp");
+      expect(bindUrl.port).not.toBe("0");
       expect(diagnostic.authMode).toBe("none-loopback");
       expect(String(diagnostic.database)).not.toContain(database.directory);
-      expect(await (await fetch(`http://127.0.0.1:${port}/healthz`)).json()).toMatchObject({ ok: true, status: "LIVE" });
+      expect(await (await fetch(`${bindUrl.origin}/healthz`)).json()).toMatchObject({ ok: true, status: "LIVE" });
     } finally {
       child.kill("SIGTERM");
       await new Promise<void>((resolve) => child.once("close", () => resolve()));
