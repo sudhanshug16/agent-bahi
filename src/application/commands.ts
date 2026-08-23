@@ -11,7 +11,7 @@ export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
 export type TenantPanCommandAction = "tenant.pan.set";
-export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate" | "tax-authority.pack.register" | "tax-authority.pack.verify" | "tax-authority.pack.reject" | "tax-case.eligibility-facts.record" | "tax-case.itr-eligibility.evaluate" | "tax-case.itr-form.select";
+export type TaxCaseCommandAction = "tax-case.create" | "tax-case.membership.refresh" | "tax-case.source.import" | "tax-case.fact.propose" | "tax-case.fact.confirm" | "tax-case.fact.reject" | "tax-case.reconciliation.record" | "tax-case.filing-snapshot.seal" | "tax-case.position.generate" | "tax-authority.pack.register" | "tax-authority.pack.verify" | "tax-authority.pack.reject" | "tax-case.eligibility-facts.record" | "tax-case.itr-eligibility.evaluate" | "tax-case.itr-form.select" | "tax-authority.computation-pack.register" | "tax-authority.computation-pack.verify" | "tax-authority.computation-pack.reject" | "tax-case.computation-inputs.record" | "tax-case.computation.generate" | "tax-case.computation.approve";
 
 export interface Actor {
   kind: ActorKind;
@@ -153,6 +153,23 @@ export interface TaxCaseEligibilityFactRecordPayload {
 }
 export interface TaxCaseItrEligibilityEvaluatePayload { taxCaseId: string; filingSnapshotId: string; worksheetId: string; packId: string; }
 export interface TaxCaseItrFormSelectPayload { taxCaseId: string; evaluationId: string; expectedEvaluationHash: string; selectedForm: string; }
+
+export type ComputationValueType = "INTEGER_MINOR" | "BOOLEAN" | "STRING";
+export type ComputationRounding = "DOWN" | "UP" | "HALF_UP";
+export interface ComputationDeclaredInput { name: string; valueType: ComputationValueType; required?: boolean; }
+export interface ComputationPackRegisterPayload {
+  packId?: string; authorityPackId: string; authorityPackHash: string; financialYear: string; assessmentYear: string; itrForm: string;
+  packVersion: string; provenanceArtifacts: AuthorityArtifactReference[]; declaredInputs: ComputationDeclaredInput[];
+  namedSchedules: string[]; program: unknown; canonicalHash?: string; supersedesPackId?: string;
+}
+export interface ComputationPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface ComputationInputsRecordPayload {
+  taxCaseId: string; filingSnapshotId: string; worksheetId: string; evaluationId: string; selectionId?: string; computationPackId: string;
+  inputs: Record<string, { valueType: ComputationValueType; value: string | boolean; provenance: Record<string, unknown>; verified: boolean }>;
+}
+export interface ComputationPreviewPayload extends ComputationInputsRecordPayload { inputSetId?: string; }
+export interface ComputationGeneratePayload extends ComputationInputsRecordPayload { requestId?: never; }
+export interface ComputationApprovePayload { taxCaseId: string; computationId: string; expectedComputationHash: string; reason: string; }
 
 export interface CommandResult<T> {
   resultJson: string;

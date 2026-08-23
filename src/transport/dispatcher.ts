@@ -209,6 +209,16 @@ const handlers: Record<string, Handler> = {
   "tax-case.itr-eligibility.show": (facade, input) => facade.taxCase.itrEligibility.show(tenantId(input), text(input, "taxCaseId"), text(input, "evaluationId")),
   "tax-case.itr-form.select": (facade, input) => facade.taxCase.itrForm.select(input as never),
   "tax-case.itr-form.status": (facade, input) => facade.taxCase.itrForm.status(tenantId(input), text(input, "taxCaseId"), optionalText(input, "selectionId")),
+  "tax-authority.computation-pack.register": (facade, input) => facade.taxAuthority.computationPack.register(input as never),
+  "tax-authority.computation-pack.verify": (facade, input) => facade.taxAuthority.computationPack.verify(input as never),
+  "tax-authority.computation-pack.reject": (facade, input) => facade.taxAuthority.computationPack.reject(input as never),
+  "tax-authority.computation-pack.show": (facade, input) => facade.taxAuthority.computationPack.show(text(input, "packId")),
+  "tax-case.computation-inputs.record": (facade, input) => facade.taxCase.computationInputs.record(input as never),
+  "tax-case.computation.preview": (facade, input) => facade.taxCase.computation.preview(tenantId(input), (input.payload ?? input) as never),
+  "tax-case.computation.generate": (facade, input) => facade.taxCase.computation.generate(input as never),
+  "tax-case.computation.show": (facade, input) => facade.taxCase.computation.show(tenantId(input), text(input, "taxCaseId"), text(input, "computationId")),
+  "tax-case.computation.status": (facade, input) => facade.taxCase.computation.status(tenantId(input), text(input, "taxCaseId"), text(input, "computationId")),
+  "tax-case.computation.approve": (facade, input) => facade.taxCase.computation.approve(input as never),
 };
 
 for (const entry of BUSINESS_OPERATION_CATALOG) {

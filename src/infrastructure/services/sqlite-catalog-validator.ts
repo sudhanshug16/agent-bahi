@@ -128,22 +128,32 @@ export function sqliteCatalogMatches(actual: readonly SqliteCatalogRow[], expect
     "uq_personal_tax_authority_packs_identity", "idx_personal_tax_authority_packs_applicable", "idx_tax_case_itr_eligibility_evaluations_case",
     "uq_tax_case_itr_eligibility_evaluations_id_scope", "uq_tax_case_itr_eligibility_fact_events_request", "idx_tax_case_itr_eligibility_fact_events_fact",
     "idx_tax_case_itr_eligibility_facts_scope", "uq_tax_case_itr_eligibility_facts_id_scope", "uq_tax_case_itr_form_selections_request",
-    "idx_tax_case_itr_form_selections_case", "personal_tax_authority_packs_no_update", "personal_tax_authority_packs_no_delete",
+    "idx_tax_case_itr_form_selections_case", "uq_tax_case_itr_form_selections_id_scope", "personal_tax_authority_packs_no_update", "personal_tax_authority_packs_no_delete",
     "personal_tax_authority_pack_events_no_update", "personal_tax_authority_pack_events_no_delete", "tax_case_itr_eligibility_facts_no_update",
     "tax_case_itr_eligibility_facts_no_delete", "tax_case_itr_eligibility_fact_events_no_update", "tax_case_itr_eligibility_fact_events_no_delete",
     "tax_case_itr_eligibility_evaluations_no_update", "tax_case_itr_eligibility_evaluations_no_delete", "tax_case_itr_form_selections_no_update",
-    "tax_case_itr_form_selections_no_delete",
+    "tax_case_itr_form_selections_no_delete", "personal_tax_computation_events", "personal_tax_computation_inputs", "personal_tax_computation_pack_events", "personal_tax_computation_packs", "personal_tax_computations",
+    "uq_personal_tax_computation_events_request", "idx_personal_tax_computation_events_computation", "uq_personal_tax_computation_inputs_id_scope", "uq_personal_tax_computation_inputs_request", "idx_personal_tax_computation_inputs_case",
+    "uq_personal_tax_computation_pack_events_request", "idx_personal_tax_computation_pack_events_pack", "uq_personal_tax_computation_packs_hash", "uq_personal_tax_computation_packs_identity", "idx_personal_tax_computation_packs_applicable",
+    "uq_personal_tax_computations_id_scope", "uq_personal_tax_computations_request", "idx_personal_tax_computations_case", "personal_tax_computation_packs_no_update", "personal_tax_computation_packs_no_delete",
+    "personal_tax_computation_pack_events_no_update", "personal_tax_computation_pack_events_no_delete", "personal_tax_computation_inputs_no_update", "personal_tax_computation_inputs_no_delete", "personal_tax_computations_no_update", "personal_tax_computations_no_delete", "personal_tax_computation_events_no_update", "personal_tax_computation_events_no_delete",
   ]);
   const current = expectedSqliteCatalog(V8_SCHEMA_MANIFEST, { kind: "drizzle", journalLength: OFFICIAL_DRIZZLE_MIGRATIONS.length });
-  const actualSuffix = actual.filter((row) => itrNames.has(row.name));
-  const canonicalSuffix = current.filter((row) => itrNames.has(row.name));
+  const computationNames = new Set(current.filter((row) => row.name.startsWith("personal_tax_computation") || row.name.startsWith("uq_personal_tax_computation") || row.name.startsWith("idx_personal_tax_computation")).map((row) => row.name));
+  const historicalComputation = !expected.some((row) => computationNames.has(row.name)) && actual.some((row) => computationNames.has(row.name));
+  const actualComparable = historicalComputation ? actual.filter((row) => !computationNames.has(row.name)) : actual;
+  const currentComparable = historicalComputation ? current.filter((row) => !computationNames.has(row.name)) : current;
+  if (historicalComputation && compare(actualComparable, expected)) return true;
+  const actualSuffix = actualComparable.filter((row) => itrNames.has(row.name));
+  const canonicalSuffix = currentComparable.filter((row) => itrNames.has(row.name));
   if (actualSuffix.length === canonicalSuffix.length && compare(actualSuffix, canonicalSuffix)) {
-    const withoutSuffix = actual.filter((row) => !itrNames.has(row.name));
-    return compare(withoutSuffix, expected.filter((row) => !itrNames.has(row.name)));
+    const withoutSuffix = actualComparable.filter((row) => !itrNames.has(row.name));
+    const withoutExpectedSuffix = expected.filter((row) => !itrNames.has(row.name));
+    return compare(withoutSuffix, withoutExpectedSuffix);
   }
-  const compatibility = actual.find((row) => row.type === "table" && row.name === "compatibility_matrix");
+  const compatibility = actualComparable.find((row) => row.type === "table" && row.name === "compatibility_matrix");
   if (!compatibility || normalizeDdl(compatibility.sql) !== normalizeDdl(COMPATIBILITY_MATRIX_DDL)) return false;
-  return compare(actual.filter((row) => row !== compatibility), expected);
+  return compare(actualComparable.filter((row) => row !== compatibility), expected);
 }
 
 export function sqliteCatalogMatchesExpectation(

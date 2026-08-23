@@ -133,6 +133,11 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "tax_case_itr_eligibility_fact_events",
   "tax_case_itr_eligibility_evaluations",
   "tax_case_itr_form_selections",
+  "personal_tax_computation_packs",
+  "personal_tax_computation_pack_events",
+  "personal_tax_computation_inputs",
+  "personal_tax_computations",
+  "personal_tax_computation_events",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

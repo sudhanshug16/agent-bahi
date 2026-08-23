@@ -41,6 +41,8 @@ import { previewTaxCaseFilingSnapshot, sealTaxCaseFilingSnapshot, showTaxCaseFil
 import { generateTaxCasePositionWorksheet, previewTaxCasePositionWorksheet, showTaxCasePositionWorksheet, statusTaxCasePositionWorksheet, type TaxPositionWorksheet, type TaxPositionWorksheetView } from "./services/tax-case-position-worksheet-service.ts";
 import { registerPersonalTaxAuthorityPack, verifyPersonalTaxAuthorityPack, rejectPersonalTaxAuthorityPack, showPersonalTaxAuthorityPack, recordTaxCaseEligibilityFact, evaluateTaxCaseItrEligibility, showTaxCaseItrEligibility, selectTaxCaseItrForm, statusTaxCaseItrForm } from "./services/tax-case-itr-eligibility-service.ts";
 import type { TaxCaseCreatePayload, TaxCaseMembershipRefreshPayload, TaxCaseSourceImportPayload, TaxCaseFactProposePayload, TaxCaseFactDecisionPayload, TaxCaseReconciliationRecordPayload, TaxCaseFilingSnapshotSealPayload, TaxCasePositionGeneratePayload, TaxCaseSourceAssessmentPreparePayload, TaxCaseSourceAssessmentDecisionPayload, AuthorityPackRegisterPayload, AuthorityPackDecisionPayload, TaxCaseEligibilityFactRecordPayload, TaxCaseItrEligibilityEvaluatePayload, TaxCaseItrFormSelectPayload } from "./commands.ts";
+import type { ComputationPackRegisterPayload, ComputationPackDecisionPayload, ComputationInputsRecordPayload, ComputationApprovePayload } from "./commands.ts";
+import { registerPersonalTaxComputationPack, verifyPersonalTaxComputationPack, rejectPersonalTaxComputationPack, showPersonalTaxComputationPack, recordPersonalTaxComputationInputs, previewPersonalTaxComputation, generatePersonalTaxComputation, showPersonalTaxComputation, statusPersonalTaxComputation, approvePersonalTaxComputation } from "./services/tax-case-computation-service.ts";
 
 /**
  * Read-only tenant operations
@@ -265,10 +267,13 @@ export interface TaxCaseOperations {
   eligibilityFacts: { record(envelope: CommandEnvelope<TaxCaseEligibilityFactRecordPayload>): Promise<CommandResult<Record<string, unknown>>> };
   itrEligibility: { evaluate(envelope: CommandEnvelope<TaxCaseItrEligibilityEvaluatePayload>): Promise<CommandResult<Record<string, unknown>>>; show(tenantId: TenantId, taxCaseId: string, evaluationId: string): Promise<Record<string, unknown>> };
   itrForm: { select(envelope: CommandEnvelope<TaxCaseItrFormSelectPayload>): Promise<CommandResult<Record<string, unknown>>>; status(tenantId: TenantId, taxCaseId: string, selectionId?: string): Promise<Record<string, unknown>> };
+  computationInputs: { record(envelope: CommandEnvelope<ComputationInputsRecordPayload>): Promise<CommandResult<Record<string, unknown>>> };
+  computation: { preview(tenantId: TenantId, payload: ComputationInputsRecordPayload): Promise<Record<string, unknown>>; generate(envelope: CommandEnvelope<ComputationInputsRecordPayload & { inputSetId?: string }>): Promise<CommandResult<Record<string, unknown>>>; show(tenantId: TenantId, taxCaseId: string, computationId: string): Promise<Record<string, unknown>>; status(tenantId: TenantId, taxCaseId: string, computationId: string): Promise<Record<string, unknown>>; approve(envelope: CommandEnvelope<ComputationApprovePayload>): Promise<CommandResult<Record<string, unknown>>> };
 }
 
 export interface TaxAuthorityOperations {
   pack: { register(envelope: CommandEnvelope<AuthorityPackRegisterPayload>): Promise<CommandResult<Record<string, unknown>>>; verify(envelope: CommandEnvelope<AuthorityPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; reject(envelope: CommandEnvelope<AuthorityPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; show(packId: string): Promise<Record<string, unknown>> };
+  computationPack: { register(envelope: CommandEnvelope<ComputationPackRegisterPayload>): Promise<CommandResult<Record<string, unknown>>>; verify(envelope: CommandEnvelope<ComputationPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; reject(envelope: CommandEnvelope<ComputationPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; show(packId: string): Promise<Record<string, unknown>> };
 }
 
 /**
@@ -490,8 +495,10 @@ export function createPublicFacade(
       eligibilityFacts: { record: (envelope) => recordTaxCaseEligibilityFact(sessionRunner, envelope) },
       itrEligibility: { evaluate: (envelope) => evaluateTaxCaseItrEligibility(sessionRunner, envelope), show: (tenantId, taxCaseId, evaluationId) => showTaxCaseItrEligibility(sessionRunner, tenantId, taxCaseId, evaluationId) },
       itrForm: { select: (envelope) => selectTaxCaseItrForm(sessionRunner, envelope), status: (tenantId, taxCaseId, selectionId) => statusTaxCaseItrForm(sessionRunner, tenantId, taxCaseId, selectionId) },
+      computationInputs: { record: (envelope) => recordPersonalTaxComputationInputs(sessionRunner, envelope) },
+      computation: { preview: (tenantId, payload) => previewPersonalTaxComputation(sessionRunner, tenantId, payload), generate: (envelope) => generatePersonalTaxComputation(sessionRunner, envelope), show: (tenantId, taxCaseId, computationId) => showPersonalTaxComputation(sessionRunner, tenantId, taxCaseId, computationId), status: (tenantId, taxCaseId, computationId) => statusPersonalTaxComputation(sessionRunner, tenantId, taxCaseId, computationId), approve: (envelope) => approvePersonalTaxComputation(sessionRunner, envelope) },
     },
-    taxAuthority: { pack: { register: (envelope) => registerPersonalTaxAuthorityPack(sessionRunner, envelope), verify: (envelope) => verifyPersonalTaxAuthorityPack(sessionRunner, envelope), reject: (envelope) => rejectPersonalTaxAuthorityPack(sessionRunner, envelope), show: (packId) => showPersonalTaxAuthorityPack(sessionRunner, packId) } },
+    taxAuthority: { pack: { register: (envelope) => registerPersonalTaxAuthorityPack(sessionRunner, envelope), verify: (envelope) => verifyPersonalTaxAuthorityPack(sessionRunner, envelope), reject: (envelope) => rejectPersonalTaxAuthorityPack(sessionRunner, envelope), show: (packId) => showPersonalTaxAuthorityPack(sessionRunner, packId) }, computationPack: { register: (envelope) => registerPersonalTaxComputationPack(sessionRunner, envelope), verify: (envelope) => verifyPersonalTaxComputationPack(sessionRunner, envelope), reject: (envelope) => rejectPersonalTaxComputationPack(sessionRunner, envelope), show: (packId) => showPersonalTaxComputationPack(sessionRunner, packId) } },
     fx: {
       currency: { register: (envelope) => registerCurrency(sessionRunner, envelope) },
       rate: { create: (envelope) => createFxRateSnapshot(sessionRunner, envelope) },

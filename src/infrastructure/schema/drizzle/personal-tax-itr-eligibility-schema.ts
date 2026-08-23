@@ -178,6 +178,7 @@ export const taxCaseItrFormSelections = sqliteTable(
     fkTenant: foreignKey({ columns: [table.tenantId], foreignColumns: [tenants.id] }).onDelete("no action"),
     fkCase: foreignKey({ columns: [table.taxCaseId, table.tenantId], foreignColumns: [taxCases.id, taxCases.tenantId] }).onDelete("no action"),
     fkEvaluation: foreignKey({ columns: [table.evaluationId, table.tenantId, table.taxCaseId], foreignColumns: [taxCaseItrEligibilityEvaluations.id, taxCaseItrEligibilityEvaluations.tenantId, taxCaseItrEligibilityEvaluations.taxCaseId] }).onDelete("no action"),
+    uqScopeKey: uniqueIndex("uq_tax_case_itr_form_selections_id_scope").on(table.id, table.tenantId, table.taxCaseId),
     uqRequest: uniqueIndex("uq_tax_case_itr_form_selections_request").on(table.tenantId, table.requestId),
     idxCase: index("idx_tax_case_itr_form_selections_case").on(table.tenantId, table.taxCaseId, table.createdAt, table.id),
     chkHashes: check("chk_tax_case_itr_form_selection_hashes", sql`length(${table.expectedEvaluationHash}) = 64 AND ${table.expectedEvaluationHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.packHash}) = 64 AND ${table.packHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.snapshotCandidateHash}) = 64 AND ${table.snapshotCandidateHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.worksheetOutputHash}) = 64 AND ${table.worksheetOutputHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.factSetHash}) = 64 AND ${table.factSetHash} NOT GLOB '*[^0-9a-f]*' AND length(${table.requestHash}) = 64 AND ${table.requestHash} NOT GLOB '*[^0-9a-f]*'`),
