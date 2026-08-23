@@ -32,6 +32,7 @@ import { createEmployee, getEmployee, listEmployees, createEmployeeProfile, crea
 import { createClaimant, getClaimant, listClaimants, createClaim as createExpenseClaim, submitClaim, reviewClaim as reviewExpenseClaim, postClaim, getClaim as getExpenseClaim, listClaims as listExpenseClaims, issueAdvance, getAdvance, listAdvances, repayAdvance, recordReimbursement, expenseRegister, expenseOpenItems, evidenceExceptions, type ClaimantCreatePayload, type ClaimantView, type ExpenseClaimCreatePayload, type ExpenseClaimSubmitPayload, type ExpenseClaimReviewPayload, type ExpenseClaimPostPayload, type ExpenseClaimView, type ExpenseAdvanceIssuePayload, type ExpenseAdvanceRepayPayload, type ExpenseAdvanceView, type ExpenseReimbursementPayload, type ExpenseRegisterRow, type ExpenseOpenItems, type ExpenseEvidenceException } from "./services/expense-claims-service.ts";
 import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot as createComplianceRuleSnapshot, getRuleSnapshot, listRuleSnapshots, createDeadlineSnapshot, getDeadlineSnapshot, listDeadlineSnapshots, createRulePredecessor, evaluateApplicability, getApplicabilityDecision, listApplicabilityDecisions, generateObligation, getObligation, listObligations, calendar, attachArtifact, recordObligationEvent, complianceStatus, type ComplianceEnvelope, type ComplianceFactProfileCreatePayload, type ComplianceRuleCreatePayload, type ComplianceDeadlineCreatePayload, type CompliancePredecessorCreatePayload, type ComplianceApplicabilityPayload, type ComplianceGeneratePayload, type ComplianceArtifactAttachPayload, type ComplianceEventPayload, type ObligationStatus } from "./services/compliance-obligations-service.ts";
 import { PeriodCloseService, type PeriodClosePayload, type PeriodReopenPayload, type PeriodPlan, type PeriodEventResult } from "./services/period-close-service.ts";
+import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
 
 /**
  * Read-only tenant operations
@@ -65,6 +66,12 @@ export interface AccountReadOperations {
 export interface TenantCommands {
   create(envelope: CommandEnvelope<TenantCreatePayload>): Promise<CommandResult<TenantCreateResult>>;
   activate(envelope: CommandEnvelope<TenantActivatePayload>): Promise<CommandResult<TenantActivateResult>>;
+}
+
+export interface TenantPanOperations {
+  set(envelope: CommandEnvelope<TenantPanSetPayload>): Promise<CommandResult<TenantPanSetResult>>;
+  get(tenantId: TenantId): Promise<TenantPanProfileView | null>;
+  reveal(tenantId: TenantId): Promise<TenantPanReveal>;
 }
 
 /**
@@ -207,7 +214,7 @@ export interface PeriodCloseOperations {
  * No raw service mutators or persistence handles escape.
  */
 export type PublicApplicationFacade = {
-  tenant: TenantReadOperations & TenantCommands;
+  tenant: TenantReadOperations & TenantCommands & { pan: TenantPanOperations };
   bookSet: BookSetReadOperations & BookSetCommands;
   account: AccountReadOperations;
   bookSetScope: BookSetScopeOperations;
@@ -252,6 +259,11 @@ export function createPublicFacade(
       listActiveTenants: () => tenantService.listActiveTenants(),
       create: (envelope: CommandEnvelope<TenantCreatePayload>) => executeTenantCreate(sessionRunner, envelope),
       activate: (envelope: CommandEnvelope<TenantActivatePayload>) => executeTenantActivate(sessionRunner, envelope),
+      pan: {
+        set: (envelope: CommandEnvelope<TenantPanSetPayload>) => executeTenantPanSet(sessionRunner, envelope),
+        get: (tenantId: TenantId) => getTenantPanProfile(sessionRunner, tenantId),
+        reveal: (tenantId: TenantId) => revealTenantPan(sessionRunner, tenantId),
+      },
     },
     bookSet: {
       getDefault: (tenantId: TenantId) => bookSetService.getDefault(tenantId),

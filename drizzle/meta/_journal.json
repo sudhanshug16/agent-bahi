@@ -71,6 +71,13 @@
       "when": 1787484703509,
       "tag": "0018_period_close_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787486259302,
+      "tag": "0019_tenant_pan_v1",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,9 @@ export {
   databaseControl,
 } from "./foundation-schema";
 
+// Tenant PAN V1
+export { tenantPanProfiles } from "./tenant-pan-schema";
+
 // Ledger schema
 export { journalEntries, journalLines } from "./ledger-schema";
 

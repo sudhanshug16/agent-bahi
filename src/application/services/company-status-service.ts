@@ -38,6 +38,8 @@ export interface CompanyStatusResult {
     name: string;
     kind: string;
     lifecycle: string;
+    hasPan: boolean;
+    maskedPan?: string;
   };
   asOfDate: string;
   summaries: CompanyStatusBookSetSummary[];
@@ -595,6 +597,7 @@ export class CompanyStatusService {
     return this.sessionRunner.withBusinessSession("read", async (session) => {
       const tenant = await selectTenant(session, input.tenantId);
       const tenantId = String(tenant.id);
+      const panProfile = await session.querySingle("SELECT masked_display FROM tenant_pan_profiles WHERE tenant_id = ?", [tenantId]);
       const bookSets = await selectBookSets(session, tenantId, input.bookSetId);
       const summaries: CompanyStatusBookSetSummary[] = [];
       for (const bookSet of bookSets) {
@@ -627,7 +630,7 @@ export class CompanyStatusService {
           currentDataFormatVersion: compatibility.currentDataFormatVersion ?? compatibility.requiredDataFormatVersion,
           requiredDataFormatVersion: compatibility.requiredDataFormatVersion,
         },
-        selectedTenant: { tenantId, name: String(tenant.name), kind: String(tenant.kind), lifecycle: String(tenant.lifecycle) },
+        selectedTenant: { tenantId, name: String(tenant.name), kind: String(tenant.kind), lifecycle: String(tenant.lifecycle), hasPan: !!panProfile, ...(panProfile ? { maskedPan: String(panProfile.masked_display) } : {}) },
         asOfDate,
         summaries,
         issues,

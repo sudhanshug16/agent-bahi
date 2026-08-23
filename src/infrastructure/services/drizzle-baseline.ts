@@ -27,8 +27,9 @@ export const DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID = "0015_expense_claims_v1" a
 export const DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID = "0016_gst_return_readiness_v1" as const;
 export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID = "0017_compliance_obligations_v1" as const;
 export const DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID = "0018_period_close_v1" as const;
+export const DRIZZLE_TENANT_PAN_V1_MIGRATION_ID = "0019_tenant_pan_v1" as const;
 /** Backwards-compatible name for the current official Drizzle migration. */
-export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID;
+export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_TENANT_PAN_V1_MIGRATION_ID;
 
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -50,7 +51,8 @@ const expenseClaimsEntry = officialJournal.entries?.find((entry) => entry.tag ==
 const gstReturnReadinessEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID);
 const complianceObligationsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID);
 const periodCloseEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID);
-if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when) || !payrollEntry || !Number.isSafeInteger(payrollEntry.when) || !expenseClaimsEntry || !Number.isSafeInteger(expenseClaimsEntry.when) || !gstReturnReadinessEntry || !Number.isSafeInteger(gstReturnReadinessEntry.when) || !complianceObligationsEntry || !Number.isSafeInteger(complianceObligationsEntry.when) || !periodCloseEntry || !Number.isSafeInteger(periodCloseEntry.when)) {
+const tenantPanEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_TENANT_PAN_V1_MIGRATION_ID);
+if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when) || !payrollEntry || !Number.isSafeInteger(payrollEntry.when) || !expenseClaimsEntry || !Number.isSafeInteger(expenseClaimsEntry.when) || !gstReturnReadinessEntry || !Number.isSafeInteger(gstReturnReadinessEntry.when) || !complianceObligationsEntry || !Number.isSafeInteger(complianceObligationsEntry.when) || !periodCloseEntry || !Number.isSafeInteger(periodCloseEntry.when) || !tenantPanEntry || !Number.isSafeInteger(tenantPanEntry.when)) {
   throw new Error("Official Drizzle baseline journal entry is missing or malformed");
 }
 if (!gstEntry || !Number.isSafeInteger(gstEntry.when) || !tdsEntry || !Number.isSafeInteger(tdsEntry.when) || !currentEntry || !Number.isSafeInteger(currentEntry.when)) {
@@ -96,9 +98,13 @@ export const DRIZZLE_PERIOD_CLOSE_V1_HASH = createHash("sha256")
   .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID}.sql`)))
   .digest("hex");
 export const DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT = periodCloseEntry.when;
+export const DRIZZLE_TENANT_PAN_V1_HASH = createHash("sha256")
+  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_TENANT_PAN_V1_MIGRATION_ID}.sql`)))
+  .digest("hex");
+export const DRIZZLE_TENANT_PAN_V1_CREATED_AT = tenantPanEntry.when;
 export const DRIZZLE_COMPLIANCE_HASH = DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH;
-export const DRIZZLE_GST_HASH = DRIZZLE_PERIOD_CLOSE_V1_HASH;
-export const DRIZZLE_GST_CREATED_AT = DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT;
+export const DRIZZLE_GST_HASH = DRIZZLE_TENANT_PAN_V1_HASH;
+export const DRIZZLE_GST_CREATED_AT = DRIZZLE_TENANT_PAN_V1_CREATED_AT;
 
 export interface DrizzleControlInitializationOptions {
   readonly cliVersion: string;
@@ -126,6 +132,7 @@ export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
     { id: null, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH, createdAt: DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT },
     { id: null, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, createdAt: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_CREATED_AT },
     { id: null, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH, createdAt: DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT },
+    { id: null, hash: DRIZZLE_TENANT_PAN_V1_HASH, createdAt: DRIZZLE_TENANT_PAN_V1_CREATED_AT },
   ];
 }
 

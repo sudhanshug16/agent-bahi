@@ -42,6 +42,47 @@ describe("shared CLI and stdio MCP transport", () => {
     }
   });
 
+  it("exposes tenant PAN through CLI/MCP with masked default, explicit reveal, and sensitive-output help", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-bahi-pan-transport-"));
+    const db = join(dir, "books.sqlite");
+    let transport: StdioClientTransport | undefined;
+    const pan = "ABCDE1234F";
+    try {
+      expect((await cli(db, ["database.init", "--json"])).code).toBe(0);
+      const created = json((await cli(db, ["operations", "run", "tenant.create", "--input", "-", "--json"], {
+        schemaVersion: 1, tenantId: "pan-transport", requestId: "pan-transport-create", actor: { kind: "HUMAN", id: "test" }, source: "CLI", reason: "create", payload: { kind: "COMPANY", name: "PAN Transport" },
+      })).stdout);
+      const tenantId = String((created.result as { tenantId: string }).tenantId);
+      const set = await cli(db, ["operations", "run", "tenant.pan.set", "--input", "-", "--json"], {
+        schemaVersion: 1, tenantId, requestId: "pan-transport-set", actor: { kind: "HUMAN", id: "test" }, source: "CLI", reason: "set PAN", payload: { pan },
+      });
+      expect(set.code).toBe(0);
+      expect(set.stdout).not.toContain(pan);
+      expect(set.stdout).toContain("******234F");
+      const help = json((await cli(db, ["operations", "describe", "tenant.pan.reveal", "--json"])).stdout);
+      expect(JSON.stringify(help)).toContain("sensitive");
+      expect((await cli(db, ["operations", "describe", "tenant.pan.set", "--json"])).stdout).not.toContain(pan);
+
+      transport = new StdioClientTransport({ command: process.execPath, args: [join(root, "src/mcp.ts"), "--database", db], cwd: root, stderr: "pipe" });
+      const client = new Client({ name: "agent-bahi-pan-test", version: "1" }, { capabilities: {} });
+      await client.connect(transport);
+      const tools = await client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["tenant.pan.get", "tenant.pan.reveal", "tenant.pan.set"]));
+      expect(tools.tools.find((tool) => tool.name === "tenant.pan.reveal")?.description).toContain("sensitive");
+      const masked = await client.callTool({ name: "tenant.pan.get", arguments: { tenantId } });
+      expect(masked.isError).not.toBe(true);
+      expect(JSON.stringify(masked.structuredContent)).not.toContain(pan);
+      expect(JSON.stringify(masked.structuredContent)).toContain("******234F");
+      const revealed = await client.callTool({ name: "tenant.pan.reveal", arguments: { tenantId } });
+      expect(revealed.isError).not.toBe(true);
+      expect(JSON.stringify(revealed.structuredContent)).toContain(pan);
+      await client.close();
+    } finally {
+      await transport?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reports an empty database without creating or mutating it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "agent-bahi-transport-"));
     const db = join(dir, "empty.sqlite");

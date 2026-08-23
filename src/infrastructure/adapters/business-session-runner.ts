@@ -19,6 +19,7 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "audit_records",
   "idempotency_records",
   "tenant_creation_requests",
+  "tenant_pan_profiles",
   "journal_entries",
   "journal_lines",
   "parties",

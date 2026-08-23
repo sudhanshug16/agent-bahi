@@ -10,6 +10,7 @@ export type ActorKind = "HUMAN" | "AGENT" | "SYSTEM";
 export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
 export type BookSetCommandAction = "bookset.create" | "bookset.set-default" | "bookset.archive" | "tenant.activate";
 export type TenantCommandAction = "tenant.create";
+export type TenantPanCommandAction = "tenant.pan.set";
 
 export interface Actor {
   kind: ActorKind;
@@ -48,6 +49,13 @@ export interface TenantCreatePayload {
   kind: "COMPANY" | "INDIVIDUAL";
   name: string;
   baseCurrency?: string;
+}
+
+export interface TenantPanSetPayload {
+  pan: string;
+  expectedCurrentHash?: string;
+  reason?: string;
+  confirm?: boolean;
 }
 
 export interface CommandResult<T> {
