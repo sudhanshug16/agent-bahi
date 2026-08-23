@@ -13,7 +13,7 @@ import {
 import { DATABASE_CONTROL_CHECKSUM } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
-import { DRIZZLE_TENANT_PAN_V1_HASH, officialDrizzleJournal, validateOfficialDrizzleJournal } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_TENANT_PAN_V1_HASH, OFFICIAL_DRIZZLE_MIGRATIONS, officialDrizzleJournal, validateOfficialDrizzleJournal } from "../../src/infrastructure/services/drizzle-baseline.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import {
@@ -73,6 +73,20 @@ describe("SQLite migration catalog", () => {
     }
     expect(CURRENT_SCHEMA_MANIFEST.migrations.map((migration) => migration.id)).toEqual(MIGRATION_CATALOG.map((entry) => entry.id));
     expect(CURRENT_SCHEMA_MANIFEST.migrations.every((migration, index) => migration.checksum === (MIGRATION_CATALOG[index].id === "0002-database-control" ? DATABASE_CONTROL_CHECKSUM : computeSqliteMigrationChecksum(MIGRATION_CATALOG[index].sqlite)))).toBe(true);
+  });
+
+  it("keeps Drizzle SQL and backup/catalog checkpoint authority centralized", async () => {
+    expect(OFFICIAL_DRIZZLE_MIGRATIONS).toHaveLength(officialDrizzleJournal().length);
+    expect(OFFICIAL_DRIZZLE_MIGRATIONS.map((migration) => migration.order)).toEqual([...Array(13)].map((_, index) => index + 1));
+    expect(OFFICIAL_DRIZZLE_MIGRATIONS.every((migration) => migration.sql.length > 0 && migration.hash.length === 64)).toBe(true);
+    const validator = await readFile(join(import.meta.dir, "../../src/infrastructure/services/sqlite-catalog-validator.ts"), "utf8");
+    const backup = await readFile(join(import.meta.dir, "../../src/infrastructure/services/backup-service.ts"), "utf8");
+    expect(validator).not.toContain("DRIZZLE_MIGRATION_IDS");
+    expect(validator).not.toMatch(/readFileSync\([^)]*drizzle/);
+    expect(backup).not.toContain("MIGRATION_CATALOG");
+    expect(backup).not.toContain("MIGRATION_SCHEMA_SQLITE");
+    expect(backup).not.toMatch(/DRIZZLE_[A-Z0-9_]+_MIGRATION_ID/);
+    expect(backup).not.toMatch(/DRIZZLE_[A-Z0-9_]+_HASH/);
   });
 
   it("keeps ordinary construction and status inspection non-mutating, then upgrades explicitly", async () => {

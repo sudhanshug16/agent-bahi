@@ -64,7 +64,7 @@ async function replay(session: BusinessSession, tenantId: string, requestId: str
   return { resultJson, resultHash, replayed: true };
 }
 
-async function eligibleBookSets(session: BusinessSession, tenantId: string, selected?: string[]): Promise<Array<{ id: string; kind: "PERSONAL" | "PROPRIETORSHIP"; revision: number }>> {
+async function eligibleBookSets(session: BusinessSession, tenantId: string, selected?: string[], requireExact = false): Promise<Array<{ id: string; kind: "PERSONAL" | "PROPRIETORSHIP"; revision: number }>> {
   const tenant = await session.querySingle("SELECT kind FROM tenants WHERE id = ?", [tenantId]);
   if (!tenant) throw new DomainError("TENANT_NOT_FOUND", `Tenant not found: ${tenantId}`);
   if (String(tenant.kind) !== "INDIVIDUAL") throw new DomainError("TAX_CASE_TENANT_KIND_FORBIDDEN", "TaxCase membership requires an INDIVIDUAL tenant");
@@ -76,6 +76,9 @@ async function eligibleBookSets(session: BusinessSession, tenantId: string, sele
   if (selectedIds && !selectedIds.has(String(activePersonal[0]!.id))) throw new DomainError("TAX_CASE_PERSONAL_BOOKSET_REQUIRED", "Selected TaxCase BookSets must include the active PERSONAL BookSet");
   const rows = await session.query("SELECT bs.id, bs.kind, bs.lifecycle, rev.revision FROM book_sets bs JOIN book_set_ledger_revisions rev ON rev.tenant_id = bs.tenant_id AND rev.book_set_id = bs.id WHERE bs.tenant_id = ? AND (bs.kind = 'PERSONAL' OR bs.kind = 'PROPRIETORSHIP') ORDER BY bs.id", [tenantId]);
   const eligible = rows.rows.filter((row) => String(row.lifecycle) === "ACTIVE");
+  if (selectedIds && requireExact && (selectedIds.size !== eligible.length || eligible.some((row) => !selectedIds.has(String(row.id))))) {
+    throw new DomainError("TAX_CASE_BOOKSET_SET_MISMATCH", "TaxCase BookSet IDs must exactly match the active PERSONAL and PROPRIETORSHIP BookSets");
+  }
   const result = eligible.filter((row) => !selectedIds || selectedIds.has(String(row.id)));
   if (selectedIds && result.length !== selectedIds.size) throw new DomainError("TAX_CASE_BOOKSET_INELIGIBLE", "Selected BookSets must be active PERSONAL or PROPRIETORSHIP BookSets owned by the tenant");
   return result.map((row) => ({ id: String(row.id), kind: String(row.kind) as "PERSONAL" | "PROPRIETORSHIP", revision: Number(row.revision) }));
@@ -92,8 +95,10 @@ async function appendMembership(session: BusinessSession, tenantId: string, taxC
   const prior = await session.querySingle("SELECT version FROM tax_case_membership_versions WHERE tenant_id = ? AND tax_case_id = ? ORDER BY version DESC LIMIT 1", [tenantId, taxCaseId]);
   const version = prior ? Number(prior.version) + 1 : 1; const versionId = randomUUID(); const now = new Date().toISOString();
   const members = bookSets.map((bookSet) => ({ bookSetId: bookSet.id, kind: bookSet.kind, ledgerRevision: bookSet.revision }));
-  await session.execute("INSERT INTO tax_case_membership_versions (id, tax_case_id, tenant_id, version, membership_hash, created_at, created_by_actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)", [versionId, taxCaseId, tenantId, version, computeResultHash(canonicalJson(members)), now, actorId]);
+  const membershipHash = computeResultHash(canonicalJson(members));
+  await session.execute("INSERT INTO tax_case_membership_versions (id, tax_case_id, tenant_id, version, membership_hash, seal_state, membership_count, created_at, created_by_actor_id) VALUES (?, ?, ?, ?, ?, 'OPEN', 0, ?, ?)", [versionId, taxCaseId, tenantId, version, membershipHash, now, actorId]);
   for (const bookSet of bookSets) await session.execute("INSERT INTO tax_case_memberships (id, tax_case_id, tenant_id, membership_version_id, version, book_set_id, ledger_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), taxCaseId, tenantId, versionId, version, bookSet.id, bookSet.revision, now]);
+  await session.execute("UPDATE tax_case_membership_versions SET seal_state = 'SEALED', membership_count = ? WHERE id = ? AND tax_case_id = ? AND tenant_id = ? AND seal_state = 'OPEN'", [members.length, versionId, taxCaseId, tenantId]);
   return { version, versionId, members };
 }
 
@@ -102,7 +107,7 @@ export async function createTaxCase(sessionRunner: BusinessSessionRunner, envelo
   return sessionRunner.withBusinessSession("write", async (session) => {
     const prior = await replay(session, envelope.tenantId, envelope.requestId, requestHash); if (prior) return prior;
     if (await session.querySingle("SELECT id FROM tax_cases WHERE id = ? AND tenant_id = ?", [payload.taxCaseId, envelope.tenantId])) throw new DomainError("TAX_CASE_EXISTS", "taxCaseId already exists for this tenant");
-    const eligible = await eligibleBookSets(session, envelope.tenantId, payload.bookSetIds); const now = new Date().toISOString();
+    const eligible = await eligibleBookSets(session, envelope.tenantId, payload.bookSetIds, true); const now = new Date().toISOString();
     const pendingJson = canonicalJson({ status: "CREATING" });
     await session.execute("INSERT INTO tax_cases (id, tenant_id, financial_year, tax_period, filing_trigger, case_sequence, lifecycle, request_id, request_hash, result_json, result_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?)", [payload.taxCaseId, envelope.tenantId, payload.financialYear, payload.taxPeriod, payload.filingTrigger, payload.caseSequence ?? 1, envelope.requestId, requestHash, pendingJson, computeResultHash(pendingJson), now, now]);
     const membership = await appendMembership(session, envelope.tenantId, payload.taxCaseId, envelope.actor.id, eligible);
@@ -128,8 +133,28 @@ export async function taxCaseStatus(sessionRunner: BusinessSessionRunner, tenant
   return sessionRunner.withBusinessSession("read", async (session) => {
     const taxCase = await session.querySingle("SELECT id, tenant_id, financial_year, tax_period, filing_trigger, case_sequence, lifecycle FROM tax_cases WHERE id = ? AND tenant_id = ?", [taxCaseId, tenantId]); if (!taxCase) throw new DomainError("TAX_CASE_NOT_FOUND", "TaxCase does not belong to tenant");
     const version = await session.querySingle("SELECT id, version FROM tax_case_membership_versions WHERE tax_case_id = ? AND tenant_id = ? ORDER BY version DESC LIMIT 1", [taxCaseId, tenantId]); if (!version) throw new DomainError("TAX_CASE_MEMBERSHIP_MISSING", "TaxCase has no membership version");
-    const rows = await session.query("SELECT m.book_set_id, m.ledger_revision, bs.kind, rev.revision AS current_ledger_revision FROM tax_case_memberships m JOIN book_sets bs ON bs.id = m.book_set_id AND bs.tenant_id = m.tenant_id JOIN book_set_ledger_revisions rev ON rev.book_set_id = m.book_set_id AND rev.tenant_id = m.tenant_id WHERE m.tax_case_id = ? AND m.tenant_id = ? AND m.version = ? ORDER BY m.book_set_id", [taxCaseId, tenantId, Number(version.version)]);
-    const bookSets = rows.rows.map((row) => { const captured = Number(row.ledger_revision); const current = Number(row.current_ledger_revision); const stale = captured !== current; return { bookSetId: String(row.book_set_id), kind: String(row.kind) as "PERSONAL" | "PROPRIETORSHIP", capturedLedgerRevision: captured, currentLedgerRevision: current, status: stale ? "STALE" as const : "CURRENT" as const, reasons: stale ? ["LEDGER_REVISION_ADVANCED"] : [] }; }); const stale = bookSets.some((bookSet) => bookSet.status === "STALE");
-    return { taxCaseId: String(taxCase.id), tenantId: String(taxCase.tenant_id), financialYear: String(taxCase.financial_year), taxPeriod: String(taxCase.tax_period), filingTrigger: String(taxCase.filing_trigger), caseSequence: Number(taxCase.case_sequence), lifecycle: String(taxCase.lifecycle) as "OPEN" | "ARCHIVED", membershipVersion: Number(version.version), membershipVersionId: String(version.id), status: stale ? "STALE" : "CURRENT", reasons: stale ? ["MEMBER_LEDGER_REVISION_ADVANCED"] : [], bookSets };
+    const rows = await session.query("SELECT m.book_set_id, m.ledger_revision, bs.kind, bs.lifecycle, rev.revision AS current_ledger_revision FROM tax_case_memberships m LEFT JOIN book_sets bs ON bs.id = m.book_set_id AND bs.tenant_id = m.tenant_id LEFT JOIN book_set_ledger_revisions rev ON rev.book_set_id = m.book_set_id AND rev.tenant_id = m.tenant_id WHERE m.tax_case_id = ? AND m.tenant_id = ? AND m.version = ? ORDER BY m.book_set_id", [taxCaseId, tenantId, Number(version.version)]);
+    const currentEligibleQuery = await session.query("SELECT bs.id, bs.kind, bs.lifecycle FROM book_sets bs WHERE bs.tenant_id = ? AND bs.lifecycle = 'ACTIVE' ORDER BY bs.id", [tenantId]);
+    const currentEligibleRows = { rows: currentEligibleQuery.rows.filter((row) => String(row.kind) === "PERSONAL" || String(row.kind) === "PROPRIETORSHIP") };
+    const capturedIds = new Set(rows.rows.map((row) => String(row.book_set_id)));
+    const currentEligibleIds = new Set(currentEligibleRows.rows.map((row) => String(row.id)));
+    const added = [...currentEligibleIds].some((id) => !capturedIds.has(id));
+    const archived = rows.rows.some((row) => String(row.lifecycle ?? "") === "ARCHIVED");
+    const removed = rows.rows.some((row) => row.lifecycle == null);
+    const membershipReasons = [
+      ...(added ? ["ELIGIBLE_BOOKSET_ADDED"] : []),
+      ...(archived ? ["ELIGIBLE_BOOKSET_ARCHIVED"] : []),
+      ...(removed ? ["ELIGIBLE_BOOKSET_REMOVED"] : []),
+      ...(!added && !archived && !removed && rows.rows.length !== currentEligibleRows.rows.length ? ["ELIGIBLE_BOOKSET_MEMBERSHIP_CHANGED"] : []),
+    ];
+    const bookSets = rows.rows.map((row) => {
+      const captured = Number(row.ledger_revision);
+      const current = row.current_ledger_revision == null ? captured : Number(row.current_ledger_revision);
+      const reasons = [...(captured !== current ? ["LEDGER_REVISION_ADVANCED"] : []), ...(String(row.lifecycle ?? "") === "ARCHIVED" ? ["BOOKSET_ARCHIVED"] : []), ...(row.lifecycle == null ? ["BOOKSET_REMOVED"] : [])];
+      return { bookSetId: String(row.book_set_id), kind: String(row.kind) as "PERSONAL" | "PROPRIETORSHIP", capturedLedgerRevision: captured, currentLedgerRevision: current, status: reasons.length > 0 ? "STALE" as const : "CURRENT" as const, reasons };
+    });
+    const reasons = [...membershipReasons, ...(bookSets.some((bookSet) => bookSet.reasons.includes("LEDGER_REVISION_ADVANCED")) ? ["MEMBER_LEDGER_REVISION_ADVANCED"] : [])];
+    const stale = reasons.length > 0;
+    return { taxCaseId: String(taxCase.id), tenantId: String(taxCase.tenant_id), financialYear: String(taxCase.financial_year), taxPeriod: String(taxCase.tax_period), filingTrigger: String(taxCase.filing_trigger), caseSequence: Number(taxCase.case_sequence), lifecycle: String(taxCase.lifecycle) as "OPEN" | "ARCHIVED", membershipVersion: Number(version.version), membershipVersionId: String(version.id), status: stale ? "STALE" : "CURRENT", reasons, bookSets };
   });
 }

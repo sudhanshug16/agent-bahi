@@ -9,6 +9,7 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
+import { officialDrizzleJournal } from "../../src/infrastructure/services/drizzle-baseline.ts";
 import { initializeSqliteDatabase } from "../../src/application/application.ts";
 import { CORE_MIGRATIONS } from "../../src/infrastructure/schema/core-schema.ts";
 import { DATABASE_CONTROL_MIGRATIONS } from "../../src/infrastructure/schema/database-control-schema.ts";
@@ -93,7 +94,7 @@ describe("SQLite BackupService", () => {
     const restored = new BunDatabase(restoredPath, { readonly: true });
     try {
       expect(() => restored.query("SELECT COUNT(*) FROM schema_migrations").get()).toThrow();
-      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: 12 });
+      expect(restored.query("SELECT COUNT(*) AS count FROM __drizzle_migrations").get()).toEqual({ count: officialDrizzleJournal().length });
     } finally { restored.close(); }
   });
 

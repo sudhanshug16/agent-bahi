@@ -56,6 +56,8 @@ export const taxCaseMembershipVersions = sqliteTable(
     tenantId: text("tenant_id").notNull(),
     version: integer("version").notNull(),
     membershipHash: text("membership_hash").notNull(),
+    sealState: text("seal_state").notNull().default("OPEN"),
+    membershipCount: integer("membership_count").notNull().default(0),
     createdAt: text("created_at").notNull(),
     createdByActorId: text("created_by_actor_id").notNull(),
   },
@@ -66,6 +68,8 @@ export const taxCaseMembershipVersions = sqliteTable(
     idxCase: index("idx_tax_case_membership_versions_case").on(table.tenantId, table.taxCaseId, table.version),
     chkVersion: check("chk_tax_case_membership_version", sql`typeof(${table.version}) = 'integer' AND ${table.version} >= 1`),
     chkHash: check("chk_tax_case_membership_hash", sql`length(${table.membershipHash}) = 64 AND ${table.membershipHash} NOT GLOB '*[^0-9a-f]*'`),
+    chkSealState: check("chk_tax_case_membership_seal_state", sql`${table.sealState} IN ('OPEN', 'SEALED')`),
+    chkMembershipCount: check("chk_tax_case_membership_count", sql`typeof(${table.membershipCount}) = 'integer' AND ${table.membershipCount} >= 0`),
   }),
 );
 

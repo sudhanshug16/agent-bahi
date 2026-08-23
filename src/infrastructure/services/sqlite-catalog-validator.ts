@@ -1,25 +1,8 @@
 import { Database as BunDatabase } from "bun:sqlite";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { SqliteSchemaManifest } from "../schema/migration-catalog.ts";
 import { MIGRATION_CATALOG } from "../schema/migration-catalog.ts";
 import { MIGRATION_SCHEMA_SQLITE, RECOVERY_AUDIT_SCHEMA_SQLITE } from "./migration-service.ts";
-import {
-  DRIZZLE_BASELINE_MIGRATION_ID,
-  DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
-  DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID,
-  DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID,
-  DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID,
-  DRIZZLE_FIXED_ASSETS_MIGRATION_ID,
-  DRIZZLE_FX_V1_MIGRATION_ID,
-  DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID,
-  DRIZZLE_GST_V1_MIGRATION_ID,
-  DRIZZLE_PAYROLL_V1_MIGRATION_ID,
-  DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID,
-  DRIZZLE_TDS_TCS_MIGRATION_ID,
-  DRIZZLE_TENANT_PAN_V1_MIGRATION_ID,
-  DRIZZLE_JOURNAL_DDL,
-} from "./drizzle-baseline.ts";
+import { DRIZZLE_JOURNAL_DDL, OFFICIAL_DRIZZLE_MIGRATIONS } from "./drizzle-baseline.ts";
 
 export type SqliteCatalogRow = {
   type: string;
@@ -37,28 +20,6 @@ export type DrizzleCatalogExpectation = {
 export type SqliteCatalogExpectation =
   | { readonly kind: "legacy" }
   | DrizzleCatalogExpectation;
-
-const DRIZZLE_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
-export const DRIZZLE_MIGRATION_IDS = [
-  DRIZZLE_BASELINE_MIGRATION_ID,
-  DRIZZLE_GST_V1_MIGRATION_ID,
-  DRIZZLE_TDS_TCS_MIGRATION_ID,
-  DRIZZLE_FIXED_ASSETS_MIGRATION_ID,
-  DRIZZLE_FX_V1_MIGRATION_ID,
-  DRIZZLE_PAYROLL_V1_MIGRATION_ID,
-  DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID,
-  DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID,
-  DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID,
-  DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID,
-  DRIZZLE_TENANT_PAN_V1_MIGRATION_ID,
-  DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID,
-  DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID,
-] as const;
-
-const drizzleSql = new Map(DRIZZLE_MIGRATION_IDS.map((id) => [
-  id,
-  readFileSync(join(DRIZZLE_DIRECTORY, `${id}.sql`), "utf8"),
-]));
 
 function normalizeDdl(sql: string | null | undefined): string {
   return String(sql ?? "")
@@ -119,7 +80,7 @@ export function expectedSqliteCatalog(manifest: SqliteSchemaManifest, expectatio
       const ids = new Set(manifest.migrations.map((migration) => migration.id));
       for (const entry of MIGRATION_CATALOG) if (ids.has(entry.id)) memory.exec(entry.sqlite);
     } else {
-      if (!Number.isSafeInteger(expectation.journalLength) || expectation.journalLength < 1 || expectation.journalLength > DRIZZLE_MIGRATION_IDS.length) {
+      if (!Number.isSafeInteger(expectation.journalLength) || expectation.journalLength < 1 || expectation.journalLength > OFFICIAL_DRIZZLE_MIGRATIONS.length) {
         throw new Error("Drizzle journal length is outside the official range");
       }
       if (expectation.kind === "bridged") {
@@ -132,7 +93,7 @@ export function expectedSqliteCatalog(manifest: SqliteSchemaManifest, expectatio
       // A sanctioned bridge seeds the baseline journal row without replaying
       // 0009: its v8 custom DDL is the already-created baseline.
       const start = expectation.kind === "bridged" ? 1 : 0;
-      for (const id of DRIZZLE_MIGRATION_IDS.slice(start, expectation.journalLength)) splitAndExecute(memory, drizzleSql.get(id)!);
+      for (const migration of OFFICIAL_DRIZZLE_MIGRATIONS.slice(start, expectation.journalLength)) splitAndExecute(memory, migration.sql);
     }
     return catalog(memory);
   } finally {

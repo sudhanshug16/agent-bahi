@@ -47,11 +47,15 @@ CREATE TABLE `tax_case_membership_versions` (
 	`tenant_id` text NOT NULL,
 	`version` integer NOT NULL,
 	`membership_hash` text NOT NULL,
+	`seal_state` text DEFAULT 'OPEN' NOT NULL,
+	`membership_count` integer DEFAULT 0 NOT NULL,
 	`created_at` text NOT NULL,
 	`created_by_actor_id` text NOT NULL,
 	FOREIGN KEY (`tax_case_id`,`tenant_id`) REFERENCES `tax_cases`(`id`,`tenant_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "chk_tax_case_membership_version" CHECK(typeof("tax_case_membership_versions"."version") = 'integer' AND "tax_case_membership_versions"."version" >= 1),
-	CONSTRAINT "chk_tax_case_membership_hash" CHECK(length("tax_case_membership_versions"."membership_hash") = 64 AND "tax_case_membership_versions"."membership_hash" NOT GLOB '*[^0-9a-f]*')
+	CONSTRAINT "chk_tax_case_membership_hash" CHECK(length("tax_case_membership_versions"."membership_hash") = 64 AND "tax_case_membership_versions"."membership_hash" NOT GLOB '*[^0-9a-f]*'),
+	CONSTRAINT "chk_tax_case_membership_seal_state" CHECK("tax_case_membership_versions"."seal_state" IN ('OPEN', 'SEALED')),
+	CONSTRAINT "chk_tax_case_membership_count" CHECK(typeof("tax_case_membership_versions"."membership_count") = 'integer' AND "tax_case_membership_versions"."membership_count" >= 0)
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `uq_tax_case_membership_versions_case_version` ON `tax_case_membership_versions` (`tax_case_id`,`tenant_id`,`version`);
@@ -100,8 +104,27 @@ END;
 CREATE TRIGGER `tax_cases_no_delete` BEFORE DELETE ON `tax_cases`
 BEGIN SELECT RAISE(ABORT, 'tax cases are immutable'); END;
 --> statement-breakpoint
+CREATE TRIGGER `tax_cases_no_update` BEFORE UPDATE ON `tax_cases`
+WHEN NEW.id IS NOT OLD.id OR NEW.tenant_id IS NOT OLD.tenant_id
+  OR NEW.financial_year IS NOT OLD.financial_year OR NEW.tax_period IS NOT OLD.tax_period
+  OR NEW.filing_trigger IS NOT OLD.filing_trigger OR NEW.case_sequence IS NOT OLD.case_sequence
+  OR NEW.lifecycle IS NOT OLD.lifecycle OR NEW.request_id IS NOT OLD.request_id
+  OR NEW.request_hash IS NOT OLD.request_hash
+BEGIN SELECT RAISE(ABORT, 'tax case identity and request fields are immutable'); END;
+--> statement-breakpoint
 CREATE TRIGGER `tax_case_membership_versions_no_update` BEFORE UPDATE ON `tax_case_membership_versions`
-BEGIN SELECT RAISE(ABORT, 'tax case membership versions are immutable'); END;
+WHEN OLD.seal_state <> 'OPEN' OR NEW.seal_state <> 'SEALED'
+  OR NEW.id IS NOT OLD.id OR NEW.tax_case_id IS NOT OLD.tax_case_id OR NEW.tenant_id IS NOT OLD.tenant_id
+  OR NEW.version IS NOT OLD.version OR NEW.membership_hash IS NOT OLD.membership_hash
+  OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by_actor_id IS NOT OLD.created_by_actor_id
+BEGIN
+  SELECT CASE WHEN NEW.membership_count <> (SELECT COUNT(*) FROM tax_case_memberships WHERE membership_version_id = NEW.id)
+    THEN RAISE(ABORT, 'tax case membership count must match before sealing') END;
+END;
+--> statement-breakpoint
+CREATE TRIGGER `tax_case_memberships_only_open` BEFORE INSERT ON `tax_case_memberships`
+WHEN NOT EXISTS (SELECT 1 FROM tax_case_membership_versions WHERE id = NEW.membership_version_id AND tax_case_id = NEW.tax_case_id AND tenant_id = NEW.tenant_id AND seal_state = 'OPEN')
+BEGIN SELECT RAISE(ABORT, 'tax case membership version is sealed'); END;
 --> statement-breakpoint
 CREATE TRIGGER `tax_case_membership_versions_no_delete` BEFORE DELETE ON `tax_case_membership_versions`
 BEGIN SELECT RAISE(ABORT, 'tax case membership versions are immutable'); END;

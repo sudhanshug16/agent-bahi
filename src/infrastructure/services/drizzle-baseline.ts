@@ -17,22 +17,6 @@ import type { MigrationSession } from "../../application/ports/persistence.ts";
 import { DomainError } from "../../core/types.ts";
 
 export const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations" as const;
-export const DRIZZLE_BASELINE_MIGRATION_ID = "0009_drizzle_v8_baseline" as const;
-export const DRIZZLE_GST_V1_MIGRATION_ID = "0010_gst_v1" as const;
-export const DRIZZLE_TDS_TCS_MIGRATION_ID = "0011_tds_tcs_v1" as const;
-export const DRIZZLE_FIXED_ASSETS_MIGRATION_ID = "0012_fixed_assets_v1" as const;
-export const DRIZZLE_FX_V1_MIGRATION_ID = "0013_fx_v1" as const;
-export const DRIZZLE_PAYROLL_V1_MIGRATION_ID = "0014_payroll_v1" as const;
-export const DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID = "0015_expense_claims_v1" as const;
-export const DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID = "0016_gst_return_readiness_v1" as const;
-export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID = "0017_compliance_obligations_v1" as const;
-export const DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID = "0018_period_close_v1" as const;
-export const DRIZZLE_TENANT_PAN_V1_MIGRATION_ID = "0019_tenant_pan_v1" as const;
-export const DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID = "0020_close_pack_v1" as const;
-export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID = "0021_personal_taxcase_foundation_v1" as const;
-/** Backwards-compatible name for the current official Drizzle migration. */
-export const DRIZZLE_GST_MIGRATION_ID = DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID;
-
 const DRIZZLE_MIGRATIONS_DIRECTORY = join(import.meta.dir, "../../..", "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
 \t\t\t\tid INTEGER PRIMARY KEY,
@@ -43,80 +27,100 @@ export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrat
 const officialJournal = JSON.parse(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, "meta", "_journal.json"), "utf8")) as {
   entries?: Array<{ idx: number; tag: string; when: number }>;
 };
-const officialEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_BASELINE_MIGRATION_ID);
-const gstEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_GST_V1_MIGRATION_ID);
-const tdsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_TDS_TCS_MIGRATION_ID);
-const currentEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_FIXED_ASSETS_MIGRATION_ID);
-const fxEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_FX_V1_MIGRATION_ID);
-const payrollEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_PAYROLL_V1_MIGRATION_ID);
-const expenseClaimsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID);
-const gstReturnReadinessEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID);
-const complianceObligationsEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID);
-const periodCloseEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID);
-const tenantPanEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_TENANT_PAN_V1_MIGRATION_ID);
-const closePackEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID);
-const personalTaxCaseEntry = officialJournal.entries?.find((entry) => entry.tag === DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID);
-if (!officialEntry || !Number.isSafeInteger(officialEntry.when) || !fxEntry || !Number.isSafeInteger(fxEntry.when) || !payrollEntry || !Number.isSafeInteger(payrollEntry.when) || !expenseClaimsEntry || !Number.isSafeInteger(expenseClaimsEntry.when) || !gstReturnReadinessEntry || !Number.isSafeInteger(gstReturnReadinessEntry.when) || !complianceObligationsEntry || !Number.isSafeInteger(complianceObligationsEntry.when) || !periodCloseEntry || !Number.isSafeInteger(periodCloseEntry.when) || !tenantPanEntry || !Number.isSafeInteger(tenantPanEntry.when) || !closePackEntry || !Number.isSafeInteger(closePackEntry.when) || !personalTaxCaseEntry || !Number.isSafeInteger(personalTaxCaseEntry.when)) {
-  throw new Error("Official Drizzle baseline journal entry is missing or malformed");
+
+export interface DrizzleMigrationDescriptor {
+  readonly id: string;
+  readonly order: number;
+  readonly createdAt: number;
+  readonly sql: string;
+  readonly hash: string;
 }
-if (!gstEntry || !Number.isSafeInteger(gstEntry.when) || !tdsEntry || !Number.isSafeInteger(tdsEntry.when) || !currentEntry || !Number.isSafeInteger(currentEntry.when)) {
-  throw new Error("Official Drizzle current journal entry is missing or malformed");
+
+const journalEntries = [...(officialJournal.entries ?? [])].sort((left, right) => left.idx - right.idx);
+if (journalEntries.length === 0 || journalEntries.some((entry, index) => entry.idx !== index || !/^\d{4}_[^\s]+$/.test(entry.tag) || !Number.isSafeInteger(entry.when))) {
+  throw new Error("Official Drizzle journal is missing or malformed");
 }
-export const DRIZZLE_BASELINE_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_BASELINE_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_BASELINE_CREATED_AT = officialEntry.when;
-export const DRIZZLE_GST_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_GST_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_GST_V1_CREATED_AT = gstEntry.when;
-export const DRIZZLE_TDS_TCS_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_TDS_TCS_MIGRATION_ID}.sql`)))
-    .digest("hex");
-export const DRIZZLE_TDS_TCS_CREATED_AT = tdsEntry.when;
-export const DRIZZLE_FIXED_ASSETS_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_FIXED_ASSETS_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_FIXED_ASSETS_CREATED_AT = currentEntry.when;
-export const DRIZZLE_FX_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_FX_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_FX_V1_CREATED_AT = fxEntry.when;
-export const DRIZZLE_PAYROLL_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_PAYROLL_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_PAYROLL_V1_CREATED_AT = payrollEntry.when;
-export const DRIZZLE_EXPENSE_CLAIMS_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT = expenseClaimsEntry.when;
-export const DRIZZLE_GST_RETURN_READINESS_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT = gstReturnReadinessEntry.when;
-export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_CREATED_AT = complianceObligationsEntry.when;
-export const DRIZZLE_PERIOD_CLOSE_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT = periodCloseEntry.when;
-export const DRIZZLE_TENANT_PAN_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_TENANT_PAN_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_TENANT_PAN_V1_CREATED_AT = tenantPanEntry.when;
-export const DRIZZLE_CLOSE_PACK_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_CLOSE_PACK_V1_CREATED_AT = closePackEntry.when;
-export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_HASH = createHash("sha256")
-  .update(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID}.sql`)))
-  .digest("hex");
-export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_CREATED_AT = personalTaxCaseEntry.when;
-export const DRIZZLE_COMPLIANCE_HASH = DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH;
-export const DRIZZLE_GST_HASH = DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_HASH;
-export const DRIZZLE_GST_CREATED_AT = DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_CREATED_AT;
+
+/** The one ordered authority for committed Drizzle journal metadata and SQL. */
+export const OFFICIAL_DRIZZLE_MIGRATIONS: readonly DrizzleMigrationDescriptor[] = Object.freeze(journalEntries.map((entry, index) => {
+  const sql = readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${entry.tag}.sql`), "utf8");
+  return Object.freeze({ id: entry.tag, order: index + 1, createdAt: entry.when, sql, hash: createHash("sha256").update(sql).digest("hex") });
+}));
+
+function descriptorAt(order: number): DrizzleMigrationDescriptor {
+  const descriptor = OFFICIAL_DRIZZLE_MIGRATIONS[order - 1];
+  if (!descriptor) throw new Error(`Official Drizzle migration order is invalid: ${order}`);
+  return descriptor;
+}
+
+export function drizzleMigrationAt(order: number): DrizzleMigrationDescriptor {
+  return descriptorAt(order);
+}
+
+export function drizzleCurrentMigration(): DrizzleMigrationDescriptor {
+  return descriptorAt(OFFICIAL_DRIZZLE_MIGRATIONS.length);
+}
+
+export function drizzleBaselineMigration(): DrizzleMigrationDescriptor {
+  return descriptorAt(1);
+}
+
+export function drizzleCheckpointForJournalLength(length: number): DrizzleMigrationDescriptor | undefined {
+  return Number.isSafeInteger(length) && length >= 1 && length <= OFFICIAL_DRIZZLE_MIGRATIONS.length ? OFFICIAL_DRIZZLE_MIGRATIONS[length - 1] : undefined;
+}
+
+/** Checkpoints accepted by the backup/upgrade contract, including baseline. */
+export function drizzleBackupCheckpointForJournalLength(length: number): DrizzleMigrationDescriptor | undefined {
+  return [1, 8, 10, 11, 12, OFFICIAL_DRIZZLE_MIGRATIONS.length].includes(length) ? drizzleCheckpointForJournalLength(length) : undefined;
+}
+
+// Compatibility aliases are projections of the canonical descriptors. New
+// code should consume OFFICIAL_DRIZZLE_MIGRATIONS or the narrow helpers above.
+export const DRIZZLE_BASELINE_MIGRATION_ID = drizzleBaselineMigration().id;
+export const DRIZZLE_GST_V1_MIGRATION_ID = descriptorAt(2).id;
+export const DRIZZLE_TDS_TCS_MIGRATION_ID = descriptorAt(3).id;
+export const DRIZZLE_FIXED_ASSETS_MIGRATION_ID = descriptorAt(4).id;
+export const DRIZZLE_FX_V1_MIGRATION_ID = descriptorAt(5).id;
+export const DRIZZLE_PAYROLL_V1_MIGRATION_ID = descriptorAt(6).id;
+export const DRIZZLE_EXPENSE_CLAIMS_V1_MIGRATION_ID = descriptorAt(7).id;
+export const DRIZZLE_GST_RETURN_READINESS_V1_MIGRATION_ID = descriptorAt(8).id;
+export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_MIGRATION_ID = descriptorAt(9).id;
+export const DRIZZLE_PERIOD_CLOSE_V1_MIGRATION_ID = descriptorAt(10).id;
+export const DRIZZLE_TENANT_PAN_V1_MIGRATION_ID = descriptorAt(11).id;
+export const DRIZZLE_CLOSE_PACK_V1_MIGRATION_ID = descriptorAt(12).id;
+export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_MIGRATION_ID = descriptorAt(13).id;
+/** Backwards-compatible name for the current official Drizzle migration. */
+export const DRIZZLE_GST_MIGRATION_ID = drizzleCurrentMigration().id;
+
+export const DRIZZLE_BASELINE_HASH = drizzleBaselineMigration().hash;
+export const DRIZZLE_BASELINE_CREATED_AT = drizzleBaselineMigration().createdAt;
+export const DRIZZLE_GST_V1_HASH = descriptorAt(2).hash;
+export const DRIZZLE_GST_V1_CREATED_AT = descriptorAt(2).createdAt;
+export const DRIZZLE_TDS_TCS_HASH = descriptorAt(3).hash;
+export const DRIZZLE_TDS_TCS_CREATED_AT = descriptorAt(3).createdAt;
+export const DRIZZLE_FIXED_ASSETS_HASH = descriptorAt(4).hash;
+export const DRIZZLE_FIXED_ASSETS_CREATED_AT = descriptorAt(4).createdAt;
+export const DRIZZLE_FX_V1_HASH = descriptorAt(5).hash;
+export const DRIZZLE_FX_V1_CREATED_AT = descriptorAt(5).createdAt;
+export const DRIZZLE_PAYROLL_V1_HASH = descriptorAt(6).hash;
+export const DRIZZLE_PAYROLL_V1_CREATED_AT = descriptorAt(6).createdAt;
+export const DRIZZLE_EXPENSE_CLAIMS_V1_HASH = descriptorAt(7).hash;
+export const DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT = descriptorAt(7).createdAt;
+export const DRIZZLE_GST_RETURN_READINESS_V1_HASH = descriptorAt(8).hash;
+export const DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT = descriptorAt(8).createdAt;
+export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH = descriptorAt(9).hash;
+export const DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_CREATED_AT = descriptorAt(9).createdAt;
+export const DRIZZLE_PERIOD_CLOSE_V1_HASH = descriptorAt(10).hash;
+export const DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT = descriptorAt(10).createdAt;
+export const DRIZZLE_TENANT_PAN_V1_HASH = descriptorAt(11).hash;
+export const DRIZZLE_TENANT_PAN_V1_CREATED_AT = descriptorAt(11).createdAt;
+export const DRIZZLE_CLOSE_PACK_V1_HASH = descriptorAt(12).hash;
+export const DRIZZLE_CLOSE_PACK_V1_CREATED_AT = descriptorAt(12).createdAt;
+export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_HASH = descriptorAt(13).hash;
+export const DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_CREATED_AT = descriptorAt(13).createdAt;
+export const DRIZZLE_COMPLIANCE_HASH = descriptorAt(9).hash;
+export const DRIZZLE_GST_HASH = drizzleCurrentMigration().hash;
+export const DRIZZLE_GST_CREATED_AT = drizzleCurrentMigration().createdAt;
 
 export interface DrizzleControlInitializationOptions {
   readonly cliVersion: string;
@@ -131,21 +135,7 @@ export interface DrizzleJournalRecord {
 }
 
 export function officialDrizzleJournal(): ReadonlyArray<DrizzleJournalRecord> {
-  return [
-    { id: 1, hash: DRIZZLE_BASELINE_HASH, createdAt: DRIZZLE_BASELINE_CREATED_AT },
-    { id: 2, hash: DRIZZLE_GST_V1_HASH, createdAt: DRIZZLE_GST_V1_CREATED_AT },
-    { id: 3, hash: DRIZZLE_TDS_TCS_HASH, createdAt: DRIZZLE_TDS_TCS_CREATED_AT },
-    { id: 4, hash: DRIZZLE_FIXED_ASSETS_HASH, createdAt: DRIZZLE_FIXED_ASSETS_CREATED_AT },
-    { id: 5, hash: DRIZZLE_FX_V1_HASH, createdAt: DRIZZLE_FX_V1_CREATED_AT },
-    { id: 6, hash: DRIZZLE_PAYROLL_V1_HASH, createdAt: DRIZZLE_PAYROLL_V1_CREATED_AT },
-    { id: 7, hash: DRIZZLE_EXPENSE_CLAIMS_V1_HASH, createdAt: DRIZZLE_EXPENSE_CLAIMS_V1_CREATED_AT },
-    { id: 8, hash: DRIZZLE_GST_RETURN_READINESS_V1_HASH, createdAt: DRIZZLE_GST_RETURN_READINESS_V1_CREATED_AT },
-    { id: 9, hash: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_HASH, createdAt: DRIZZLE_COMPLIANCE_OBLIGATIONS_V1_CREATED_AT },
-    { id: 10, hash: DRIZZLE_PERIOD_CLOSE_V1_HASH, createdAt: DRIZZLE_PERIOD_CLOSE_V1_CREATED_AT },
-    { id: 11, hash: DRIZZLE_TENANT_PAN_V1_HASH, createdAt: DRIZZLE_TENANT_PAN_V1_CREATED_AT },
-    { id: 12, hash: DRIZZLE_CLOSE_PACK_V1_HASH, createdAt: DRIZZLE_CLOSE_PACK_V1_CREATED_AT },
-    { id: 13, hash: DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_HASH, createdAt: DRIZZLE_PERSONAL_TAXCASE_FOUNDATION_V1_CREATED_AT },
-  ];
+  return OFFICIAL_DRIZZLE_MIGRATIONS.map((migration) => ({ id: migration.order, hash: migration.hash, createdAt: migration.createdAt }));
 }
 
 function journalMismatch(): never {

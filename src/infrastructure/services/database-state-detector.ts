@@ -8,11 +8,11 @@ import {
   DRIZZLE_BASELINE_CREATED_AT,
   DRIZZLE_BASELINE_HASH,
   DRIZZLE_MIGRATIONS_TABLE,
+  drizzleCheckpointForJournalLength,
   officialDrizzleJournal,
   validateOfficialDrizzleJournalPrefix,
 } from "./drizzle-baseline.ts";
 import {
-  DRIZZLE_MIGRATION_IDS,
   expectedSqliteCatalog,
   readSqliteCatalog,
   sqliteCatalogMatches,
@@ -114,7 +114,8 @@ function exactOfficialPrefix(db: BunDatabase, journalLength: number, bridged: bo
   const expectedControl = expected.find((row) => row.type === "table" && row.name === "database_control")?.sql;
   const journal = officialDrizzleJournal()[journalLength - 1];
   if (!journal) return false;
-  return exactControl(db, V8_SCHEMA_MANIFEST, DRIZZLE_MIGRATION_IDS[journalLength - 1]!, journal.hash, expectedControl ?? "")
+  const checkpoint = drizzleCheckpointForJournalLength(journalLength);
+  return !!checkpoint && exactControl(db, V8_SCHEMA_MANIFEST, checkpoint.id, journal.hash, expectedControl ?? "")
     && sqliteCatalogMatches(readSqliteCatalog(db), expected);
 }
 
