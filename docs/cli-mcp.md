@@ -1,4 +1,17 @@
-# Agent-Bahi CLI and local MCP
+# Agent-Bahi CLI, database operations, and MCP
+
+This is the V1 operator guide for the locally distributable MIT release. The
+supported runtime is Bun `1.3.14` and the supported data store is SQLite only.
+The package metadata is public for local packaging; this guide does not imply
+that an npm package, tag, or release has been published.
+
+Install dependencies and inspect the deterministic help surface:
+
+```text
+bun install --frozen-lockfile
+bun run src/cli.ts --help
+bun run src/cli.ts version --json
+```
 
 The package exposes two Bun entrypoints:
 
@@ -58,6 +71,25 @@ agent-bahi --database ./books.sqlite operations list --json
 agent-bahi --database ./books.sqlite operations run ledger.trial-balance --input input.json --json
 ```
 
+`database.init` creates the current SQLite schema and is the only initialization
+path. For an existing database, inspect compatibility, create and verify a
+backup, preview the exact migration plan, and apply the explicit CLI-owned
+upgrade. Normal business operations never create tables or run migrations
+implicitly:
+
+```text
+agent-bahi --database ./books.sqlite database.status --json
+agent-bahi --database ./books.sqlite database.backup.create --destination /absolute/backup.sqlite --request-id req-1 --actor-id human-1 --yes --json
+agent-bahi --database ./books.sqlite database.upgrade.preview --json
+agent-bahi --database ./books.sqlite database.upgrade.apply --backup /absolute/backup.sqlite --request-id req-2 --actor-id human-1 --yes --json
+```
+
+The `db` aliases documented below are equivalent. Restore is explicit and
+creates/verifies a pre-restore safety backup before promoting the verified
+backup. Retain the adjacent operation receipt and backup when recovery reports
+`RECOVERY_FAILED`; do not continue business work until the database is
+reconciled.
+
 With `--json`, exactly one JSON envelope is written to stdout. Human results are
 written to stdout; diagnostics are written to stderr. Success is:
 
@@ -103,3 +135,29 @@ MCP exposes inspection operations only. Calling a CLI-only mutation through
 MCP returns CLI_REQUIRED and never applies a migration or changes a binary.
 SQLite data-format/schema versions are independent from CLI semver. V1 makes
 no self-updater, download-installer, signing, or notarization claim.
+
+## Local release artifacts
+
+Build the current host CLI and the existing macOS arm64 CLI artifact with:
+
+```text
+bun run build:release
+./dist/agent-bahi --help
+shasum -a 256 dist/agent-bahi-darwin-arm64
+cat dist/agent-bahi-darwin-arm64.manifest.json
+```
+
+The manifest is unsigned integrity metadata and deliberately reports
+`signing: "not provided in V1"`. Release packaging does not publish to npm,
+create a tag, push to a remote, or submit artifacts to a portal. The compiled
+binary is the CLI release surface; `agent-bahi-mcp` remains the Bun stdio
+entrypoint under the pinned runtime.
+
+## Compliance and portal boundary
+
+GST, TDS/TCS, payroll, MCA, and Personal TaxCase commands produce bounded local
+preparation, validation, reconciliation, and review artifacts. Export is not
+submission or acceptance. Agent-Bahi does not automatically call a government
+or bank portal, submit payment, use a DSC/EVC, or claim current-law behavior
+without the required source-linked and human-verified authority material.
+Zoho Books import is deferred and is not present in this V1 operator surface.

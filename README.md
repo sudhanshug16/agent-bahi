@@ -1,27 +1,140 @@
 # agent-bahi
 
-The goal is an open-source, agent-native accounting and India-compliance CLI. This project is currently in discovery phase.
+Agent-Bahi is an MIT-licensed, agent-first India accounting and bookkeeping
+system for multiple legal entities and personal tax. V1 provides a shared
+typed CLI and MCP transport over a tenant- and BookSet-scoped application
+facade. It is implemented and locally distributable; it is not a hosted
+service and this repository does not publish packages or release tags.
 
-Default storage is local SQLite. PostgreSQL and MySQL are supported product
-dialects; a user may optionally configure a remote database, but their drivers,
-migrations, conformance, and target-platform proofs are mandatory release
-evidence.
+## V1 capabilities
 
-**Implementation is intentionally not started.** No code exists yet. All work is discovery documentation.
+- Tenant and BookSet setup for companies, proprietorships, and individuals,
+  with explicit scope checks and audited mutations.
+- Balanced, idempotent double-entry journal posting with immutable audit
+  evidence, period close/reopen, and India financial-year rollover snapshots.
+- Trial Balance, Profit and Loss, Balance Sheet, Close Pack, fixed-asset,
+  foreign-exchange, expense, company-status, and compliance reports.
+- Parties, invoices, receipts, vendor bills, payments, bank-statement import,
+  and deterministic bank reconciliation.
+- GST registrations and source registers; source-backed GSTR-1 preparation,
+  local validation, review-pack export, and bounded GSTR-3B reconciliation.
+- TDS/TCS and payroll masters, rule-gated pay runs, payslips, export-only bank
+  batches, remittances, and locally validated salary-TDS artifacts.
+- Personal TaxCase source intake, immutable facts and reconciliation,
+  FilingSnapshots, position worksheets, ITR eligibility, bounded computation,
+  and local return artifacts.
+- Source-linked compliance facts, rules, deadlines, applicability, obligation
+  lifecycle, annual MCA workpapers, and versioned agent skill guides.
+- Local CLI-only database initialization, compatibility inspection, verified
+  backups, restore with a pre-restore safety backup, and reviewed upgrades.
 
-## Design Status
+The live operation catalog is the authoritative capability list:
 
-**Awaiting Sudhanshu review before implementation authorization.**
+```sh
+bun run src/cli.ts operations list
+```
 
-- **[Owner Review Docket](docs/discovery/owner-review-docket.md)**: Compact index of the owner-review records. T-001 through T-011 are owner-approved and binding. TypeScript + Bun is the owner-selected runtime; it is not awaiting a routine post-Gate0 stack decision. Linked architecture, library, and tool candidates remain individually tentative and are not approved by these entries. The current state is documentation-only: Gate0 is mandatory evidence before implementation, but this documentation review and stack selection do not authorize Gate0, Phase 1, or any library. Sudhanshu must explicitly authorize Gate0, and any later blocker stops the affected work and requires a new owner decision.
-- **[Post-Discovery Readiness Packet](docs/discovery/post-discovery-readiness.md)**: Synthesis of current state, concrete gates to Architecture Ready and Implementation Authorized, critical dependency path, architect-decision points, Gate0 proof-spike docket, V1 slices with acceptance criteria, TENTATIVE production contract, and open decision list. Identifies three distinct outstanding blockers: personal-tax contract architect review, Gate0 authorization, and Phase 1 authorization.
-- [Implementation Plan](docs/discovery/implementation-plan.md): Gate0 proof spikes, Phase 1–9 sequencing, deliverables, and phase-scoped prerequisites. No Gate0, Phase 1, or implementation is authorized by this plan alone.
-- [Discovery Decisions](docs/discovery/decisions.md): Confirmed and working defaults (product name, system boundary, tenant independence, multi-GSTIN, etc.).
-- [Tentative Decisions and Overnight Protocol](docs/discovery/tentative-decisions.md): T-001 through T-011 are owner-approved, with explicit reversal paths and owner-review status. Linked architecture, library, and tool candidates remain individually tentative; no entry approves those candidates. Examples: statutory filing workflow (prepare/validate/export + manual portal), Agent-bahi's MIT license and Frappe Books reference policy (AGPL-3.0; study/reference-only for concepts and behavior, with no source, schema, prose, or asset copying or adaptation), fixed-asset depreciation (separate book/tax schedules), FX rate handling (immutable snapshots + configurable source), and V1 scope (regular small-business GST profiles).
-- [Personal Tax Discovery Packet](docs/discovery/personal-tax-scope.md): Canonical discovery baseline for sole-proprietor personal income-tax expansion scope. Defines 16 core decisions (PT-001 through PT-016): individual/PAN tenant model with multiple BookSets, atomic inter-BookSet transfers, personal subledgers (banks, investments, property, loans), live non-posting TaxCase per taxpayer/PAN + period + filing sequence with immutable FilingSnapshot binding ledger versions/artifact hashes/AuthorityPack, year-specific form selection, rule snapshot binding, external-source reconciliation (AIS, 26AS, brokers, EPFO, NPS), progressive readiness states, immutable original + linked successor corrections. **All 16 decisions (PT-001 through PT-016) are OWNER-APPROVED; NOT ARCHITECT-REVIEWED.** Includes verified official baseline (ITR schemas, Finance Act rules, AIS/26AS specification), current-product interplay, source/import matrix, readiness state model, BookSet/TaxCase/CLI workflow, privacy/security guardrails, open research, and dependency order. No implementation authority or filing deadlines.
-- [Accounting Contracts](docs/discovery/accounting-contracts.md): Canonical pre-implementation contract for bookkeeping domains, posting templates, CLI errors, evidence, and acceptance scenarios.
-- [Zoho Books and Frappe Books Feature Parity Matrix](docs/discovery/zoho-frappe-parity.md): Feature-by-feature comparison of Zoho Books (India) and Frappe Books against agent-bahi's design choices. Confirms that agent-bahi aligns with Zoho Books' workflow parity for core accounting while enforcing stricter tenant isolation, immutable reversal lineage, and deterministic CLI behavior. Notes that payroll features (salary computation, payslips, Form 16) are provided by Zoho Payroll (separate product), not Zoho Books. Frappe Books is AGPL-3.0 and is referenced for concepts and behavior only; no Frappe source, schema, prose, or assets are copied or adapted. Validates coverage of core bookkeeping, GST, tax (TDS/TCS), FX, fixed assets, banking, and compliance domains.
-- [Architecture Decisions](docs/discovery/architecture-decisions.md): Owner-selected runtime and remaining RECOMMENDED architecture choices for review by Sudhanshu before implementation. Each architecture, library, and tool candidate remains individually tentative until its own proof and approval gates pass. Includes SETTLED constraints, RECOMMENDED core/CLI/compliance decisions, OPEN RESEARCH facts, and DEFERRED modules. No entry implies implementation authorization.
-- [Pre-Implementation Architecture](docs/architecture.md): Working architecture combining SETTLED constraints and remaining RECOMMENDED defaults from discovery documents. TypeScript + Bun is owner-selected; Gate0 evidence, library proof gates, and other prerequisites remain before Phase 1 implementation begins.
-- [Discovery Roadmap](docs/discovery/roadmap.md): Phased implementation plan with cross-cutting research milestones and explicit gates before Phase 1. Phase 2 skill contracts/catalog only; Phase 3 ledger/documents/posting; Phase 4 evidence+bank reconciliation; Phase 5 reports/FX/assets/employee expenses; Phase 6 payroll; Phase 7 independently gated compliance; Phase 8A dialect conformance and Phase 8B bounded skills runtime; Phase 9 Zoho import final. Links to [Owner Review Docket](docs/discovery/owner-review-docket.md) and [Tentative Decisions](docs/discovery/tentative-decisions.md).
-- [Statutory Compliance Baseline](docs/discovery/statutory-workflow-contracts.md): TDS/TCS, annual income-tax, and current Companies Act workflows. The [MCA Companies Act matrix](docs/discovery/mca-companies-act-compliance-matrix.md) is the source boundary for mandatory audit, auditor/OPC/AGM paths, forms, official citations, and `source_verified`/`effective_rule_snapshot` fail-closed gates; tax deadlines remain separate.
+## Storage and boundaries
+
+V1 is SQLite-only. SQLite is the supported runtime data store, and all normal
+business operations require an explicit tenant and, where applicable, BookSet
+or TaxCase scope. PostgreSQL and MySQL references in the discovery material are
+research history, not supported V1 product backends.
+
+Compliance and tax artifacts are preparation, validation, reconciliation, and
+review evidence. Agent-Bahi does not automatically submit to government or
+bank portals, make payments, obtain or use a DSC/EVC, or claim that an export
+was filed or accepted. Current-law conclusions require the relevant
+source-linked, effective authority pack and human review; missing or unknown
+authority fails closed. Zoho Books import is intentionally deferred until the
+last product phase.
+
+The optional HTTP MCP server speaks plain HTTP. Keep it on a trusted LAN or
+inside a trusted Tailscale deployment, or place it behind a user-managed HTTPS
+reverse proxy. The server does not generate certificates, provide multi-user
+RBAC, or initialize/upgrade databases. Local stdio MCP remains available.
+
+Release manifests are integrity metadata only. V1 does not claim artifact
+signatures, notarization, automatic updates, npm publication, tags, or pushes.
+
+## Quick start
+
+Agent-Bahi uses the pinned Bun runtime from `runtime-versions.json`:
+
+```sh
+bun --version                 # 1.3.14
+bun install --frozen-lockfile
+bun run typecheck
+```
+
+Use the source CLI during development:
+
+```sh
+bun run src/cli.ts --help
+bun run src/cli.ts --database ./books.sqlite database.status --json
+bun run src/cli.ts --database ./books.sqlite database.init --json
+bun run src/cli.ts --database ./books.sqlite operations list --json
+```
+
+Normal operations never initialize or upgrade a database implicitly. Before a
+business operation on an older database, inspect compatibility, create or
+verify a backup, preview the exact migration plan, and apply the explicit
+CLI-owned upgrade. See [CLI and MCP operations](docs/cli-mcp.md) for the full
+backup, restore, upgrade, and error contract.
+
+## MCP
+
+Run the local stdio server with the same database:
+
+```sh
+bun run src/mcp.ts --database "$PWD/books.sqlite"
+```
+
+For a trusted remote deployment, opt in explicitly to a non-loopback HTTP
+bind and provide a bearer token from a file or environment variable:
+
+```sh
+AGENT_BAHI_MCP_TOKEN_FILE=/run/secrets/agent-bahi-mcp-token \
+  bun run src/cli.ts --database "$PWD/books.sqlite" mcp serve \
+  --host 0.0.0.0 --port 8787 --allow-remote \
+  --token-file /run/secrets/agent-bahi-mcp-token
+```
+
+The default bind is loopback at `127.0.0.1:8787`. See
+[CLI and MCP operations](docs/cli-mcp.md) for host/origin checks, session
+limits, readiness responses, TLS responsibility, and the Docker deployment.
+
+## Local release build
+
+The release build produces a compiled CLI binary for the host and the existing
+macOS arm64 target, then writes a SHA-256 file and an unsigned manifest for the
+macOS artifact:
+
+```sh
+bun run build:release
+./dist/agent-bahi --help
+cat dist/agent-bahi-darwin-arm64.manifest.json
+```
+
+The manifest explicitly says `signing: "not provided in V1"`. The source
+package metadata is public and MIT-licensed for local packaging, but no
+`npm publish`, tag, push, or other external release action is part of this
+repository workflow.
+
+## Development checks
+
+```sh
+bun run test:release
+bun run validate:skills
+bun run typecheck
+bun test
+```
+
+The repository contains extensive domain, persistence, transport, migration,
+backup/restore, tenant-isolation, and statutory-artifact tests. Statutory
+outputs remain bounded local artifacts and must not be represented as official
+filing or portal acceptance.
+
+## License
+
+Agent-Bahi is released under the [MIT License](LICENSE).
