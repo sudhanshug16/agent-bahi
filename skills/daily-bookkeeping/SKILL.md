@@ -7,6 +7,7 @@
 <!-- operation: ledger.balance-sheet -->
 <!-- operation: period.status -->
 <!-- operation: bank-reconciliation.status -->
+<!-- status-focus: journal-reports,ar,ap,bank,expenses -->
 <!-- step: journal.post kind="OPERATION" operation="journal.post" -->
 <!-- step: ledger.trial-balance kind="OPERATION" operation="ledger.trial-balance" -->
 <!-- step: ledger.profit-and-loss kind="OPERATION" operation="ledger.profit-and-loss" -->
@@ -14,7 +15,9 @@
 
 # Daily bookkeeping
 
-Inspect `company.status` first and resolve the exact tenant and BookSet. Use
+Inspect `company.status` first: start with `agent-bahi status --focus journal-reports` (then `ar`, `ap`, `bank`,
+or `expenses` as indicated by the returned action codes), and resolve the exact
+tenant and BookSet. Use
 explicit tenant and BookSet scope for every mutation, preserve source evidence and operation
 result hashes, and post only balanced entries. Preview/report reads are
 deterministic; classification uncertainty is a HUMAN gate. Surface typed

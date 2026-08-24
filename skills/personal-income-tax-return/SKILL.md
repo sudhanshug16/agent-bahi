@@ -15,6 +15,7 @@
 <!-- operation: tax-case.return-artifact.validate -->
 <!-- operation: tax-case.return-artifact.export -->
 <!-- operation: tax-case.return-artifact.show -->
+<!-- status-focus: personal-tax,tenant-pan -->
 <!-- step: tax-case.filing-snapshot.preview kind="OPERATION" operation="tax-case.filing-snapshot.preview" -->
 <!-- step: tax-case.filing-snapshot.seal kind="OPERATION" operation="tax-case.filing-snapshot.seal" -->
 <!-- step: tax-case.position.preview kind="OPERATION" operation="tax-case.position.preview" -->
@@ -32,7 +33,8 @@
 
 # Personal income-tax return
 
-Inspect `company.status` first and require explicit TaxCase scope and current
+Inspect `company.status` first: start with `agent-bahi status --focus personal-tax` and follow its exact action
+or blocker codes; require explicit TaxCase scope and current
 source/BookSet bindings. Preview before sealing, computation, and export;
 preserve candidate, input, evidence, artifact, and validation hashes. HUMAN
 gates own snapshot sealing, form selection, computation approval, and export.

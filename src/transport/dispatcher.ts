@@ -189,7 +189,10 @@ const handlers: Record<string, Handler> = {
   "company.status": (facade, input) => facade.company.status({
     ...(optionalText(input, "tenantId") ? { tenantId: brandTenantId(optionalText(input, "tenantId")!) } : {}),
     ...(optionalText(input, "bookSetId") ? { bookSetId: brandBookSetId(optionalText(input, "bookSetId")!) } : {}),
+    ...(optionalText(input, "taxCaseId") ? { taxCaseId: optionalText(input, "taxCaseId") } : {}),
     ...(optionalText(input, "asOfDate") ? { asOfDate: optionalText(input, "asOfDate") } : {}),
+    ...(optionalText(input, "asOfTimestamp") ? { asOfTimestamp: optionalText(input, "asOfTimestamp") } : {}),
+    ...(optionalText(input, "focus") ? { focus: optionalText(input, "focus") } : {}),
   }),
   "expense.claimant.create": (facade, input) => facade.expense.claimant.create(input as never),
   "expense.claimant.get": (facade, input) => facade.expense.claimant.get(tenantId(input), bookSetId(input), text(input, "claimantId")),

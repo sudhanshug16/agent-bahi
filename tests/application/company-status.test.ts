@@ -65,11 +65,18 @@ describe("company.status", () => {
     ]);
   });
 
-  it("rejects omitted tenant scope when active tenants are ambiguous without mutation", async () => {
+  it("summarizes multiple active tenants with masked identifiers without mutation", async () => {
     const { app } = await fixture();
-    await activeTenant(app, "First");
-    await activeTenant(app, "Second");
-    await expect(app.company.status({ asOfDate: "2026-08-23" })).rejects.toMatchObject({ code: "TENANT_AMBIGUOUS" });
+    const first = await activeTenant(app, "First");
+    const second = await activeTenant(app, "Second");
+    const result = await app.company.status({ asOfDate: "2026-08-23", asOfTimestamp: "2026-08-23T12:00:00.000Z" });
+    expect(result.statusVersion).toBe(2);
+    expect(result.scope.global).toBe(true);
+    expect(result.tenants).toHaveLength(2);
+    expect(result.tenants.map((tenant) => tenant.tenantId)).not.toContain(first.tenantId);
+    expect(result.tenants.map((tenant) => tenant.tenantId)).not.toContain(second.tenantId);
+    expect(result.cards.map((card) => card.id)).toEqual(expect.arrayContaining(["database", "tenant-bookset", "journal-reports", "gst", "personal-tax", "skills", "remote-mcp"]));
+    expect(result.cards.every((card) => card.asOfTimestamp === "2026-08-23T12:00:00.000Z")).toBe(true);
   });
 
   it("keeps multiple BookSets separate and reports an unreconciled latest bank statement", async () => {
@@ -106,5 +113,15 @@ describe("company.status", () => {
     expect(summary.gst.registrationsApplicableAsOf.count).toBe(1);
     expect(summary.gst.postedPurchaseActivity).toEqual({ count: 1, taxMinor: 1_800 });
     expect(summary.gst.pendingReviewItc).toEqual({ count: 1, amountMinor: 1_800, risk: "REVIEW_REQUIRED" });
+  });
+
+  it("supports deterministic card focus and rejects unknown focus without mutation", async () => {
+    const { app } = await fixture();
+    const tenant = await activeTenant(app, "Focused Status Co");
+    const focused = await app.company.status({ tenantId: tenant.tenantId as any, bookSetId: tenant.defaultBookSetId as any, asOfDate: "2026-08-23", asOfTimestamp: "2026-08-23T12:00:00.000Z", focus: "unreconciled-bank" });
+    expect(focused.cards).toHaveLength(1);
+    expect(focused.cards[0]).toMatchObject({ id: "bank", asOfDate: "2026-08-23", asOfTimestamp: "2026-08-23T12:00:00.000Z" });
+    expect(focused.cards[0]!.drillDowns.every((drilldown) => ["company.status", "database.compatibility", "bank-statement.list", "bank-reconciliation.status"].includes(drilldown.operationId))).toBe(true);
+    await expect(app.company.status({ tenantId: tenant.tenantId as any, asOfDate: "2026-08-23", focus: "not-a-card" })).rejects.toMatchObject({ code: "INVALID_STATUS_FOCUS" });
   });
 });

@@ -25,7 +25,7 @@ function help(): string {
     "  agent-bahi [--database PATH] db status|backup list|backup show|backup verify|upgrade preview|upgrade status",
     "  agent-bahi [--database PATH] db backup create|restore|upgrade apply --request-id ID --actor-id ID --yes",
     "  agent-bahi [--database PATH] database.compatibility|database.upgrade.preview|database.upgrade.status",
-    "  agent-bahi [--database PATH] status [--tenant-id ID] [--book-set-id ID] [--as-of-date YYYY-MM-DD] [--json]",
+    "  agent-bahi [--database PATH] status [--tenant-id ID] [--book-set-id ID] [--tax-case-id ID] [--as-of-date YYYY-MM-DD] [--as-of-timestamp ISO] [--focus CARD] [--json]",
     "  agent-bahi [--database PATH|sqlite:///URL] mcp",
     "  agent-bahi [--database PATH|sqlite:///URL] mcp serve [--host HOST] [--port PORT] [--allow-remote] [--token-file PATH] [--allow-insecure-no-auth] [--allowed-host HOST]",
     "  Local stdio MCP: agent-bahi-mcp (database updates remain CLI-owned).",
@@ -56,6 +56,21 @@ function printHuman(value: unknown): void {
 function printHumanError(value: unknown): void {
   if (typeof value === "string") process.stderr.write(`${value}\n`);
   else process.stderr.write(`${JSON.stringify(jsonSafe(value), null, 2)}\n`);
+}
+
+function printCompanyStatusHuman(result: Record<string, unknown>): void {
+  const cards = (result.cards as Array<Record<string, unknown>> | undefined) ?? [];
+  const scope = result.scope as Record<string, unknown> | undefined;
+  const lines = [
+    `Agent-Bahi status v${String(result.statusVersion ?? 1)} · overall=${String(result.overallStatus ?? result.overallReadiness ?? "UNKNOWN")} · asOf=${String(result.asOfDate)} · timestamp=${String(result.asOfTimestamp ?? "")}`,
+    `Scope: ${scope?.global ? "all active tenants (identifiers masked)" : JSON.stringify(scope ?? {})}`,
+    ...cards.map((item) => {
+      const counts = item.counts && typeof item.counts === "object" ? Object.entries(item.counts as Record<string, unknown>).map(([key, value]) => `${key}=${String(value)}`).join(", ") : "";
+      const codes = [...((item.actionCodes as unknown[] | undefined) ?? []), ...((item.blockerCodes as unknown[] | undefined) ?? [])].join(",");
+      return `${String(item.id)}\t${String(item.status)}\t${String(item.summary)}${counts ? ` (${counts})` : ""}${codes ? ` [${codes}]` : ""}`;
+    }),
+  ];
+  printHuman(lines.join("\n"));
 }
 
 function errorExitCode(envelope: DispatchEnvelope): number {
@@ -245,8 +260,11 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     operationId = "company.status";
     const tenant = takeFlag(args, "--tenant-id") ?? takeFlag(args, "--tenant");
     const bookSet = takeFlag(args, "--book-set-id") ?? takeFlag(args, "--bookset");
+    const taxCase = takeFlag(args, "--tax-case-id") ?? takeFlag(args, "--tax-case");
     const asOfDate = takeFlag(args, "--as-of-date") ?? takeFlag(args, "--as-of");
-    const input = { ...(tenant ? { tenantId: tenant } : {}), ...(bookSet ? { bookSetId: bookSet } : {}), ...(asOfDate ? { asOfDate } : {}) };
+    const asOfTimestamp = takeFlag(args, "--as-of-timestamp");
+    const focus = takeFlag(args, "--focus") ?? takeFlag(args, "--card");
+    const input = { ...(tenant ? { tenantId: tenant } : {}), ...(bookSet ? { bookSetId: bookSet } : {}), ...(taxCase ? { taxCaseId: taxCase } : {}), ...(asOfDate ? { asOfDate } : {}), ...(asOfTimestamp ? { asOfTimestamp } : {}), ...(focus ? { focus } : {}) };
     result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else {
     const error: DispatchEnvelope = { ok: false, error: { code: "UNKNOWN_OPERATION", message: "Expected operations list, operations describe, operations run, or database.*" } };
@@ -255,6 +273,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
   }
 
   if (json) printJson(result);
+  else if (result.ok && operationId === "company.status") printCompanyStatusHuman(result.result as Record<string, unknown>);
   else if (result.ok) printHuman(result.result);
   else printHumanError(`Error [${result.error.code}]: ${result.error.message}${result.error.details ? `\n${JSON.stringify(result.error.details, null, 2)}` : ""}`);
   return errorExitCode(result);

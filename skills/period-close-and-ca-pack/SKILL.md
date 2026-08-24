@@ -8,6 +8,7 @@
 <!-- operation: report.close-pack.export -->
 <!-- operation: period.close -->
 <!-- operation: report.close-pack.get -->
+<!-- status-focus: period-close,journal-reports,compliance -->
 <!-- step: period.close.preview kind="OPERATION" operation="period.close.preview" -->
 <!-- step: ledger.trial-balance kind="OPERATION" operation="ledger.trial-balance" -->
 <!-- step: ledger.profit-and-loss kind="OPERATION" operation="ledger.profit-and-loss" -->
@@ -18,7 +19,9 @@
 
 # Period close and CA pack
 
-Inspect `company.status` first, resolve explicit tenant/BookSet and period,
+Inspect `company.status` first: start with `agent-bahi status --focus period-close` and follow its exact action
+codes; use `journal-reports` or `compliance` when those cards are returned.
+Resolve explicit tenant/BookSet and period,
 and preview the current close plan before irreversible actions. Preserve the
 plan hash, ledger report hashes, close-pack section evidence, and any explicit
 override. Period closure is HUMAN-only; CA review/sign-off is external. Never

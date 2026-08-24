@@ -6,6 +6,7 @@
 <!-- operation: gst.gstr1-artifact.validate -->
 <!-- operation: gst.gstr1-artifact.export -->
 <!-- operation: gst.gstr1-artifact.show -->
+<!-- status-focus: gst,compliance -->
 <!-- step: gst.return.readiness-report kind="OPERATION" operation="gst.return.readiness-report" -->
 <!-- step: gst.gstr1-artifact.preview kind="OPERATION" operation="gst.gstr1-artifact.preview" -->
 <!-- step: gst.gstr1-artifact.prepare kind="OPERATION" operation="gst.gstr1-artifact.prepare" -->
@@ -15,7 +16,8 @@
 
 # GST GSTR-1 return
 
-Inspect `company.status` first and provide explicit tenant and BookSet scope,
+Inspect `company.status` first: start with `agent-bahi status --focus gst` and follow its exact action or blocker
+codes (especially `GST_EXPORTED_NOT_SUBMITTED`); provide explicit tenant and BookSet scope,
 GST registration, period, readiness snapshot, and schema pack. Require READY
 readiness, preview before preparation/export, and preserve source, artifact,
 schema, and validation evidence. Local validation is not official validation.

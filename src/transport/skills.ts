@@ -43,6 +43,8 @@ export interface SkillGuide {
   readonly summary: string;
   readonly applicability: string;
   readonly requiredScope: RequiredScope;
+  readonly statusFocus?: readonly string[];
+  readonly statusActionCodes?: readonly string[];
   readonly preflightOperations: readonly string[];
   readonly steps: readonly SkillStep[];
   readonly allowedAgentJudgmentPoints: readonly string[];
@@ -88,6 +90,7 @@ const commonEvidence = ["The exact operation envelope/result hash is preserved."
 export const SKILL_GUIDES: readonly SkillGuide[] = [
   guide({
     id: "daily-bookkeeping", version: 1, title: "Daily bookkeeping", summary: "Record supported double-entry activity and inspect deterministic ledger reports.", applicability: "A company or personal BookSet with explicit tenant and BookSet scope.", requiredScope: "bookSet",
+    statusFocus: ["journal-reports", "ar", "ap", "bank", "expenses"], statusActionCodes: ["LEDGER_UNBALANCED", "AR_OUTSTANDING", "AP_OUTSTANDING", "BANK_RECONCILIATION_REVIEW", "EXPENSE_EVIDENCE_OR_REVIEW_REQUIRED"],
     preflightOperations: ["company.status", "book-set.scope.resolve"],
     steps: [
       op("journal.post", "Post balanced journal", "bookSet", "Use explicit account IDs, source evidence, and an idempotency request ID; never infer a missing account."),
@@ -118,6 +121,7 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
   }),
   guide({
     id: "gst-gstr1-return", version: 1, title: "GST GSTR-1 return", summary: "Prepare and locally validate a source-linked GSTR-1 artifact from a READY snapshot.", applicability: "A GST-registered BookSet with an explicit registration, tax period, readiness snapshot, and verified schema pack.", requiredScope: "bookSet",
+    statusFocus: ["gst", "compliance"], statusActionCodes: ["GST_ITC_REVIEW_REQUIRED", "GST_EXPORTED_NOT_SUBMITTED", "COMPLIANCE_OBLIGATION_OVERDUE"],
     preflightOperations: ["company.status", "gst.return.readiness-report"],
     steps: [
       op("gst.return.readiness-report", "Read GST readiness", "bookSet", "Require READY readiness and retain its exact snapshot identity before artifact work."),
@@ -135,6 +139,7 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
   }),
   guide({
     id: "tds-tcs-bookkeeping", version: 1, title: "TDS/TCS bookkeeping", summary: "Maintain source-verified withholding context, inspect registers, and record deposits with evidence.", applicability: "A BookSet whose tenant has explicit deductor and party tax facts; statutory rules remain source-linked.", requiredScope: "bookSet",
+    statusFocus: ["tds-tcs", "compliance"], statusActionCodes: ["TDS_TCS_SOURCE_OR_DEPOSIT_BLOCKED", "TDS_TCS_STATEMENT_FOLLOW_UP", "TDS_TCS_EXPORTED_NOT_SUBMITTED"],
     preflightOperations: ["company.status", "tax.register.tds", "tax.register.tcs"],
     steps: [
       op("tax.rule-snapshot.create", "Record rule snapshot", "tenant", "Record an immutable source-backed rule snapshot at tenant scope; unverified rules must not drive posting."),
@@ -173,6 +178,7 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
   }),
   guide({
     id: "period-close-and-ca-pack", version: 1, title: "Period close and CA pack", summary: "Preview a close plan, preserve reports, produce a close pack, and human-confirm period closure.", applicability: "A BookSet with an explicit inclusive period and all required source/reconciliation evidence available for review.", requiredScope: "bookSet",
+    statusFocus: ["period-close", "journal-reports", "compliance"], statusActionCodes: ["PERIOD_CLOSE_OR_PACK_STALE", "LEDGER_UNBALANCED", "COMPLIANCE_OBLIGATION_OVERDUE"],
     preflightOperations: ["company.status", "period.status", "period.close.preview"],
     steps: [
       op("period.close.preview", "Preview close plan", "bookSet", "Generate the current plan and retain its exact plan hash."),
@@ -191,6 +197,7 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
   }),
   guide({
     id: "personal-income-tax-return", version: 1, title: "Personal income-tax return", summary: "Build a source-linked personal-tax workpaper and local return artifact with human approvals and explicit submission boundaries.", applicability: "An individual TaxCase with explicit eligible BookSet membership, current source evidence, and verified authority/schema packs.", requiredScope: "taxCase",
+    statusFocus: ["personal-tax", "tenant-pan"], statusActionCodes: ["PERSONAL_TAX_SOURCE_READINESS_UNKNOWN", "PERSONAL_TAX_EXPORTED_NOT_SUBMITTED", "TENANT_PAN_MISSING"],
     preflightOperations: ["company.status", "tax-case.status"],
     steps: [
       op("tax-case.filing-snapshot.preview", "Preview filing snapshot", "taxCase", "Preview the exact current books/source basis and resolve all blockers."),
@@ -217,6 +224,7 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
 ] as const;
 
 const scopeRank: Record<RequiredScope, number> = { none: 0, tenant: 1, bookSet: 2, taxCase: 3 };
+const statusFocusIds = new Set(["database", "tenant-bookset", "journal-reports", "ar", "ap", "bank", "gst", "tds-tcs", "fixed-assets", "fx", "payroll", "expenses", "compliance", "period-close", "tenant-pan", "personal-tax", "skills", "remote-mcp"]);
 function issue(guideId: string, code: string, message: string): SkillValidationIssue { return { guideId, code, message }; }
 
 export function validateSkillGuides(guides: readonly SkillGuide[] = SKILL_GUIDES): readonly SkillValidationIssue[] {
@@ -229,6 +237,8 @@ export function validateSkillGuides(guides: readonly SkillGuide[] = SKILL_GUIDES
     guideIds.add(item.id);
     if (!item.id || item.version < 1 || !item.title || !item.summary || !item.applicability) issues.push(issue(item.id, "INVALID_METADATA", "Skill metadata is incomplete."));
     if (item.humanOnlyGates.length === 0) issues.push(issue(item.id, "MISSING_HUMAN_GATE", "Every guide must declare at least one HUMAN-only gate."));
+    for (const focus of item.statusFocus ?? []) if (!statusFocusIds.has(focus)) issues.push(issue(item.id, "MISSING_STATUS_FOCUS", `Missing status card focus: ${focus}`));
+    if ((item.statusFocus?.length ?? 0) > 0 && (item.statusActionCodes?.length ?? 0) === 0) issues.push(issue(item.id, "MISSING_STATUS_ACTION_CODES", "Status-focused guides must declare exact action codes."));
     const operationReferences = [...item.preflightOperations, ...item.steps.flatMap((step) => step.operationId ? [step.operationId] : []), ...item.humanOnlyGates.flatMap((gate) => gate.operationIds), ...item.nextDrilldowns.flatMap((drilldown) => drilldown.operationId ? [drilldown.operationId] : [])];
     const uniqueReferences = [...new Set(operationReferences)];
     if (JSON.stringify(uniqueReferences) !== JSON.stringify(item.operationReferences)) issues.push(issue(item.id, "STALE_OPERATION_REFERENCES", "operationReferences does not match the ordered structured references."));
