@@ -22,9 +22,9 @@ async function cli(args: string[]): Promise<{ code: number | null; stdout: strin
 function parsed(text: string): Record<string, unknown> { return JSON.parse(text) as Record<string, unknown>; }
 
 describe("canonical Agent-Bahi skill guides and help operations", () => {
-  it("contains seven unique guides with no registry integrity issues", () => {
-    expect(SKILL_GUIDES).toHaveLength(8);
-    expect(new Set(SKILL_GUIDES.map((guide) => guide.id)).size).toBe(8);
+  it("contains unique guides with no registry integrity issues", () => {
+    expect(SKILL_GUIDES).toHaveLength(9);
+    expect(new Set(SKILL_GUIDES.map((guide) => guide.id)).size).toBe(9);
     expect(validateSkillGuides()).toEqual([]);
     for (const guide of SKILL_GUIDES) {
       expect(guide.preflightOperations.length).toBeGreaterThan(0);
@@ -44,6 +44,7 @@ describe("canonical Agent-Bahi skill guides and help operations", () => {
     expect(statuses["payroll-run"]).toBe("PARTIAL");
     expect(statuses["period-close-and-ca-pack"]).toBe("PARTIAL");
     expect(statuses["personal-income-tax-return"]).toBe("PARTIAL");
+    expect(statuses["mca-private-company-annual-filing"]).toBe("PARTIAL");
   });
 
   it("detects missing operations, missing human gates, and scope transitions", () => {

@@ -619,7 +619,7 @@ function drillDown(tenantId: string, bookSetId: string, asOfDate: string, compli
 
 const CARD_LIMIT = 100;
 const CARD_FOCUSES = new Set([
-  "database", "tenant-bookset", "journal-reports", "ar", "ap", "bank", "gst", "tds-tcs", "fixed-assets", "fx", "payroll", "expenses", "compliance", "period-close", "tenant-pan", "personal-tax", "skills", "remote-mcp",
+  "database", "tenant-bookset", "journal-reports", "ar", "ap", "bank", "gst", "tds-tcs", "fixed-assets", "fx", "payroll", "expenses", "compliance", "period-close", "mca", "tenant-pan", "personal-tax", "skills", "remote-mcp",
 ]);
 const FOCUS_ALIASES: Record<string, string> = {
   operations: "database", "blocks-and-partials": "period-close", "unreconciled-bank": "bank", "overdue-invoices": "ar", "unpaid-bills": "ap", "evidence-pending": "expenses", "compliance-obligations": "compliance", "other-exceptions": "tenant-bookset",
@@ -806,6 +806,16 @@ async function buildCards(
   const closeEvents = periodData.reduce((n, item) => n + item.closeEvents, 0);
   const reopened = periodData.reduce((n, item) => n + item.reopened + item.stalePacks, 0);
   cards.push(card("period-close", cardState(closeEvents + periodData.reduce((n, item) => n + item.packs, 0) > 0, false, false, reopened > 0), reopened > 0 ? "Period close or CA pack evidence is stale/reopened." : closeEvents > 0 ? "Period close evidence is present." : "Period close is not configured.", { closeEvents, staleOrReopened: reopened }, reopened ? ["PERIOD_CLOSE_OR_PACK_STALE"] : [], [], asOfDate, asOfTimestamp, [...common, { operationId: "period.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}) } }, { operationId: "report.close-pack.get", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), manifestId: "<manifest-id>" } }]));
+
+  const mcaTenantPlaceholders = tenants.map(() => "?").join(",");
+  const mcaTenantIds = tenants.map((tenant) => String(tenant.id));
+  const mcaFacts = await session.query("SELECT id FROM mca_company_facts WHERE tenant_id IN (${TENANTS})".replace("${TENANTS}", mcaTenantPlaceholders), mcaTenantIds);
+  const mcaPacks = await session.query("SELECT id FROM mca_form_packs WHERE 1 = 1");
+  const mcaArtifacts = await session.query("SELECT id FROM mca_annual_artifacts WHERE tenant_id IN (${TENANTS})".replace("${TENANTS}", mcaTenantPlaceholders), mcaTenantIds);
+  const mcaExports = await session.query("SELECT e.id FROM mca_annual_export_activities e JOIN mca_annual_artifacts a ON a.id = e.artifact_id AND a.tenant_id = e.tenant_id AND a.book_set_id = e.book_set_id WHERE e.tenant_id IN (${TENANTS})".replace("${TENANTS}", mcaTenantPlaceholders), mcaTenantIds);
+  const companyScope = tenants.some((tenant) => String(tenant.kind) === "COMPANY") && summaries.some((summary) => summary.bookSet.kind === "COMPANY");
+  const mcaAction = mcaFacts.rows.length > 0 || mcaArtifacts.rows.length > 0 || mcaExports.rows.length > 0;
+  cards.push(card("mca", cardState(companyScope && (mcaPacks.rows.length > 0 || mcaFacts.rows.length > 0 || mcaArtifacts.rows.length > 0), false, false, mcaAction), companyScope ? `${mcaArtifacts.rows.length} MCA annual artifact${mcaArtifacts.rows.length === 1 ? "" : "s"}; ${mcaExports.rows.length} exported workpaper${mcaExports.rows.length === 1 ? "" : "s"} require external CA/CS signature and MCA follow-up.` : "MCA annual filing preparation is not applicable to this scope.", { formPacks: mcaPacks.rows.length, facts: mcaFacts.rows.length, artifacts: mcaArtifacts.rows.length, exportedNotSubmitted: mcaExports.rows.length }, mcaExports.rows.length ? ["MCA_EXTERNAL_SIGNATURE_REQUIRED"] : mcaAction ? ["MCA_ANNUAL_PREPARE_BLOCKED"] : [], [], asOfDate, asOfTimestamp, [...common, { operationId: "mca.annual.package-status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), financialYear: "<YYYY-YY>" } }, { operationId: "mca.annual.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), artifactId: "<artifact-id>" } }]));
 
   const panMissing = tenants.filter((tenant) => !panByTenant.get(String(tenant.id))).length;
   cards.push(card("tenant-pan", cardState(tenants.length > 0, false, false, panMissing > 0), panMissing ? `${panMissing} tenant${panMissing === 1 ? "" : "s"} has no PAN profile.` : "Tenant PAN profiles are configured and masked.", { missing: panMissing }, panMissing ? ["TENANT_PAN_MISSING"] : [], [], asOfDate, asOfTimestamp, [...common, { operationId: "tenant.pan.get", inputTemplate: firstScope ? { tenantId: firstScope } : {} }]));

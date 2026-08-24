@@ -126,3 +126,4 @@ export { personalTaxReturnSchemaPacks, personalTaxReturnSchemaPackEvents, person
 export { gstReturnSchemaPacks, gstReturnSchemaPackEvents, gstGstr1Artifacts, gstGstr1ValidationRuns, gstGstr1ExportActivities } from "./gst-gstr1-artifact-schema";
 export { gstGstr3bSchemaPacks, gstGstr3bSchemaPackEvents, gstGstr3bFacts, gstGstr3bFactEvents, gstGstr3bArtifacts, gstGstr3bValidationRuns, gstGstr3bExportActivities } from "./gst-gstr3b-artifact-schema";
 export { withholdingStatementSchemaPacks, withholdingStatementSchemaPackEvents, withholdingStatementFacts, withholdingStatementFactEvents, withholdingStatementArtifacts, withholdingStatementValidationRuns, withholdingStatementExportActivities } from "./withholding-statement-artifact-schema";
+export { mcaFormPacks, mcaFormPackEvents, mcaCompanyFacts, mcaCompanyFactEvents, mcaApplicabilityDecisions, mcaAnnualArtifacts, mcaAnnualValidationRuns, mcaAnnualExportActivities } from "./mca-annual-filing-artifact-schema";

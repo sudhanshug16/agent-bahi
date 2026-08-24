@@ -209,6 +209,14 @@ export interface GstGstr3bArtifactBindingPayload { bookSetId: string; gstin: str
 export interface GstGstr3bArtifactValidatePayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; }
 export interface GstGstr3bArtifactExportPayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
 
+export interface McaFormPackRegisterPayload { packId?: string; jurisdiction: "IN"; authority: "MCA"; formFamily: "AOC-4" | "AOC-4 XBRL" | "AOC-4 CFS" | "MGT-7" | "MGT-7A" | "ADT-1" | "MSME-1"; filingType: string; financialYear: string; effectiveFrom: string; effectiveTo?: string; releasedAt: string; lawReference: string; ruleReference: string; instructionReference: string; schemaReference: string; artifactReferences: AuthorityArtifactReference[]; packVersion: string; requiredFactDeclarations: Array<string | { key: string }>; applicabilityRuleAst: unknown; validationSchema: unknown; mappingSpec: unknown; testOnly: true; supersedesPackId?: string; }
+export interface McaFormPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface McaCompanyFactPayload { bookSetId: string; legalIdentityId: string; financialYear: string; factType: string; effectiveFrom: string; effectiveTo?: string; facts: Record<string, unknown>; provenance: Record<string, unknown>; evidenceIds: string[]; factId?: string; }
+export interface McaCompanyFactDecisionPayload { bookSetId: string; factId: string; expectedFactHash: string; reason: string; }
+export interface McaAnnualArtifactBindingPayload { bookSetId: string; financialYear: string; formPackId: string; legalIdentityId: string; periodStart: string; periodEnd: string; closePackManifestId: string; closePackManifestHash: string; formFamily?: string; }
+export interface McaAnnualArtifactValidatePayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; }
+export interface McaAnnualArtifactExportPayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
+
 export type WithholdingStatementForm = "24Q" | "26Q" | "27Q" | "27EQ";
 export type WithholdingStatementQuarter = "Q1" | "Q2" | "Q3" | "Q4";
 export type WithholdingStatementFilingType = "ORIGINAL" | "CORRECTION";
