@@ -54,7 +54,9 @@ describe("local MIT release packaging contract", () => {
     for (const entrypoint of [cli, mcp]) expect(entrypoint.startsWith("#!/usr/bin/env bun\n")).toBe(true);
     expect(workflow).toContain("name: Publish npm");
     expect(workflow).toContain("actions/checkout@v6");
-    expect(workflow).toContain("actions/setup-node@v6");
+    expect(workflow).toContain("      - .github/workflows/publish-npm.yml");
+    expect(workflow).toContain("actions/setup-node@v7");
+    expect(workflow).not.toContain("actions/setup-node@v6");
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("registry-url: https://registry.npmjs.org");
     expect(workflow).toContain("package-manager-cache: false");
@@ -72,6 +74,7 @@ describe("local MIT release packaging contract", () => {
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("npm publish --access public");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");
+    expect(workflow).not.toMatch(/NODE_AUTH_TOKEN\s*[:=]\s*X{3,}/);
     expect(workflow).not.toContain("npm stage publish");
     expect(workflow).not.toContain("--provenance");
   });
