@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { Database as BunDatabase } from "bun:sqlite";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { migrate as migrateDrizzle } from "drizzle-orm/bun-sqlite/migrator";
 import {
   CURRENT_SCHEMA_MANIFEST,
   HISTORICAL_SCHEMA_MANIFESTS,
@@ -13,7 +16,8 @@ import {
 import { DATABASE_CONTROL_CHECKSUM } from "../../src/infrastructure/schema/database-control-schema.ts";
 import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
 import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
-import { DRIZZLE_TENANT_PAN_V1_HASH, OFFICIAL_DRIZZLE_MIGRATIONS, officialDrizzleJournal, validateOfficialDrizzleJournal } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_TENANT_PAN_V1_HASH, OFFICIAL_DRIZZLE_MIGRATIONS, migrateFreshDrizzleDatabase, officialDrizzleJournal, validateOfficialDrizzleJournal } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { DRIZZLE_JOURNAL_TEXT, DRIZZLE_SQL_REGISTRY } from "../../src/infrastructure/services/drizzle-assets.ts";
 import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import {
@@ -87,6 +91,40 @@ describe("SQLite migration catalog", () => {
     expect(backup).not.toContain("MIGRATION_SCHEMA_SQLITE");
     expect(backup).not.toMatch(/DRIZZLE_[A-Z0-9_]+_MIGRATION_ID/);
     expect(backup).not.toMatch(/DRIZZLE_[A-Z0-9_]+_HASH/);
+  });
+
+  it("embeds exactly the committed journal SQL assets with no registry extras", async () => {
+    const sourceDirectory = join(import.meta.dir, "../../drizzle");
+    const journal = JSON.parse(DRIZZLE_JOURNAL_TEXT) as { entries: Array<{ tag: string }> };
+    const expectedNames = journal.entries.map((entry) => `${entry.tag}.sql`).sort();
+    expect(Object.keys(DRIZZLE_SQL_REGISTRY).sort()).toEqual(expectedNames);
+    expect(Object.isFrozen(DRIZZLE_SQL_REGISTRY)).toBe(true);
+    expect(DRIZZLE_JOURNAL_TEXT).toBe(await readFile(join(sourceDirectory, "meta/_journal.json"), "utf8"));
+    for (const filename of expectedNames) {
+      expect(DRIZZLE_SQL_REGISTRY[filename]).toBe(await readFile(join(sourceDirectory, filename), "utf8"));
+    }
+    expect(Object.keys(DRIZZLE_SQL_REGISTRY)).toHaveLength(await readdir(sourceDirectory).then((entries) => entries.filter((entry) => entry.endsWith(".sql")).length));
+  });
+
+  it("removes the owned embedded migration folder after success and failure", () => {
+    const database = new BunDatabase(":memory:");
+    let successfulFolder = "";
+    migrateFreshDrizzleDatabase(database, (drizzleDb, config) => {
+      successfulFolder = config.migrationsFolder;
+      return migrateDrizzle(drizzleDb, config);
+    });
+    expect(successfulFolder.startsWith(tmpdir())).toBe(true);
+    expect(existsSync(successfulFolder)).toBe(false);
+    database.close();
+
+    const failedDatabase = new BunDatabase(":memory:");
+    let failedFolder = "";
+    expect(() => migrateFreshDrizzleDatabase(failedDatabase, (_drizzleDb, config) => {
+      failedFolder = config.migrationsFolder;
+      throw new Error("injected migrator failure");
+    })).toThrow("Official Drizzle migration failed");
+    expect(existsSync(failedFolder)).toBe(false);
+    failedDatabase.close();
   });
 
   it("keeps ordinary construction and status inspection non-mutating, then upgrades explicitly", async () => {

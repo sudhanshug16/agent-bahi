@@ -1,11 +1,16 @@
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Database as BunDatabase } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRemoteMcpServer } from "../../src/mcp-http.ts";
+import { V8_SCHEMA_MANIFEST } from "../../src/infrastructure/schema/migration-catalog.ts";
+import { detectDatabaseState } from "../../src/infrastructure/services/database-state-detector.ts";
+import { OFFICIAL_DRIZZLE_MIGRATIONS } from "../../src/infrastructure/services/drizzle-baseline.ts";
+import { expectedSqliteCatalog, readSqliteCatalog, sqliteCatalogMatches } from "../../src/infrastructure/services/sqlite-catalog-validator.ts";
 
 const root = process.cwd();
 setDefaultTimeout(15_000);
@@ -65,7 +70,7 @@ async function waitForHealth(url: string): Promise<void> {
 async function compileSmokeBinary(): Promise<{ directory: string; binary: string }> {
   const directory = mkdtempSync(join(tmpdir(), "agent-bahi-compiled-bin-"));
   const binary = join(directory, "agent-bahi");
-  const build = spawn(process.execPath, ["build", join(root, "src/cli.ts"), "--compile", "--outfile", binary], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  const build = spawn(process.execPath, ["build", join(root, "src/cli.ts"), "--compile", "--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig", "--outfile", binary], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   build.stdout?.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
@@ -114,22 +119,51 @@ describe.serial("remote MCP Streamable HTTP", () => {
   it("smokes the compiled CLI/server binary", async () => {
     const compiled = await compileSmokeBinary();
     const directory = mkdtempSync(join(tmpdir(), "agent-bahi-compiled-http-"));
+    const unrelatedCwd = mkdtempSync(join(tmpdir(), "agent-bahi-unrelated-cwd-"));
     const path = join(directory, "books.sqlite");
-    const initialized = spawn(compiled.binary, ["--database", path, "database.init", "--json"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    const child = spawn(compiled.binary, ["--database", path, "mcp", "serve", "--port", "0"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+    const run = (args: string[]) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      const child = spawn(compiled.binary, args, { cwd: unrelatedCwd, stdio: ["ignore", "pipe", "pipe"] });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+      child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+      child.once("close", (code) => resolve({ code, stdout: Buffer.concat(stdout).toString(), stderr: Buffer.concat(stderr).toString() }));
+    });
     const stderr: Buffer[] = [];
+    let initialized: ChildProcess | undefined;
+    let child: ChildProcess | undefined;
     try {
-      const initializedCode = await new Promise<number | null>((resolve) => initialized.once("close", resolve));
+      const help = await run(["--help"]);
+      expect(help.code).toBe(0);
+      expect(help.stderr).toBe("");
+      expect(help.stdout).toContain("agent-bahi 1.0.0");
+      const version = await run(["version", "--json"]);
+      expect(version.code).toBe(0);
+      expect(version.stderr).toBe("");
+      expect(version.stdout).toContain('"version":"1.0.0"');
+      const initializedResult = await run(["--database", path, "database.init", "--json"]);
+      expect(initializedResult.code).toBe(0);
+      expect(initializedResult.stderr).toBe("");
+      const native = new BunDatabase(path, { readonly: true, safeIntegers: true });
+      const journal = native.query("SELECT id, hash, created_at FROM __drizzle_migrations ORDER BY id ASC").all();
+      expect(journal).toEqual(OFFICIAL_DRIZZLE_MIGRATIONS.map((migration) => ({ id: BigInt(migration.order), hash: migration.hash, created_at: BigInt(migration.createdAt) })));
+      expect(detectDatabaseState(native)).toMatchObject({ state: "DRIZZLE_MANAGED", drizzleMigrationCount: OFFICIAL_DRIZZLE_MIGRATIONS.length });
+      expect(sqliteCatalogMatches(readSqliteCatalog(native), expectedSqliteCatalog(V8_SCHEMA_MANIFEST, { kind: "drizzle", journalLength: OFFICIAL_DRIZZLE_MIGRATIONS.length }))).toBe(true);
+      native.close();
+      initialized = spawn(compiled.binary, ["--database", path, "database.status", "--json"], { cwd: unrelatedCwd, stdio: ["ignore", "pipe", "pipe"] });
+      const initializedCode = await new Promise<number | null>((resolve) => initialized?.once("close", resolve));
       expect(initializedCode).toBe(0);
+      child = spawn(compiled.binary, ["--database", path, "mcp", "serve", "--port", "0"], { cwd: unrelatedCwd, stdio: ["ignore", "ignore", "pipe"] });
       const diagnostic = await waitForStartup(child, stderr);
       const bindUrl = new URL(String(diagnostic.bindUrl));
       expect(bindUrl.hostname).toBe("127.0.0.1");
       expect(bindUrl.port).not.toBe("0");
       await waitForHealth(`${bindUrl.origin}/healthz`);
     } finally {
-      await terminate(initialized);
-      await terminate(child);
+      if (initialized) await terminate(initialized);
+      if (child) await terminate(child);
       rmSync(directory, { recursive: true, force: true });
+      rmSync(unrelatedCwd, { recursive: true, force: true });
       rmSync(compiled.directory, { recursive: true, force: true });
     }
   }, { timeout: 60_000 });

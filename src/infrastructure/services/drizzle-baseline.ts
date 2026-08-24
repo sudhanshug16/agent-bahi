@@ -9,25 +9,22 @@
 
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate as migrateDrizzle } from "drizzle-orm/bun-sqlite/migrator";
-import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Database as BunDatabase } from "bun:sqlite";
 import type { MigrationSession } from "../../application/ports/persistence.ts";
 import { DomainError } from "../../core/types.ts";
+import { DRIZZLE_JOURNAL_TEXT, DRIZZLE_SQL_REGISTRY } from "./drizzle-assets.ts";
 
 export const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations" as const;
-const packagedDrizzleDirectory = join(import.meta.dir, "../../..", "drizzle");
-/** Bun compile keeps typed registries embedded while existing Drizzle source
- * assets remain beside the distribution at its explicit launch root. */
-const DRIZZLE_MIGRATIONS_DIRECTORY = existsSync(join(packagedDrizzleDirectory, "meta", "_journal.json")) ? packagedDrizzleDirectory : join(process.cwd(), "drizzle");
 export const DRIZZLE_JOURNAL_DDL = `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
 \t\t\t\tid INTEGER PRIMARY KEY,
 \t\t\t\thash text NOT NULL,
 \t\t\t\tcreated_at numeric
 \t\t\t)` as const;
-
-const officialJournal = JSON.parse(readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, "meta", "_journal.json"), "utf8")) as {
+const officialJournal = JSON.parse(DRIZZLE_JOURNAL_TEXT) as {
   entries?: Array<{ idx: number; tag: string; when: number }>;
 };
 
@@ -46,9 +43,16 @@ if (journalEntries.length === 0 || journalEntries.some((entry, index) => entry.i
 
 /** The one ordered authority for committed Drizzle journal metadata and SQL. */
 export const OFFICIAL_DRIZZLE_MIGRATIONS: readonly DrizzleMigrationDescriptor[] = Object.freeze(journalEntries.map((entry, index) => {
-  const sql = readFileSync(join(DRIZZLE_MIGRATIONS_DIRECTORY, `${entry.tag}.sql`), "utf8");
+  const filename = `${entry.tag}.sql`;
+  const sql = DRIZZLE_SQL_REGISTRY[filename];
+  if (typeof sql !== "string") throw new Error(`Official Drizzle SQL asset is missing: ${filename}`);
   return Object.freeze({ id: entry.tag, order: index + 1, createdAt: entry.when, sql, hash: createHash("sha256").update(sql).digest("hex") });
 }));
+
+const journalAssetNames = new Set(journalEntries.map((entry) => `${entry.tag}.sql`));
+if (Object.keys(DRIZZLE_SQL_REGISTRY).some((filename) => !journalAssetNames.has(filename)) || journalAssetNames.size !== Object.keys(DRIZZLE_SQL_REGISTRY).length) {
+  throw new Error("Official Drizzle SQL asset registry does not exactly match the journal");
+}
 
 function descriptorAt(order: number): DrizzleMigrationDescriptor {
   const descriptor = OFFICIAL_DRIZZLE_MIGRATIONS[order - 1];
@@ -224,7 +228,26 @@ export async function seedOfficialDrizzleBaseline(session: MigrationSession): Pr
  * Run the official Drizzle migrator against the committed migration folder.
  * Its synchronous SQLite dialect owns the migration transaction and journal.
  */
-export function migrateFreshDrizzleDatabase(db: BunDatabase): void {
+export type DrizzleMigrator = typeof migrateDrizzle;
+
+function materializeDrizzleAssets(): string {
+  const migrationsDirectory = mkdtempSync(join(tmpdir(), "agent-bahi-drizzle-"));
+  try {
+    const metaDirectory = join(migrationsDirectory, "meta");
+    mkdirSync(metaDirectory);
+    writeFileSync(join(metaDirectory, "_journal.json"), DRIZZLE_JOURNAL_TEXT, "utf8");
+    for (const [filename, sql] of Object.entries(DRIZZLE_SQL_REGISTRY)) {
+      writeFileSync(join(migrationsDirectory, filename), sql, "utf8");
+    }
+    return migrationsDirectory;
+  } catch (error) {
+    rmSync(migrationsDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export function migrateFreshDrizzleDatabase(db: BunDatabase, migrator: DrizzleMigrator = migrateDrizzle): void {
+  const migrationsDirectory = materializeDrizzleAssets();
   try {
     // Drizzle's SQLite migrator omits id when inserting into its SERIAL column.
     // Pre-create the SQLite-native integer key so every official row is explicit,
@@ -232,12 +255,14 @@ export function migrateFreshDrizzleDatabase(db: BunDatabase): void {
     // application and journal values.
     db.exec(DRIZZLE_JOURNAL_DDL);
     const drizzleDb = drizzle(db);
-    migrateDrizzle(drizzleDb, { migrationsFolder: DRIZZLE_MIGRATIONS_DIRECTORY });
+    migrator(drizzleDb, { migrationsFolder: migrationsDirectory });
   } catch (error) {
     throw new DomainError(
       "DRIZZLE_MIGRATION_FAILED",
       `Official Drizzle migration failed: ${error instanceof Error ? error.message : String(error)}`,
     );
+  } finally {
+    rmSync(migrationsDirectory, { recursive: true, force: true });
   }
 }
 

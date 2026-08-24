@@ -33,6 +33,8 @@ describe("local MIT release packaging contract", () => {
     expect(manifest.private).toBeUndefined();
     expect(manifest.files).toEqual(expect.arrayContaining(["LICENSE", "README.md", "src", "dist"]));
     expect(manifest.scripts["build:release"]).toContain("bun run build");
+    expect(manifest.scripts.build).toContain("--no-compile-autoload-dotenv --no-compile-autoload-bunfig");
+    expect(manifest.scripts["build:macos-arm64"]).toContain("--no-compile-autoload-dotenv --no-compile-autoload-bunfig");
     expect(manifest.scripts["test:release"]).toBe("bun test tests/release-packaging.test.ts");
   });
 

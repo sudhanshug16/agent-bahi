@@ -4,17 +4,10 @@ import { DomainError } from "../../core/types.ts";
 import { DialectSqlBuilder } from "../sql/dialect-sql-builder.ts";
 import { DATABASE_CONTROL_CHECKSUM, DATABASE_CONTROL_TABLE_DDL } from "../schema/database-control-schema.ts";
 import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, type SqliteSchemaManifest } from "../schema/migration-catalog.ts";
-import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
+import { DRIZZLE_GST_HASH, DRIZZLE_GST_MIGRATION_ID, drizzleMigrationAt, officialDrizzleJournal, validateOfficialDrizzleJournal } from "./drizzle-baseline.ts";
 import { expectedSqliteCatalog, sqliteCatalogMatches, type SqliteCatalogRow } from "./sqlite-catalog-validator.ts";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 
-const packagedDrizzleDirectory = join(import.meta.dir, "../../..", "drizzle");
-const drizzleDirectory = existsSync(join(packagedDrizzleDirectory, "0009_drizzle_v8_baseline.sql")) ? packagedDrizzleDirectory : join(process.cwd(), "drizzle");
-const DRIZZLE_DATABASE_CONTROL_DDL = readFileSync(
-  join(drizzleDirectory, "0009_drizzle_v8_baseline.sql"),
-  "utf8",
-).split("--> statement-breakpoint")
+const DRIZZLE_DATABASE_CONTROL_DDL = drizzleMigrationAt(1).sql.split("--> statement-breakpoint")
   .find((statement) => statement.includes("CREATE TABLE `database_control`"))
   ?.replace(/;\s*$/, "")
   .trim() ?? "";
