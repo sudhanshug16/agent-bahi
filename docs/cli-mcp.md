@@ -59,6 +59,15 @@ application public facade. Operation inputs are JSON objects. Commands retain
 their versioned envelope, tenant/BookSet scope, actor, reason, and request ID;
 the transport does not infer missing scope or rewrite a request.
 
+For local bank files, configure an explicit operator-owned source root with
+`AGENT_BAHI_SOURCE_ROOT`. `source.inspect-file` supports
+`SCB_TRANSACTION_CSV_V1` and `CRAZE_VIRTUAL_ACCOUNT_CSV_V1`; it reads and
+previews only. `bank-statement.import-file` registers the immutable SHA-256
+source and atomically imports normalized statement rows through the existing
+bank-statement boundary. It never creates a journal, classifies tax/accounts,
+or treats derived work as posting authority. Files outside the configured root,
+symlinks, binary/encrypted files, and browser/secrets paths are rejected.
+
 Normal operations perform a side-effect-free database compatibility check first.
 `UNINITIALIZED` and `UPDATE_REQUIRED` are returned without creating schema or
 running migrations. Operator actions are explicit:

@@ -4,7 +4,7 @@
  */
 import { randomUUID } from "crypto";
 import { createHash } from "node:crypto";
-import type { TenantId, BookSetId } from "../core/types.ts";
+import type { TenantId, BookSetId, AccountId } from "../core/types.ts";
 
 export type ActorKind = "HUMAN" | "AGENT" | "SYSTEM";
 export type CommandSource = "CLI" | "MCP" | "INTERNAL" | "IMPORT";
@@ -40,6 +40,14 @@ export interface BookSetSetDefaultPayload {
 
 export interface BookSetArchivePayload {
   bookSetId: BookSetId;
+}
+
+export interface AccountCreatePayload {
+  code: string;
+  name: string;
+  accountType: "ASSET" | "LIABILITY" | "EQUITY" | "INCOME" | "EXPENSE";
+  kind?: "BANK" | "CASH" | "ORDINARY";
+  parentAccountId?: AccountId;
 }
 
 export interface TenantActivatePayload {

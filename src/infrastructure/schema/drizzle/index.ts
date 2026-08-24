@@ -32,6 +32,7 @@ export { vendorBills, vendorBillLines, vendorPayments, vendorPaymentAllocations 
 
 // Bank reconciliation schema
 export { bankStatements, bankStatementLines, bankMatches } from "./bank-reconciliation-schema";
+export { sourceRegistrations, sourceImportEvents } from "./source-registry-schema";
 
 // GST v1 schema
 export { partyGstProfiles, gstTaxSnapshots, gstTaxComponents } from "./gst-schema";

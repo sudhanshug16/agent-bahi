@@ -108,6 +108,8 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
     id: "bank-reconciliation", version: 1, title: "Bank reconciliation", summary: "Import bank evidence, inspect deterministic candidates, and confirm exact matches.", applicability: "A BookSet with an identified bank statement and explicit statement line scope.", requiredScope: "bookSet",
     preflightOperations: ["company.status", "bank-statement.list"],
     steps: [
+      op("source.inspect-file", "Preview local bank CSV", "bookSet", "Use the operator-configured source root and an exact parser ID; preview never persists or posts."),
+      op("bank-statement.import-file", "Import local bank CSV", "bookSet", "Register the immutable SHA-256 source and atomically call bank-statement import semantics; no journal or classification is created."),
       op("bank-statement.import", "Import statement", "bookSet", "Import with a stable request ID and preserve the source statement identity."),
       op("bank-match.candidates", "Inspect candidates", "bookSet", "Treat candidates as non-mutating suggestions; compare amount, date, currency, and source line."),
       op("bank-match.confirm", "Confirm exact match", "bookSet", "Submit only the exact statement line and target entry after the human confirmation gate."),

@@ -16,6 +16,10 @@ service and this repository does not publish packages or release tags.
   foreign-exchange, expense, company-status, and compliance reports.
 - Parties, invoices, receipts, vendor bills, payments, bank-statement import,
   and deterministic bank reconciliation.
+- Local Source Registry + Bank File Import V1 for the exact Standard Chartered
+  and Craze CSV contracts, with SHA-256 provenance, safe operator-root file
+  access, preview-only parsing, and no journal creation or automatic
+  classification.
 - GST registrations and source registers; source-backed GSTR-1 preparation,
   local validation, review-pack export, and bounded GSTR-3B reconciliation.
 - TDS/TCS and payroll masters, rule-gated pay runs, payslips, export-only bank

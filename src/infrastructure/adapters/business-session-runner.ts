@@ -35,6 +35,8 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "bank_statements",
   "bank_statement_lines",
   "bank_matches",
+  "source_registrations",
+  "source_import_events",
   "party_gst_profiles",
   "gst_tax_snapshots",
   "gst_tax_components",

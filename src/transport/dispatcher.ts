@@ -70,6 +70,7 @@ const handlers: Record<string, Handler> = {
   "account.get": (facade, input) => facade.account.getById(brandAccountId(text(input, "accountId")), tenantId(input), bookSetId(input)),
   "account.get-by-code": (facade, input) => facade.account.getByCode(text(input, "code"), tenantId(input), bookSetId(input)),
   "account.list": (facade, input) => facade.account.listByBookSet(tenantId(input), bookSetId(input)),
+  "account.create": (facade, input) => facade.account.create(input as never),
   "book-set.scope.resolve": (facade, input) => facade.bookSetScope.resolve(tenantId(input), optionalText(input, "bookSetId") ? { bookSetId: bookSetId(input) } : undefined),
   "journal.post": (facade, input) => facade.journal.post(input as never),
   "ledger.trial-balance": (facade, input) => facade.ledger.trialBalance(tenantId(input), bookSetId(input), text(input, "asOfDate")),
@@ -97,6 +98,8 @@ const handlers: Record<string, Handler> = {
   "bill.outstanding": (facade, input) => facade.bill.outstanding(tenantId(input), bookSetId(input)),
   "vendor-payment.record": (facade, input) => facade.vendorPayment.record(input as never),
   "bank-statement.import": (facade, input) => facade.bankStatement.import(input as never),
+  "source.inspect-file": (facade, input) => facade.bankStatement.inspectFile(input as never),
+  "bank-statement.import-file": (facade, input) => facade.bankStatement.importFile(input as never),
   "bank-statement.get": (facade, input) => facade.bankStatement.get(tenantId(input), bookSetId(input), text(input, "statementId")),
   "bank-statement.list": (facade, input) => facade.bankStatement.list(tenantId(input), bookSetId(input), optionalText(input, "statementId") ? { statementId: optionalText(input, "statementId") } : undefined),
   "bank-match.confirm": (facade, input) => facade.bankMatch.confirm(input as never),
@@ -389,6 +392,7 @@ export interface DispatcherOptions {
   readonly databasePath: string;
   readonly allowOperatorOperations?: boolean;
   readonly source?: "CLI" | "MCP";
+  readonly sourceRoot?: string;
 }
 
 export class OperationDispatcher {
@@ -408,7 +412,7 @@ export class OperationDispatcher {
       if (metadataOperationIds.has(operationId)) return this.dispatchMetadata(operationId, input);
       const compatibility = await inspectSqliteApplicationCompatibility(this.options.databasePath);
       if (compatibility.status !== "READY") return readinessError(operationId, compatibility.status, compatibility.requiredSchemaVersion);
-      const facade = createSqliteApplication(this.options.databasePath);
+      const facade = createSqliteApplication(this.options.databasePath, 1, 1, this.options.sourceRoot ?? process.env.AGENT_BAHI_SOURCE_ROOT);
       const commandResult = await handlers[operationId](facade, input);
       const isCommand = commandResult && typeof commandResult === "object" && "resultJson" in commandResult && "resultHash" in commandResult;
       const result = isCommand ? JSON.parse(String((commandResult as { resultJson: string }).resultJson)) : jsonValue(commandResult);

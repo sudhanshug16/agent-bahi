@@ -11,7 +11,8 @@ import type { TenantService } from "./services/tenant-service.ts";
 import type { BookSetService } from "./services/book-set-service.ts";
 import type { AccountService } from "./services/account-service.ts";
 import type { BookSetScopeService } from "./services/book-set-scope-service.ts";
-import type { CommandEnvelope, CommandResult, TenantCreatePayload } from "./commands.ts";
+import type { CommandEnvelope, CommandResult, TenantCreatePayload, AccountCreatePayload } from "./commands.ts";
+import { executeAccountCreate, type AccountCreateResult } from "./services/account-command-service.ts";
 import { executeTenantCreate, type TenantCreateResult } from "./services/tenant-command-service.ts";
 import { executeBookSetCreate, executeBookSetSetDefault, executeBookSetArchive, executeTenantActivate, type BookSetCreateResult, type BookSetSetDefaultResult, type BookSetArchiveResult, type TenantActivateResult } from "./services/bookset-command-service.ts";
 import type { BookSetCreatePayload, BookSetSetDefaultPayload, BookSetArchivePayload, TenantActivatePayload } from "./commands.ts";
@@ -22,6 +23,7 @@ import type { LedgerReportService, TrialBalanceReport, ProfitAndLossReport, Bala
 import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeReceiptRecord, getInvoice, listOutstandingInvoices, type PartyCreatePayload, type PartyCreateResult, type InvoiceCreatePayload, type InvoiceCreateResult, type InvoicePostPayload, type InvoicePostResult, type ReceiptRecordPayload, type ReceiptRecordResult, type InvoiceView } from "./services/sales-command-service.ts";
 import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
 import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
+import { inspectBankFileForScope, importBankFile, type SourceFileEnvelope, type SourceFilePreview, type SourceImportResult } from "./services/source-registry-service.ts";
 import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
 import { recordOutwardFacts, getOutwardFacts, listOutwardFacts, prepareReturn, validateReturn, exportReviewPack, recordObservation, getReturn, listReturns, readinessReport, type GstOutwardFactsPayload, type GstOutwardFactsView, type GstReturnPreparePayload, type GstReturnPrepareResult, type GstReturnValidateResult, type GstReturnExportPackPayload, type GstReturnExportPackResult, type GstReturnObservationPayload, type GstEnvelope } from "./services/gst-return-readiness-service.ts";
 import { registerGstReturnSchemaPack, verifyGstReturnSchemaPack, rejectGstReturnSchemaPack, showGstReturnSchemaPack, previewGstr1Artifact, prepareGstr1Artifact, validateGstr1Artifact, exportGstr1Artifact, showGstr1Artifact, statusGstr1Artifact, contentGstr1Artifact } from "./services/gst-gstr1-artifact-service.ts";
@@ -80,6 +82,7 @@ export interface AccountReadOperations {
   getByCode(code: string, tenantId: TenantId, bookSetId: BookSetId): Promise<Account | undefined>;
   listByBookSet(tenantId: TenantId, bookSetId: BookSetId): Promise<Account[]>;
 }
+export interface AccountCommands { create(envelope: SalesCommandEnvelope<AccountCreatePayload>): Promise<CommandResult<AccountCreateResult>>; }
 
 /**
  * Audited tenant commands
@@ -141,6 +144,8 @@ export interface BillCommands {
 export interface VendorPaymentCommands { record(envelope: SalesCommandEnvelope<VendorPaymentRecordPayload>): Promise<CommandResult<VendorPaymentRecordResult>>; }
 export interface BankStatementCommands {
   import(envelope: BankStatementEnvelope): Promise<CommandResult<BankStatementImportResult>>;
+  inspectFile(envelope: SourceFileEnvelope): Promise<SourceFilePreview>;
+  importFile(envelope: SourceFileEnvelope): Promise<CommandResult<SourceImportResult>>;
   get(tenantId: TenantId, bookSetId: BookSetId, statementId: string): Promise<BankStatementView>;
   list(tenantId: TenantId, bookSetId: BookSetId, filter?: { statementId?: string }): Promise<BankStatementView[]>;
 }
@@ -328,7 +333,7 @@ export interface TaxAuthorityOperations {
 export type PublicApplicationFacade = {
   tenant: TenantReadOperations & TenantCommands & { pan: TenantPanOperations };
   bookSet: BookSetReadOperations & BookSetCommands;
-  account: AccountReadOperations;
+  account: AccountReadOperations & AccountCommands;
   bookSetScope: BookSetScopeOperations;
   journal: JournalCommands;
   ledger: LedgerReportOperations;
@@ -369,6 +374,7 @@ export function createPublicFacade(
   sessionRunner: BusinessSessionRunner,
   ledgerReportService: LedgerReportService,
   companyStatusService: CompanyStatusService,
+  sourceRoot?: string,
 ): PublicApplicationFacade {
   const periodCloseService = new PeriodCloseService(sessionRunner);
   const closePackService = new ClosePackService(sessionRunner);
@@ -394,6 +400,7 @@ export function createPublicFacade(
       archive: (envelope: CommandEnvelope<BookSetArchivePayload>) => executeBookSetArchive(sessionRunner, envelope),
     },
     account: {
+      create: (envelope) => executeAccountCreate(sessionRunner, envelope),
       getById: (accountId: AccountId, tenantId: TenantId, bookSetId: BookSetId) => accountService.getById(accountId, tenantId, bookSetId),
       getByCode: (code: string, tenantId: TenantId, bookSetId: BookSetId) => accountService.getByCode(code, tenantId, bookSetId),
       listByBookSet: (tenantId: TenantId, bookSetId: BookSetId) => accountService.listByBookSet(tenantId, bookSetId),
@@ -424,7 +431,7 @@ export function createPublicFacade(
       outstanding: (tenantId, bookSetId) => listOutstandingBills(sessionRunner, tenantId, bookSetId),
     },
     vendorPayment: { record: (envelope) => executeVendorPaymentRecord(sessionRunner, envelope) },
-    bankStatement: { import: (envelope) => executeBankStatementImport(sessionRunner, envelope), get: (tenantId, bookSetId, statementId) => getBankStatement(sessionRunner, tenantId, bookSetId, statementId), list: (tenantId, bookSetId, filter) => listBankStatements(sessionRunner, tenantId, bookSetId, filter) },
+    bankStatement: { import: (envelope) => executeBankStatementImport(sessionRunner, envelope), inspectFile: (envelope) => inspectBankFileForScope(sessionRunner, envelope, sourceRoot), importFile: (envelope) => importBankFile(sessionRunner, envelope, sourceRoot), get: (tenantId, bookSetId, statementId) => getBankStatement(sessionRunner, tenantId, bookSetId, statementId), list: (tenantId, bookSetId, filter) => listBankStatements(sessionRunner, tenantId, bookSetId, filter) },
     bankMatch: { confirm: (envelope) => executeBankMatchConfirm(sessionRunner, envelope), undo: (envelope) => executeBankMatchUndo(sessionRunner, envelope), candidates: (tenantId, bookSetId, statementLineId) => bankMatchCandidates(sessionRunner, tenantId, bookSetId, statementLineId) },
     bankReconciliation: { status: (tenantId, bookSetId, statementId) => bankReconciliationStatus(sessionRunner, tenantId, bookSetId, statementId) },
     gst: {

@@ -190,6 +190,13 @@
       "when": 1787540000000,
       "tag": "0035_payroll_statutory_artifacts_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1787620000000,
+      "tag": "0036_source_registry_bank_file_import_v1",
+      "breakpoints": true
     }
   ]
 }

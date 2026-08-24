@@ -106,6 +106,7 @@ export function createSqliteApplication(
   dbPath: string,
   readerProtocol = 1,
   writerProtocol = 1,
+  sourceRoot = Bun.env.AGENT_BAHI_SOURCE_ROOT,
 ): PublicApplicationFacade {
   const sessionRunner = BusinessSessionFactory.createSessionRunner(dbPath, "sqlite", readerProtocol, writerProtocol);
   const internal = {
@@ -123,6 +124,7 @@ export function createSqliteApplication(
     sessionRunner,
     new LedgerReportService(sessionRunner),
     new CompanyStatusService(sessionRunner, () => inspectSqliteApplicationCompatibility(dbPath)),
+    sourceRoot,
   );
 }
 

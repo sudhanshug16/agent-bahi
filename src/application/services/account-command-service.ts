@@ -1,0 +1,23 @@
+import { randomUUID } from "node:crypto";
+import type { BusinessSessionRunner } from "../ports/persistence.ts";
+import type { CommandEnvelope, CommandResult, AccountCreatePayload } from "../commands.ts";
+import { canonicalJson, computeCommandHash, computeResultHash } from "../commands.ts";
+import { DomainError, IdempotencyConflictError, IdempotencyCorruptError } from "../../core/types.ts";
+import { validateCommandEnvelope } from "./bookset-command-service.ts";
+
+export interface AccountCreateResult { accountId: string; tenantId: string; bookSetId: string; code: string; name: string; accountType: AccountCreatePayload["accountType"]; kind: "BANK" | "CASH" | "ORDINARY"; }
+
+function text(value: unknown, field: string, max = 256): string { if (typeof value !== "string" || !value.trim() || value.length > max) throw new DomainError("INVALID_FIELD", `${field} must be nonblank and bounded`); return value.trim(); }
+
+export async function executeAccountCreate(runner: BusinessSessionRunner, envelope: CommandEnvelope<AccountCreatePayload> & { bookSetId: string }): Promise<CommandResult<AccountCreateResult>> {
+  validateCommandEnvelope(envelope); const p = envelope.payload; const code = text(p.code, "code", 64); const name = text(p.name, "name"); const kind = p.kind ?? "ORDINARY"; if (!["BANK", "CASH", "ORDINARY"].includes(kind)) throw new DomainError("INVALID_ACCOUNT_KIND", "kind must be BANK, CASH, or ORDINARY"); if (!["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"].includes(p.accountType)) throw new DomainError("INVALID_ACCOUNT_TYPE", "accountType is unsupported"); if ((kind === "BANK" || kind === "CASH") && p.accountType !== "ASSET") throw new DomainError("INVALID_ACCOUNT_TYPE", "BANK and CASH accounts must be ASSET accounts");
+  const requestHash = computeCommandHash("account.create", envelope, p);
+  return runner.withBusinessSession("write", async (session) => {
+    const existing = await session.querySingle("SELECT request_hash, result_json, result_hash FROM idempotency_records WHERE tenant_id = ? AND request_id = ?", [envelope.tenantId, envelope.requestId]); if (existing) { if (String(existing.request_hash) !== requestHash) throw new IdempotencyConflictError("same request_id with different request hash"); if (computeResultHash(String(existing.result_json)) !== String(existing.result_hash)) throw new IdempotencyCorruptError("stored result_json hash mismatch"); return { resultJson: String(existing.result_json), resultHash: String(existing.result_hash), replayed: true }; }
+    const bookSet = await session.querySingle("SELECT id, lifecycle FROM book_sets WHERE id = ? AND tenant_id = ?", [envelope.bookSetId, envelope.tenantId]); if (!bookSet || String(bookSet.lifecycle) !== "ACTIVE") throw new DomainError("BOOK_SET_NOT_FOUND", "BookSet does not belong to tenant or is inactive");
+    if (p.parentAccountId) { const parent = await session.querySingle("SELECT id FROM accounts WHERE id = ? AND tenant_id = ? AND book_set_id = ? AND archived_at IS NULL", [p.parentAccountId, envelope.tenantId, envelope.bookSetId]); if (!parent) throw new DomainError("PARENT_ACCOUNT_SCOPE_MISMATCH", "parent account does not belong to tenant and BookSet"); }
+    const id = randomUUID(); const now = new Date().toISOString(); await session.execute("INSERT INTO accounts (id, tenant_id, book_set_id, code, name, account_type, parent_account_id, archived_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)", [id, envelope.tenantId, envelope.bookSetId, code, name, p.accountType, p.parentAccountId ?? null, now, now]);
+    const result: AccountCreateResult = { accountId: id, tenantId: String(envelope.tenantId), bookSetId: String(envelope.bookSetId), code, name, accountType: p.accountType, kind };
+    const resultJson = canonicalJson(result); const resultHash = computeResultHash(resultJson); await session.execute("INSERT INTO audit_records (id, tenant_id, book_set_id, command, action, actor_type, actor_id, source, reason, request_id, canonical_after_hash, change_summary, committed_at, created_at) VALUES (?, ?, ?, 'account.create', 'account.create', ?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, envelope.actor.kind, envelope.actor.id, envelope.source, envelope.reason, envelope.requestId, resultHash, JSON.stringify({ entityType: "account", entityId: id, kind }), now, now]); await session.execute("INSERT INTO idempotency_records (id, tenant_id, request_id, request_hash, result_json, result_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.requestId, requestHash, resultJson, resultHash, now]); return { resultJson, resultHash };
+  });
+}

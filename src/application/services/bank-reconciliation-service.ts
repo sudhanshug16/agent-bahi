@@ -128,18 +128,29 @@ export async function executeBankStatementImport(sessionRunner: BusinessSessionR
   const requestHash = computeCommandHash("bankStatement.import", envelope, envelope.payload); const contentHash = importContentHash(envelope.payload);
   return sessionRunner.withBusinessSession("write", async (session) => {
     const replay = replayOrThrow(await existingCommand(session, envelope.tenantId, envelope.requestId), requestHash); if (replay) return replay as CommandResult<BankStatementImportResult>;
-    await assertBookSet(session, envelope.tenantId, envelope.bookSetId); await assertPeriodRangeOpen(session, envelope.tenantId, envelope.bookSetId, envelope.payload.periodStart, envelope.payload.periodEnd); await assertBankAccount(session, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId);
-    const existing = await session.querySingle("SELECT id, content_hash FROM bank_statements WHERE tenant_id = ? AND book_set_id = ? AND bank_account_id = ? AND external_statement_id = ?", [envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId, envelope.payload.externalStatementId]);
-    if (existing) {
-      if (String(existing.content_hash) !== contentHash) throw new DomainError("STATEMENT_IDEMPOTENCY_CONFLICT", "external statement already exists with different content");
-      const lines = await session.query("SELECT id FROM bank_statement_lines WHERE tenant_id = ? AND book_set_id = ? AND statement_id = ? ORDER BY line_number", [envelope.tenantId, envelope.bookSetId, String(existing.id)]);
-      return finish(session, envelope, "bankStatement.import", requestHash, { statementId: String(existing.id), externalStatementId: envelope.payload.externalStatementId, lineIds: lines.rows.map((row) => String(row.id)), status: "IMPORTED" }, "bank_statement", String(existing.id), new Date().toISOString()).then((result) => ({ ...result, replayed: true }));
-    }
-    const statementId = randomUUID(); const lineIds: string[] = []; const now = new Date().toISOString();
-    await session.execute("INSERT INTO bank_statements (id, tenant_id, book_set_id, bank_account_id, external_statement_id, period_start, period_end, opening_balance_minor, closing_balance_minor, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [statementId, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId, envelope.payload.externalStatementId, envelope.payload.periodStart, envelope.payload.periodEnd, envelope.payload.openingBalanceMinor, envelope.payload.closingBalanceMinor, contentHash, now]);
-    for (const row of envelope.payload.rows) { const lineId = randomUUID(); lineIds.push(lineId); await session.execute("INSERT INTO bank_statement_lines (id, tenant_id, book_set_id, statement_id, line_number, transaction_date, description, reference, signed_amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [lineId, envelope.tenantId, envelope.bookSetId, statementId, row.lineNumber, row.transactionDate, row.description, row.reference ?? null, row.signedAmountMinor]); if (envelope.payload.currency) await session.execute("INSERT INTO bank_statement_line_currencies (id, tenant_id, book_set_id, statement_line_id, account_id, currency_code, exponent, statement_minor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, lineId, envelope.payload.bankAccountId, envelope.payload.currency.currencyCode, envelope.payload.currency.exponent, row.statementMinorAmount ?? row.signedAmountMinor, now]); }
-    return finish(session, envelope, "bankStatement.import", requestHash, { statementId, externalStatementId: envelope.payload.externalStatementId, lineIds, status: "IMPORTED" }, "bank_statement", statementId, now);
+    const imported = await importBankStatementInSession(session, envelope, contentHash);
+    return finish(session, envelope, "bankStatement.import", requestHash, imported, "bank_statement", imported.statementId, new Date().toISOString());
   });
+}
+
+/**
+ * Shared bank import semantics for file-backed imports. The caller owns the
+ * business session so source registration and statement rows commit together.
+ */
+export async function importBankStatementInSession(session: BusinessSession, envelope: BankStatementEnvelope, contentHash = importContentHash(envelope.payload)): Promise<BankStatementImportResult> {
+  await assertBookSet(session, envelope.tenantId, envelope.bookSetId);
+  await assertPeriodRangeOpen(session, envelope.tenantId, envelope.bookSetId, envelope.payload.periodStart, envelope.payload.periodEnd);
+  await assertBankAccount(session, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId);
+  const existing = await session.querySingle("SELECT id, content_hash FROM bank_statements WHERE tenant_id = ? AND book_set_id = ? AND bank_account_id = ? AND external_statement_id = ?", [envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId, envelope.payload.externalStatementId]);
+  if (existing) {
+    if (String(existing.content_hash) !== contentHash) throw new DomainError("STATEMENT_IDEMPOTENCY_CONFLICT", "external statement already exists with different content");
+    const lines = await session.query("SELECT id FROM bank_statement_lines WHERE tenant_id = ? AND book_set_id = ? AND statement_id = ? ORDER BY line_number", [envelope.tenantId, envelope.bookSetId, String(existing.id)]);
+    return { statementId: String(existing.id), externalStatementId: envelope.payload.externalStatementId, lineIds: lines.rows.map((row) => String(row.id)), status: "IMPORTED" };
+  }
+  const statementId = randomUUID(); const lineIds: string[] = []; const now = new Date().toISOString();
+  await session.execute("INSERT INTO bank_statements (id, tenant_id, book_set_id, bank_account_id, external_statement_id, period_start, period_end, opening_balance_minor, closing_balance_minor, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [statementId, envelope.tenantId, envelope.bookSetId, envelope.payload.bankAccountId, envelope.payload.externalStatementId, envelope.payload.periodStart, envelope.payload.periodEnd, envelope.payload.openingBalanceMinor, envelope.payload.closingBalanceMinor, contentHash, now]);
+  for (const row of envelope.payload.rows) { const lineId = randomUUID(); lineIds.push(lineId); await session.execute("INSERT INTO bank_statement_lines (id, tenant_id, book_set_id, statement_id, line_number, transaction_date, description, reference, signed_amount_minor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [lineId, envelope.tenantId, envelope.bookSetId, statementId, row.lineNumber, row.transactionDate, row.description, row.reference ?? null, row.signedAmountMinor]); if (envelope.payload.currency) await session.execute("INSERT INTO bank_statement_line_currencies (id, tenant_id, book_set_id, statement_line_id, account_id, currency_code, exponent, statement_minor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [randomUUID(), envelope.tenantId, envelope.bookSetId, lineId, envelope.payload.bankAccountId, envelope.payload.currency.currencyCode, envelope.payload.currency.exponent, row.statementMinorAmount ?? row.signedAmountMinor, now]); }
+  return { statementId, externalStatementId: envelope.payload.externalStatementId, lineIds, status: "IMPORTED" };
 }
 
 async function loadStatement(session: BusinessSession, tenantId: TenantId, bookSetId: BookSetId, statementId: string): Promise<BankStatementView> {
