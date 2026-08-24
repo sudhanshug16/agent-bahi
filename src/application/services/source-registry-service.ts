@@ -226,7 +226,7 @@ function parseCraze(records: string[][], sourceLocator: string, contentHash: str
 function projectImportPeriod(parsed: ParsedBankFile, periodStart?: string, periodEnd?: string): ParsedBankFile {
   const start = periodStart === undefined ? parsed.sourcePeriodStart : isoDate(periodStart, "periodStart"); const end = periodEnd === undefined ? parsed.sourcePeriodEnd : isoDate(periodEnd, "periodEnd");
   if (start > end) throw new DomainError("INVALID_DATE_RANGE", "periodStart must not be after periodEnd");
-  if (start < parsed.sourcePeriodStart || end > parsed.sourcePeriodEnd) throw new DomainError("IMPORT_PERIOD_UNPROVABLE", "requested import period is outside the source range and its boundary balance cannot be proven");
+  if (end < parsed.sourcePeriodStart || start > parsed.sourcePeriodEnd) throw new DomainError("IMPORT_PERIOD_UNPROVABLE", "requested import period does not overlap the source range");
   const before = parsed.rows.filter((row) => row.transactionDate < start).length; const after = parsed.rows.filter((row) => row.transactionDate > end).length; const rows = parsed.rows.filter((row) => row.transactionDate >= start && row.transactionDate <= end);
   if (rows.length === 0) throw new DomainError("IMPORT_PERIOD_UNPROVABLE", "requested import period contains no transactions whose opening and closing balances can be proven");
   const first = rows[0]!; const last = rows.at(-1)!; const derivedOpening = before === 0 ? parsed.openingBalanceMinor : parsed.rows[before - 1]!.statementMinorAmount;

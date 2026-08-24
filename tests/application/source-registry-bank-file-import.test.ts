@@ -67,7 +67,7 @@ describe("local source registry and bank file import V1", () => {
     const imported = await app.bankStatement.importFile(envelope(created.tenantId, created.defaultBookSetId, base, "subset-import")); const result = JSON.parse(imported.resultJson) as { sourceId: string; statementId: string; importedRowCount: number; fullSourceRowCount: number }; expect(result.importedRowCount).toBe(1); expect(result.fullSourceRowCount).toBe(3); expect((await app.bankStatement.get(created.tenantId as never, created.defaultBookSetId as never, result.statementId)).lines).toHaveLength(1);
     const conflict = { ...base, periodStart: "2026-04-01", periodEnd: "2026-04-02" }; await expect(app.bankStatement.importFile(envelope(created.tenantId, created.defaultBookSetId, conflict, "subset-import"))).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     const full = await app.bankStatement.importFile(envelope(created.tenantId, created.defaultBookSetId, conflict, "full-import")); expect(JSON.parse(full.resultJson).sourceId).toBe(result.sourceId); expect(JSON.parse(full.resultJson).statementId).not.toBe(result.statementId);
-    await expect(app.bankStatement.inspectFile(envelope(created.tenantId, created.defaultBookSetId, { ...base, periodStart: "2026-03-31" }))).rejects.toMatchObject({ code: "IMPORT_PERIOD_UNPROVABLE" });
+    await expect(app.bankStatement.inspectFile(envelope(created.tenantId, created.defaultBookSetId, { ...base, periodStart: "2026-03-30", periodEnd: "2026-03-31" }))).rejects.toMatchObject({ code: "IMPORT_PERIOD_UNPROVABLE" });
   });
 
   it("excludes 52 post-financial-year Craze rows from an FY subset", async () => {
