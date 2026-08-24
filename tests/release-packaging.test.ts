@@ -54,7 +54,8 @@ describe("local MIT release packaging contract", () => {
     for (const entrypoint of [cli, mcp]) expect(entrypoint.startsWith("#!/usr/bin/env bun\n")).toBe(true);
     expect(workflow).toContain("name: Publish npm");
     expect(workflow).toContain("actions/checkout@v6");
-    expect(workflow).toContain("      - .github/workflows/publish-npm.yml");
+    const pushTrigger = workflow.slice(workflow.indexOf("  push:"), workflow.indexOf("  workflow_dispatch:"));
+    expect(pushTrigger).toContain("      - .github/workflows/publish-npm.yml");
     expect(workflow).toContain("actions/setup-node@v7");
     expect(workflow).not.toContain("actions/setup-node@v6");
     expect(workflow).toContain("node-version: 24");
@@ -62,7 +63,8 @@ describe("local MIT release packaging contract", () => {
     expect(workflow).toContain("package-manager-cache: false");
     expect(workflow).toContain("oven-sh/setup-bun@v2");
     expect(workflow).toContain("bun-version: 1.3.14");
-    expect(workflow).toContain("npm install --global npm@11.6.2");
+    expect(workflow).toContain("npm install --global npm@11.17.0");
+    expect(workflow).toContain('test "$(npm --version)" = "11.17.0"');
     expect(workflow).toContain("bun install --frozen-lockfile");
     expect(workflow).toContain("bun run release:check");
     expect(workflow).toContain("npm pack --dry-run");
@@ -72,20 +74,30 @@ describe("local MIT release packaging contract", () => {
     expect(workflow).toContain("agent-bahi --help");
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).toContain('if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then');
+    expect(workflow).toContain("Refusing to publish: GitHub Actions OIDC environment is unavailable.");
     expect(workflow).toContain('if [ -n "${NODE_AUTH_TOKEN:-}" ]; then');
-    expect(workflow).toContain('if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then');
-    expect(workflow).toContain("if grep -q '_authToken' \"$NPM_CONFIG_USERCONFIG\"; then");
+    expect(workflow).toContain("reject_npmrc_auth_token() {");
+    expect(workflow).toContain("grep -Eqi '(^|:)_authtoken[[:space:]]*=' \"$npmrc_path\"");
+    expect(workflow).toContain('reject_npmrc_auth_token ".npmrc"');
+    expect(workflow).toContain('reject_npmrc_auth_token "$HOME/.npmrc"');
+    expect(workflow).toContain('if [ -n "${NPM_CONFIG_USERCONFIG:-}" ]; then');
+    expect(workflow).toContain('reject_npmrc_auth_token "$NPM_CONFIG_USERCONFIG"');
     expect(workflow).toContain("Refusing to publish: NODE_AUTH_TOKEN is set");
-    expect(workflow).toContain("Refusing to publish: npm user config contains _authToken");
-    expect(workflow).toContain("npm publish --access public");
+    expect(workflow).toContain("Refusing to publish: npm config contains _authToken");
+    expect(workflow).toContain("npm publish --access public --loglevel verbose");
     expect(workflow).not.toMatch(/^\s*(?:export\s+)?NODE_AUTH_TOKEN\s*=/m);
     expect(workflow).not.toMatch(/^\s*NODE_AUTH_TOKEN:\s*/m);
     expect(workflow).not.toContain("npm stage publish");
     expect(workflow).not.toContain("--provenance");
 
     const publishCommand = workflow.indexOf("npm publish --access public");
+    expect(workflow.indexOf('if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('if [ -n "${NODE_AUTH_TOKEN:-}" ]; then')).toBeLessThan(publishCommand);
-    expect(workflow.indexOf('if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then')).toBeLessThan(publishCommand);
+    expect(workflow.indexOf('reject_npmrc_auth_token ".npmrc"')).toBeLessThan(publishCommand);
+    expect(workflow.indexOf('reject_npmrc_auth_token "$HOME/.npmrc"')).toBeLessThan(publishCommand);
+    expect(workflow.indexOf('reject_npmrc_auth_token "$NPM_CONFIG_USERCONFIG"')).toBeLessThan(publishCommand);
+    expect(workflow.indexOf("--loglevel verbose", publishCommand)).toBeGreaterThan(publishCommand);
   });
 
   it("ships the canonical generic MIT notice and truthful unsigned release metadata", async () => {
