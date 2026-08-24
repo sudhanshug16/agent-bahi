@@ -27,44 +27,110 @@ async function initializedDatabase(): Promise<{ directory: string; path: string 
   return { directory, path };
 }
 
-async function waitForClose(child: ChildProcess): Promise<void> {
+async function waitForClose(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise<void>((resolve) => child.once("close", () => resolve()));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    new Promise<void>((resolve) => child.once("close", () => resolve())),
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+  }
+}
+
+async function terminate(child: ChildProcess): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  await waitForClose(child);
+}
+
+async function waitForHealth(url: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  let lastStatus: number | undefined;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      lastStatus = response.status;
+      if (response.status === 200) return;
+    } catch {
+      // The listener may be live before the HTTP endpoint is accepting requests.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`MCP health check timed out (last status: ${lastStatus ?? "unreachable"})`);
+}
+
+async function compileSmokeBinary(): Promise<{ directory: string; binary: string }> {
+  const directory = mkdtempSync(join(tmpdir(), "agent-bahi-compiled-bin-"));
+  const binary = join(directory, "agent-bahi");
+  const build = spawn(process.execPath, ["build", join(root, "src/cli.ts"), "--compile", "--outfile", binary], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  build.stdout?.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+  build.stderr?.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+  try {
+    const code = await new Promise<number | null>((resolve) => build.once("close", resolve));
+    if (code !== 0) throw new Error(`compiled smoke build failed (${code}): ${Buffer.concat(stderr).toString() || Buffer.concat(stdout).toString()}`);
+    return { directory, binary };
+  } catch (error) {
+    await terminate(build);
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function waitForStartup(child: ChildProcess, stderr: Buffer[]): Promise<Record<string, unknown>> {
+  return await new Promise<Record<string, unknown>>((resolve, reject) => {
+    let buffer = "";
+    const timer = setTimeout(() => reject(new Error(`MCP startup timed out: ${Buffer.concat(stderr).toString()}`)), 10_000);
+    const onData = (chunk: Buffer) => {
+      stderr.push(Buffer.from(chunk));
+      buffer += chunk.toString();
+      for (const line of buffer.split("\n")) {
+        if (!line.includes('"event":"mcp.server.started"')) continue;
+        try {
+          clearTimeout(timer);
+          resolve(JSON.parse(line) as Record<string, unknown>);
+        } catch (error) {
+          clearTimeout(timer);
+          reject(error);
+        }
+        return;
+      }
+      buffer = buffer.slice(buffer.lastIndexOf("\n") + 1);
+    };
+    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timer);
+      reject(new Error(`MCP exited before startup: ${code ?? signal ?? "unknown"}`));
+    };
+    child.stderr?.on("data", onData);
+    child.once("close", onClose);
+  });
 }
 
 describe.serial("remote MCP Streamable HTTP", () => {
   it("smokes the compiled CLI/server binary", async () => {
-    const binary = join(root, "dist", "agent-bahi");
-    expect(await Bun.file(binary).exists()).toBe(true);
+    const compiled = await compileSmokeBinary();
     const directory = mkdtempSync(join(tmpdir(), "agent-bahi-compiled-http-"));
     const path = join(directory, "books.sqlite");
-    const initialized = spawn(binary, ["--database", path, "database.init", "--json"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    const initializedCode = await new Promise<number | null>((resolve) => initialized.once("close", resolve));
-    expect(initializedCode).toBe(0);
-    const child = spawn(binary, ["--database", path, "mcp", "serve", "--port", "0"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+    const initialized = spawn(compiled.binary, ["--database", path, "database.init", "--json"], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(compiled.binary, ["--database", path, "mcp", "serve", "--port", "0"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
     const stderr: Buffer[] = [];
-    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     try {
-      const diagnostic = await new Promise<Record<string, unknown>>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`compiled MCP startup timed out: ${Buffer.concat(stderr).toString()}`)), 10_000);
-        child.stderr.on("data", (chunk) => {
-          const line = Buffer.from(chunk).toString().split("\n").find((value) => value.includes('"event":"mcp.server.started"'));
-          if (line) {
-            clearTimeout(timer);
-            resolve(JSON.parse(line));
-          }
-        });
-        child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`compiled MCP exited before startup: ${code}`)); });
-        if (child.exitCode !== null || child.signalCode !== null) reject(new Error(`compiled MCP exited before startup: ${child.exitCode ?? child.signalCode}`));
-      });
+      const initializedCode = await new Promise<number | null>((resolve) => initialized.once("close", resolve));
+      expect(initializedCode).toBe(0);
+      const diagnostic = await waitForStartup(child, stderr);
       const bindUrl = new URL(String(diagnostic.bindUrl));
       expect(bindUrl.hostname).toBe("127.0.0.1");
       expect(bindUrl.port).not.toBe("0");
-      expect((await fetch(`${bindUrl.origin}/healthz`)).status).toBe(200);
+      await waitForHealth(`${bindUrl.origin}/healthz`);
     } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-      await waitForClose(child);
+      await terminate(initialized);
+      await terminate(child);
       rmSync(directory, { recursive: true, force: true });
+      rmSync(compiled.directory, { recursive: true, force: true });
     }
   }, { timeout: 60_000 });
 
@@ -74,18 +140,7 @@ describe.serial("remote MCP Streamable HTTP", () => {
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     try {
-      const diagnostic = await new Promise<Record<string, unknown>>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`MCP startup timed out: ${Buffer.concat(stderr).toString()}`)), 10_000);
-        child.stderr.on("data", (chunk) => {
-          const line = Buffer.from(chunk).toString().split("\n").find((value) => value.includes('"event":"mcp.server.started"'));
-          if (line) {
-            clearTimeout(timer);
-            resolve(JSON.parse(line));
-          }
-        });
-        child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`MCP exited before startup: ${code}`)); });
-        if (child.exitCode !== null || child.signalCode !== null) reject(new Error(`MCP exited before startup: ${child.exitCode ?? child.signalCode}`));
-      });
+      const diagnostic = await waitForStartup(child, stderr);
       const bindUrl = new URL(String(diagnostic.bindUrl));
       expect(bindUrl.hostname).toBe("127.0.0.1");
       expect(bindUrl.pathname).toBe("/mcp");
@@ -94,15 +149,14 @@ describe.serial("remote MCP Streamable HTTP", () => {
       expect(String(diagnostic.database)).not.toContain(database.directory);
       expect(await (await fetch(`${bindUrl.origin}/healthz`)).json()).toMatchObject({ ok: true, status: "LIVE" });
     } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-      await waitForClose(child);
+      await terminate(child);
       rmSync(database.directory, { recursive: true, force: true });
     }
   });
 
   it("serves health/readiness and the same initialize/tools/list/call contract as stdio", async () => {
     const database = await initializedDatabase();
-    const server = await startRemoteMcpServer({ databasePath: database.path, port: 39101 });
+    const server = await startRemoteMcpServer({ databasePath: database.path, port: 0 });
     const transport = new StreamableHTTPClientTransport(new URL(server.url));
     const client = new Client({ name: "remote-http-test", version: "1" }, { capabilities: {} });
     try {
@@ -134,7 +188,7 @@ describe.serial("remote MCP Streamable HTTP", () => {
     const database = await initializedDatabase();
     try {
       await expect(startRemoteMcpServer({ databasePath: database.path, host: "0.0.0.0", port: 0 })).rejects.toThrow("--allow-remote");
-      const server = await startRemoteMcpServer({ databasePath: database.path, host: "0.0.0.0", port: 39102, allowRemote: true, token: "correct-secret", allowedHosts: ["127.0.0.1"] });
+      const server = await startRemoteMcpServer({ databasePath: database.path, host: "0.0.0.0", port: 0, allowRemote: true, token: "correct-secret", allowedHosts: ["127.0.0.1"] });
       try {
         const url = new URL(server.url);
         const invalid = await fetch(url, { method: "POST", headers: { host: `127.0.0.1:${server.port}`, authorization: "Bearer wrong-secret", accept: "application/json, text/event-stream", "content-type": "application/json" }, body: "{}" });
@@ -152,7 +206,7 @@ describe.serial("remote MCP Streamable HTTP", () => {
 
   it("bounds malformed and oversized POST bodies and returns typed compatibility remediation", async () => {
     const database = await initializedDatabase();
-    const server = await startRemoteMcpServer({ databasePath: database.path, port: 39103, requestTimeoutMs: 50 });
+    const server = await startRemoteMcpServer({ databasePath: database.path, port: 0, requestTimeoutMs: 50 });
     try {
       const malformed = await fetch(server.url, { method: "POST", headers: { accept: "application/json, text/event-stream", "content-type": "application/json" }, body: "not-json" });
       expect(malformed.status).toBe(400);
@@ -171,7 +225,7 @@ describe.serial("remote MCP Streamable HTTP", () => {
   it("keeps readiness read-only and returns CLI-owned remediation for an uninitialized database", async () => {
     const directory = mkdtempSync(join(tmpdir(), "agent-bahi-remote-ready-"));
     const path = join(directory, "not-initialized.sqlite");
-    const server = await startRemoteMcpServer({ databasePath: path, port: 39105 });
+    const server = await startRemoteMcpServer({ databasePath: path, port: 0 });
     try {
       const response = await fetch(server.url.replace("/mcp", "/readyz"));
       expect(response.status).toBe(503);
