@@ -37,6 +37,7 @@ import { createClaimant, getClaimant, listClaimants, createClaim as createExpens
 import { createFactProfile, getFactProfile, listFactProfiles, createRuleSnapshot as createComplianceRuleSnapshot, getRuleSnapshot, listRuleSnapshots, createDeadlineSnapshot, getDeadlineSnapshot, listDeadlineSnapshots, createRulePredecessor, evaluateApplicability, getApplicabilityDecision, listApplicabilityDecisions, generateObligation, getObligation, listObligations, calendar, attachArtifact, recordObligationEvent, complianceStatus, type ComplianceEnvelope, type ComplianceFactProfileCreatePayload, type ComplianceRuleCreatePayload, type ComplianceDeadlineCreatePayload, type CompliancePredecessorCreatePayload, type ComplianceApplicabilityPayload, type ComplianceGeneratePayload, type ComplianceArtifactAttachPayload, type ComplianceEventPayload, type ObligationStatus } from "./services/compliance-obligations-service.ts";
 import { PeriodCloseService, type PeriodClosePayload, type PeriodReopenPayload, type PeriodPlan, type PeriodEventResult } from "./services/period-close-service.ts";
 import { ClosePackService, type ClosePackExportPayload, type ClosePackExportResult, type ClosePackManifest } from "./services/close-pack-service.ts";
+import { FiscalYearRolloverService, type FiscalYearRolloverFinalizePayload, type FiscalYearRolloverPreview, type FiscalYearRolloverResult } from "./services/fiscal-year-rollover-service.ts";
 import { registerMcaFormPack, verifyMcaFormPack, rejectMcaFormPack, showMcaFormPack, proposeMcaCompanyFact, confirmMcaCompanyFact, rejectMcaCompanyFact, listMcaCompanyFacts, previewMcaAnnual, prepareMcaAnnual, validateMcaAnnual, exportMcaAnnual, showMcaAnnual, statusMcaAnnual, contentMcaAnnual, packageStatusMcaAnnual } from "./services/mca-annual-filing-artifact-service.ts";
 import type { McaFormPackRegisterPayload, McaFormPackDecisionPayload, McaCompanyFactPayload, McaCompanyFactDecisionPayload, McaAnnualArtifactBindingPayload, McaAnnualArtifactValidatePayload, McaAnnualArtifactExportPayload } from "./commands.ts";
 import { executeTenantPanSet, getTenantPanProfile, revealTenantPan, type TenantPanProfileView, type TenantPanReveal, type TenantPanSetPayload, type TenantPanSetResult } from "./services/tenant-pan-service.ts";
@@ -247,6 +248,14 @@ export interface ClosePackOperations {
   getSection(tenantId: TenantId, bookSetId: BookSetId, manifestId: string, sectionName: string): Promise<string | null>;
 }
 
+export interface FiscalYearRolloverOperations {
+  preview(tenantId: TenantId, bookSetId: BookSetId, financialYear: string): Promise<FiscalYearRolloverPreview>;
+  finalize(envelope: CommandEnvelope<FiscalYearRolloverFinalizePayload> & { bookSetId: BookSetId }): Promise<CommandResult<FiscalYearRolloverResult>>;
+  show(tenantId: TenantId, bookSetId: BookSetId, financialYear: string, rolloverId: string): Promise<Record<string, unknown>>;
+  status(tenantId: TenantId, bookSetId: BookSetId, financialYear: string): Promise<Record<string, unknown>>;
+  export(tenantId: TenantId, bookSetId: BookSetId, financialYear: string, rolloverId: string, format: string): Promise<Record<string, unknown>>;
+}
+
 export interface McaAnnualOperations {
   formPack: { register(envelope: CommandEnvelope<McaFormPackRegisterPayload>): Promise<CommandResult<Record<string, unknown>>>; verify(envelope: CommandEnvelope<McaFormPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; reject(envelope: CommandEnvelope<McaFormPackDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; show(packId: string): Promise<Record<string, unknown>> };
   fact: { propose(envelope: CommandEnvelope<McaCompanyFactPayload> & { bookSetId: BookSetId }): Promise<CommandResult<Record<string, unknown>>>; confirm(envelope: CommandEnvelope<McaCompanyFactDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; reject(envelope: CommandEnvelope<McaCompanyFactDecisionPayload>): Promise<CommandResult<Record<string, unknown>>>; list(tenantId: TenantId, bookSetId: BookSetId): Promise<Record<string, unknown>[]> };
@@ -336,6 +345,7 @@ export type PublicApplicationFacade = {
   compliance: ComplianceOperations;
   periodClose: PeriodCloseOperations;
   closePack: ClosePackOperations;
+  fiscalYearRollover: FiscalYearRolloverOperations;
   mca: McaAnnualOperations;
   taxCase: TaxCaseOperations;
   taxAuthority: TaxAuthorityOperations;
@@ -356,6 +366,7 @@ export function createPublicFacade(
 ): PublicApplicationFacade {
   const periodCloseService = new PeriodCloseService(sessionRunner);
   const closePackService = new ClosePackService(sessionRunner);
+  const fiscalYearRolloverService = new FiscalYearRolloverService(sessionRunner);
   const facade: PublicApplicationFacade = {
     tenant: {
       getTenant: (tenantId: TenantId) => tenantService.getTenant(tenantId),
@@ -493,6 +504,13 @@ export function createPublicFacade(
       export: (envelope) => closePackService.export(envelope),
       getManifest: (tenantId, bookSetId, manifestId) => closePackService.getManifest(tenantId, bookSetId, manifestId),
       getSection: (tenantId, bookSetId, manifestId, sectionName) => closePackService.getSection(tenantId, bookSetId, manifestId, sectionName),
+    },
+    fiscalYearRollover: {
+      preview: (tenantId, bookSetId, financialYear) => fiscalYearRolloverService.preview(tenantId, bookSetId, financialYear),
+      finalize: (envelope) => fiscalYearRolloverService.finalize(envelope),
+      show: (tenantId, bookSetId, financialYear, rolloverId) => fiscalYearRolloverService.show(tenantId, bookSetId, financialYear, rolloverId),
+      status: (tenantId, bookSetId, financialYear) => fiscalYearRolloverService.status(tenantId, bookSetId, financialYear),
+      export: (tenantId, bookSetId, financialYear, rolloverId, format) => fiscalYearRolloverService.export(tenantId, bookSetId, financialYear, rolloverId, format),
     },
     mca: {
       formPack: { register: (envelope) => registerMcaFormPack(sessionRunner, envelope), verify: (envelope) => verifyMcaFormPack(sessionRunner, envelope), reject: (envelope) => rejectMcaFormPack(sessionRunner, envelope), show: (packId) => showMcaFormPack(sessionRunner, packId) },

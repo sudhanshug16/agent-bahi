@@ -130,6 +130,7 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "close_pack_sections",
   "close_pack_bodies",
   "book_set_ledger_revisions",
+  "fiscal_year_rollovers",
   "tax_cases",
   "tax_case_membership_versions",
   "tax_case_memberships",

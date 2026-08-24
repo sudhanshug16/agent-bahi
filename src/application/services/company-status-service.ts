@@ -711,16 +711,18 @@ async function artifactCounts(session: BusinessSession, tenantId: string, bookSe
   return { gstArtifacts: gst.rows.length, gstExported: gstExports.rows.length, gstr3bArtifacts: gstr3b.rows.length, gstr3bExported: gstr3bExports.rows.length, tdsArtifacts: tds.rows.length, tdsExported: tdsExports.rows.length };
 }
 
-async function periodCounts(session: BusinessSession, tenantId: string, bookSetId: string): Promise<{ closeEvents: number; reopened: number; packs: number; stalePacks: number }> {
-  const [events, packs] = await Promise.all([
+async function periodCounts(session: BusinessSession, tenantId: string, bookSetId: string): Promise<{ closeEvents: number; reopened: number; packs: number; stalePacks: number; rollovers: number }> {
+  const [events, packs, rollovers] = await Promise.all([
     session.query("SELECT event_type FROM period_close_events WHERE tenant_id = ? AND book_set_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 100", [tenantId, bookSetId]),
     session.query("SELECT period_close_label, period_close_state_hash, period_end FROM close_pack_manifests WHERE tenant_id = ? AND book_set_id = ? ORDER BY created_at DESC, id DESC LIMIT 100", [tenantId, bookSetId]),
+    session.query("SELECT id FROM fiscal_year_rollovers WHERE tenant_id = ? AND book_set_id = ? ORDER BY financial_year, id", [tenantId, bookSetId]),
   ]);
   return {
     closeEvents: events.rows.length,
     reopened: events.rows.filter((row) => String(row.event_type) === "REOPENED").length,
     packs: packs.rows.length,
     stalePacks: packs.rows.filter((row) => String(row.period_close_label) === "REOPENED").length,
+    rollovers: rollovers.rows.length,
   };
 }
 
@@ -805,7 +807,8 @@ async function buildCards(
   const periodData = await Promise.all(summaries.slice(0, CARD_LIMIT).map((summary) => periodCounts(session, summary.bookSet.tenantId, summary.bookSet.bookSetId)));
   const closeEvents = periodData.reduce((n, item) => n + item.closeEvents, 0);
   const reopened = periodData.reduce((n, item) => n + item.reopened + item.stalePacks, 0);
-  cards.push(card("period-close", cardState(closeEvents + periodData.reduce((n, item) => n + item.packs, 0) > 0, false, false, reopened > 0), reopened > 0 ? "Period close or CA pack evidence is stale/reopened." : closeEvents > 0 ? "Period close evidence is present." : "Period close is not configured.", { closeEvents, staleOrReopened: reopened }, reopened ? ["PERIOD_CLOSE_OR_PACK_STALE"] : [], [], asOfDate, asOfTimestamp, [...common, { operationId: "period.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}) } }, { operationId: "report.close-pack.get", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), manifestId: "<manifest-id>" } }]));
+  const finalizedRollovers = periodData.reduce((n, item) => n + item.rollovers, 0);
+  cards.push(card("period-close", cardState(closeEvents + periodData.reduce((n, item) => n + item.packs, 0) > 0, false, false, reopened > 0), reopened > 0 ? "Period close or CA pack evidence is stale/reopened." : closeEvents > 0 ? `Period close evidence is present${finalizedRollovers > 0 ? `; ${finalizedRollovers} FY rollover snapshot${finalizedRollovers === 1 ? "" : "s"} finalized.` : "."}` : "Period close is not configured.", { closeEvents, staleOrReopened: reopened, fiscalYearRolloversFinalized: finalizedRollovers }, reopened ? ["PERIOD_CLOSE_OR_PACK_STALE"] : [], [], asOfDate, asOfTimestamp, [...common, { operationId: "period.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}) } }, { operationId: "report.close-pack.get", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), manifestId: "<manifest-id>" } }, { operationId: "fiscal-year.rollover.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), financialYear: "<YYYY-YYYY>" } }]));
 
   const mcaTenantPlaceholders = tenants.map(() => "?").join(",");
   const mcaTenantIds = tenants.map((tenant) => String(tenant.id));

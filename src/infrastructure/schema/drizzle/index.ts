@@ -116,6 +116,9 @@ export { periodCloseEvents } from "./period-close-schema";
 // Close Pack V1
 export { closePackManifests, closePackSections, closePackBodies } from "./close-pack-schema";
 
+// Fiscal Year Rollover V1
+export { fiscalYearRollovers } from "./fiscal-year-rollover-schema";
+
 // Personal TaxCase foundation V1
 export { bookSetLedgerRevisions, taxCases, taxCaseMembershipVersions, taxCaseMemberships, personalTaxSourceArtifacts, taxCaseExternalSources, taxCaseSourceArtifacts, taxCaseFacts, taxCaseFactEvents, taxCaseFactReconciliations, filingSnapshots, filingSnapshotBookSets, filingSnapshotSources, filingSnapshotFacts, filingSnapshotReconciliations, personalTaxPositionWorksheets, taxCaseSourceAssessments, taxCaseSourceAssessmentEvents } from "./personal-taxcase-schema";
 
