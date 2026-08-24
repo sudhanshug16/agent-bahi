@@ -27,6 +27,8 @@ describe("MCA private-company annual filing preparation V1", () => {
       expect(registered.lifecycle).toBe("REGISTERED");
       await expect(app.mca.formPack.verify(envelope(tenant.tenantId, "mca-pack-agent-verify", { packId: registered.packId, expectedPackHash: registered.canonicalHash, reason: "agent cannot verify" }))).rejects.toMatchObject({ code: "MCA_HUMAN_REQUIRED" });
       await app.mca.formPack.verify(envelope(tenant.tenantId, "mca-pack-human-verify", { packId: registered.packId, expectedPackHash: registered.canonicalHash, reason: "human verified TEST_ONLY pack" }, "HUMAN"));
+      const packageStatus = await app.mca.annual.packageStatus(tenant.tenantId, tenant.defaultBookSetId, "2025-26");
+      expect(packageStatus.forms).toHaveLength(7);
 
       const fact = JSON.parse((await app.mca.fact.propose(envelope(tenant.tenantId, "mca-fact-propose", { bookSetId: tenant.defaultBookSetId, legalIdentityId: identityId, financialYear: "2025-26", factType: "COMPANY_PROFILE", effectiveFrom: "2025-04-01", facts: { companyClass: "PRIVATE" }, provenance: { source: "TEST_ONLY" }, evidenceIds: ["evidence-company-profile"] }, "AGENT", tenant.defaultBookSetId))).resultJson);
       expect(fact.lifecycle).toBe("PROPOSED");

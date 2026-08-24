@@ -25,6 +25,15 @@ async function payrollFixture() {
 }
 
 describe("payroll V1", () => {
+  it("lists an empty payroll register for a scoped BookSet", async () => {
+    const fixture = await payrollFixture();
+    try {
+      await expect(fixture.app.payroll.register(fixture.tenant.tenantId as never, fixture.tenant.defaultBookSetId as never)).resolves.toEqual([]);
+    } finally {
+      new BunDatabase(fixture.dbPath).close();
+    }
+  });
+
   it("runs a scoped rule-gated payroll through posting and deterministic payslip", async () => {
     const dbPath = join(tmpdir(), `payroll-${randomUUID()}.sqlite`);
     const app = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(tmpdir(), `payroll-backup-${randomUUID()}.sqlite`), cliVersion: "test", buildId: "payroll-test" });
