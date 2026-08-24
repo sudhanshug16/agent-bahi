@@ -183,6 +183,13 @@
       "when": 1787535217517,
       "tag": "0034_fiscal_year_rollover_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1787540000000,
+      "tag": "0035_payroll_statutory_artifacts_v1",
+      "breakpoints": true
     }
   ]
 }

@@ -171,6 +171,11 @@ const BUSINESS_TABLE_ALLOWLIST = new Set([
   "withholding_statement_artifacts",
   "withholding_statement_validation_runs",
   "withholding_statement_export_activities",
+  "payroll_statutory_packs",
+  "payroll_statutory_pack_events",
+  "payroll_statutory_artifacts",
+  "payroll_statutory_validation_runs",
+  "payroll_statutory_export_activities",
 ]);
 
 const FORBIDDEN_SQL_WORDS = new Set([

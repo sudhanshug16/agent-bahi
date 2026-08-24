@@ -234,6 +234,21 @@ export interface WithholdingStatementBindingPayload { bookSetId: string; deducto
 export interface WithholdingStatementArtifactValidatePayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; }
 export interface WithholdingStatementArtifactExportPayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
 
+export type PayrollStatutorySemanticKind = "SALARY_TDS_QUARTERLY_STATEMENT" | "SALARY_TDS_ANNUAL_CERTIFICATE";
+export type PayrollStatutoryExportFormat = "JSON" | "CSV" | "TEXT";
+export interface PayrollStatutoryPackRegisterPayload {
+  packId?: string; semanticKind: PayrollStatutorySemanticKind; applicableFrom: string; applicableTo?: string;
+  officialFormCode: string; officialFormVersion: string; authorityReference: string; validatorVersion: string;
+  validationSchema: unknown; mappingSpec: unknown; exportFormat?: PayrollStatutoryExportFormat; supersedesPackId?: string;
+}
+export interface PayrollStatutoryPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface PayrollStatutoryArtifactBindingPayload {
+  bookSetId: string; semanticKind: PayrollStatutorySemanticKind; financialYear: string; quarter?: "Q1" | "Q2" | "Q3" | "Q4";
+  employeeId?: string; payRunIds: string[]; schemaPackId: string;
+}
+export interface PayrollStatutoryArtifactValidatePayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; }
+export interface PayrollStatutoryArtifactExportPayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
+
 export interface CommandResult<T> {
   resultJson: string;
   resultHash: string;
