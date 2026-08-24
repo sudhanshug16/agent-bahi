@@ -136,6 +136,20 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
     nextDrilldowns: [{ title: "Inspect import report", operationId: "zoho-backup.status" }],
   }),
   guide({
+    id: "source-staging", version: 1, title: "Source staging", summary: "Preview and stage supported SCB-derived CSV and Munim PDF source families as immutable normalized facts.", applicability: "A BookSet with an explicit tenant and BookSet scope and an operator-owned allowed source root.", requiredScope: "bookSet",
+    preflightOperations: ["company.status", "source-staging.preview"],
+    steps: [
+      op("source-staging.preview", "Preview source family", "bookSet", "Use the exact parser ID, explicit source root, source hash, and deterministic PDF extractor diagnostics. Preview never persists or posts."),
+      op("source-staging.stage", "Stage normalized facts", "bookSet", "Stage only source-linked normalized facts with immutable provenance. Canonical parties, documents, bank rows, tax cases, and journals remain unchanged."),
+      op("source-staging.status", "Inspect staged batch", "bookSet", "Read the exact redacted staging report and retain staged, rejected, unsupported, and zero-posting counts."),
+    ],
+    allowedAgentJudgmentPoints: ["Identify missing or ambiguous source coverage for human review; never infer a party, account, document, tax case, match, adjustment, filing, or posting."],
+    humanOnlyGates: [{ id: "source-staging-review", title: "Source staging review", reason: "Unresolved source facts and source coverage remain human-owned review outcomes; staging does not authorize canonical posting.", operationIds: ["source-staging.stage"], evidence: ["Exact source hash and parser fingerprint", "Redacted preview report", "Human review of unresolved or rejected coverage"] }],
+    blockerRemediation: [{ blocker: "PDF_EXTRACTOR_UNAVAILABLE or PDF_EXTRACTION_FAILED", remediation: "Install or explicitly configure the bounded pdftotext-compatible extractor and preview again." }, { blocker: "REJECTED or UNKNOWN_MISSING source coverage", remediation: "Retain the immutable report and obtain a corrected or separately supported source; do not force staging." }],
+    completionEvidence: [...commonEvidence, "The staging report proves zero journal postings and redacts source locator and source facts outside the normalized safe fields."],
+    nextDrilldowns: [{ title: "Inspect staged source", operationId: "source-staging.status" }],
+  }),
+  guide({
     id: "gst-gstr1-return", version: 1, title: "GST GSTR-1 return", summary: "Prepare and locally validate a source-linked GSTR-1 artifact from a READY snapshot.", applicability: "A GST-registered BookSet with an explicit registration, tax period, readiness snapshot, and verified schema pack.", requiredScope: "bookSet",
     statusFocus: ["gst", "compliance"], statusActionCodes: ["GST_ITC_REVIEW_REQUIRED", "GST_EXPORTED_NOT_SUBMITTED", "COMPLIANCE_OBLIGATION_OVERDUE"],
     preflightOperations: ["company.status", "gst.return.readiness-report"],

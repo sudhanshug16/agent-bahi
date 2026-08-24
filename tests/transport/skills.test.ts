@@ -23,8 +23,8 @@ function parsed(text: string): Record<string, unknown> { return JSON.parse(text)
 
 describe("canonical Agent-Bahi skill guides and help operations", () => {
   it("contains unique guides with no registry integrity issues", () => {
-    expect(SKILL_GUIDES).toHaveLength(11);
-    expect(new Set(SKILL_GUIDES.map((guide) => guide.id)).size).toBe(11);
+    expect(SKILL_GUIDES).toHaveLength(12);
+    expect(new Set(SKILL_GUIDES.map((guide) => guide.id)).size).toBe(12);
     expect(validateSkillGuides()).toEqual([]);
     for (const guide of SKILL_GUIDES) {
       expect(guide.preflightOperations.length).toBeGreaterThan(0);

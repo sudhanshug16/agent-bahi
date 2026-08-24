@@ -34,6 +34,7 @@ export { vendorBills, vendorBillLines, vendorPayments, vendorPaymentAllocations 
 export { bankStatements, bankStatementLines, bankMatches } from "./bank-reconciliation-schema";
 export { sourceRegistrations, sourceImportEvents } from "./source-registry-schema";
 export { zohoBackupImports, zohoBackupImportFiles, zohoBackupImportRows } from "./zoho-backup-schema";
+export { sourceStagingBatches, sourceStagingFiles, sourceStagingRows, sourceStagingFacts } from "./source-staging-schema";
 
 // GST v1 schema
 export { partyGstProfiles, gstTaxSnapshots, gstTaxComponents } from "./gst-schema";
