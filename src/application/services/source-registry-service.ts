@@ -92,12 +92,12 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 function normalizedDate(value: string, field: string, format: "SCB" | "CRAZE"): string {
   const cell = canonicalCell(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(cell)) return isoDate(cell, field);
-  const match = format === "SCB" ? /^(\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})$/.exec(cell) : /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{2}), (\d{4})$/.exec(cell);
+  const match = format === "SCB" ? /^(\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})$/.exec(cell) : /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4})$/.exec(cell);
   if (!match) throw new DomainError("INVALID_DATE", `${field} must be a valid ISO date or exact English ${format === "SCB" ? "DD Mon YYYY" : "Mon DD, YYYY"} date`);
   const day = format === "SCB" ? match[1]! : match[2]!;
   const month = format === "SCB" ? match[2]! : match[1]!;
   const year = format === "SCB" ? match[3]! : match[3]!;
-  return isoDate(`${year}-${String(MONTHS.indexOf(month as typeof MONTHS[number]) + 1).padStart(2, "0")}-${day}`, field);
+  return isoDate(`${year}-${String(MONTHS.indexOf(month as typeof MONTHS[number]) + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`, field);
 }
 function safeAdd(left: number, right: number): number {
   const value = left + right;
@@ -200,8 +200,8 @@ function parseScb(records: string[][], sourceLocator: string, contentHash: strin
     const record = records[index]!; if (record.length !== SCB_HEADERS.length) throw new DomainError("MALFORMED_CSV", `row ${index + 1} has the wrong number of columns`);
     const [accountNumber, accountName, address, _currency, dateValue, description, withdrawalRaw, depositRaw, balanceRaw] = record.map(canonicalCell);
     if (!dateValue || !description || !accountNumber) throw new DomainError("INVALID_BANK_ROW", `SCB row ${index + 1} is missing account, date, or description`);
-    const date = normalizedDate(dateValue, `row ${index + 1} Date`, "SCB"); const withdrawalAmount = parseMinor(withdrawalRaw, `row ${index + 1} Withdrawal`); const depositAmount = parseMinor(depositRaw, `row ${index + 1} Deposit`); const withdrawal = parseMovement(withdrawalRaw, `row ${index + 1} Withdrawal`); const deposit = parseMovement(depositRaw, `row ${index + 1} Deposit`); const balance = parseMinor(balanceRaw, `row ${index + 1} Balance`);
-    if (description === "Closing Balance" && withdrawalAmount === 0 && depositAmount === 0 && balance !== undefined) { excludedRows.push({ rowNumber: index + 1, reason: "CLOSING_BALANCE_ONLY" }); closingRows.push({ date, balance }); accounts.add(accountNumber); names.add(accountName); continue; }
+    const date = normalizedDate(dateValue, `row ${index + 1} Date`, "SCB"); const withdrawal = parseMovement(withdrawalRaw, `row ${index + 1} Withdrawal`); const deposit = parseMovement(depositRaw, `row ${index + 1} Deposit`); const balance = parseMinor(balanceRaw, `row ${index + 1} Balance`);
+    if (description === "Closing Balance" && withdrawal === undefined && deposit === undefined && balance !== undefined) { excludedRows.push({ rowNumber: index + 1, reason: "CLOSING_BALANCE_ONLY" }); closingRows.push({ date, balance }); accounts.add(accountNumber); names.add(accountName); continue; }
     if (balance === undefined || ((withdrawal === undefined) === (deposit === undefined))) throw new DomainError("INVALID_BANK_ROW", `SCB row ${index + 1} must contain exactly one withdrawal or deposit and a balance`);
     const signed = deposit !== undefined ? deposit : -withdrawal!; duplicateGuard(canonicalJson([date, description, signed, balance, accountNumber]), seen); accounts.add(accountNumber); names.add(accountName);
     rows.push({ lineNumber: index + 1, transactionDate: date, description, reference: address || undefined, signedAmountMinor: signed, statementMinorAmount: balance }); running.push({ date, balance, signed });

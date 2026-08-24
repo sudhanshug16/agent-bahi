@@ -26,7 +26,7 @@ describe("local source registry and bank file import V1", () => {
       "Account Number,Account Name,Address,Currency,Date,Description,Withdrawal,Deposit,Balance",
       "1234567890,Source Co,\"12 Main St, Mumbai\",INR,01 Apr 2026,\"Opening, receipt\",0.00,100.00,1100.00",
       "1234567890,Source Co,\"12 Main St, Mumbai\",INR,02 Apr 2026,Payment,50.00,0.00,1050.00",
-      "1234567890,Source Co,\"12 Main St, Mumbai\",INR,02 Apr 2026,Closing Balance,0.00,0.00,1050.00",
+      "1234567890,Source Co,\"12 Main St, Mumbai\",INR,02 Apr 2026,Closing Balance,,,1050.00",
     ].join("\n"));
     const app = createSqliteApplication(dbPath, 1, 1, sourceRoot);
     const account = await app.account.create(envelope(created.tenantId, created.defaultBookSetId, { code: "1010", name: "Operating Bank", accountType: "ASSET", kind: "BANK" }));
@@ -46,7 +46,7 @@ describe("local source registry and bank file import V1", () => {
   it("parses CRAZE files and rejects malformed, imbalanced, duplicate, and unsafe inputs", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-source-negative-")); const sourceRoot = join(directory, "sources"); await mkdir(sourceRoot, { recursive: true }); const dbPath = join(directory, "books.sqlite");
     const bootstrap = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") }); const created = JSON.parse((await bootstrap.tenant.create(envelope("bootstrap", "ignored", { kind: "COMPANY", name: "Craze Co" }))).resultJson) as { tenantId: string; defaultBookSetId: string; seedAccountIds: { cash: string } }; const app = createSqliteApplication(dbPath, 1, 1, sourceRoot);
-    const filePath = join(sourceRoot, "craze.csv"); await writeFile(filePath, ["Date,Party Name,Transaction Type,Description,Status,Debit,Credit,Balance", '"May 01, 2026",Wallet,TRANSFER,Top up,SETTLED,0.00,250.50,1250.50', '"May 02, 2026",Wallet,TRANSFER,Fee,SETTLED,10.50,0.00,1240.00'].join("\n"));
+    const filePath = join(sourceRoot, "craze.csv"); await writeFile(filePath, ["Date,Party Name,Transaction Type,Description,Status,Debit,Credit,Balance", '"May 01, 2026",Wallet,TRANSFER,Top up,SETTLED,0.00,250.50,1250.50', '"May 2, 2026",Wallet,TRANSFER,Fee,SETTLED,10.50,0.00,1240.00'].join("\n"));
     const base = { tenantId: created.tenantId, bookSetId: created.defaultBookSetId, bankAccountId: created.seedAccountIds.cash, parserId: "CRAZE_VIRTUAL_ACCOUNT_CSV_V1" as const, filePath };
     const preview = await app.bankStatement.inspectFile(envelope(created.tenantId, created.defaultBookSetId, base)); expect(preview.transactionCount).toBe(2); expect(preview.closingBalanceMinor).toBe(124_000);
     await writeFile(filePath, ["Date,Party Name,Transaction Type,Description,Status,Debit,Credit,Balance", '"May 01, 2026",Wallet,TRANSFER,Top up,SETTLED,1.00,2.00,100.00'].join("\n"));
