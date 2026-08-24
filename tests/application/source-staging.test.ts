@@ -29,6 +29,58 @@ describe("Source Staging V1", () => {
     const mcpEnvelope = await new OperationDispatcher({ databasePath: dbPath, sourceRoot, source: "MCP" }).dispatch("source-staging.status", { tenantId: tenant.tenantId, bookSetId: tenant.defaultBookSetId, stagingId: report.stagingId }); expect(mcpEnvelope).toEqual(cliEnvelope);
   });
 
+  it("rediscovers bounded scoped batches with deterministic privacy-safe metadata", async () => {
+    directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-source-stage-list-"));
+    const sourceRoot = join(directory, "sources"); await mkdir(sourceRoot);
+    const writeCsv = async (name: string, date: string, privateValue: string) => {
+      const path = join(sourceRoot, name);
+      await writeFile(path, `${header}\nentity,bank,alias,2025-26,TRANSACTION,${date},${date},${privateValue},10.00,,100.00,private-${privateValue}.pdf,private-message,PARSED,OTHER,UNMATCHED\n`);
+      return path;
+    };
+    const firstPath = await writeCsv("customer-PAN-ABCDE1234F.csv", "2025-04-01", "GSTIN27ABCDE1234F1Z5");
+    const secondPath = await writeCsv("customer-GSTIN-27ABCDE1234F1Z5.csv", "2025-04-02", "PAN-ABCDE1234F");
+    const otherBookSetPath = await writeCsv("other-books-private.csv", "2025-04-03", "ACCOUNT-987654");
+    const dbPath = join(directory, "books.sqlite"); const bootstrap = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") });
+    const tenant = JSON.parse((await bootstrap.tenant.create({ schemaVersion: 1, tenantId: "source-list-test" as never, requestId: "tenant", actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "test", payload: { kind: "COMPANY", name: "Source List Fixture" } })).resultJson) as { tenantId: string; defaultBookSetId: string };
+    const app = createSqliteApplication(dbPath, 1, 1, sourceRoot);
+    const otherTenant = JSON.parse((await app.tenant.create({ schemaVersion: 1, tenantId: "source-list-other-tenant" as never, requestId: "other-tenant", actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "other scope", payload: { kind: "COMPANY", name: "Other Scope" } })).resultJson) as { tenantId: string; defaultBookSetId: string };
+    const first = await app.sourceStaging.stage(envelope(tenant.tenantId, tenant.defaultBookSetId, { sourcePath: firstPath, parserId: "SCB_DERIVED_TRANSACTION_CSV_V1" }, "stage-first"));
+    const second = await app.sourceStaging.stage(envelope(tenant.tenantId, tenant.defaultBookSetId, { sourcePath: secondPath, parserId: "SCB_DERIVED_TRANSACTION_CSV_V1" }, "stage-second"));
+    const other = await app.sourceStaging.stage(envelope(otherTenant.tenantId, otherTenant.defaultBookSetId, { sourcePath: otherBookSetPath, parserId: "SCB_DERIVED_TRANSACTION_CSV_V1" }, "stage-other"));
+    const firstId = (JSON.parse(first.resultJson) as { stagingId: string }).stagingId;
+    const secondId = (JSON.parse(second.resultJson) as { stagingId: string }).stagingId;
+    const otherId = (JSON.parse(other.resultJson) as { stagingId: string }).stagingId;
+
+    const defaultList = await app.sourceStaging.list(tenant.tenantId as never, tenant.defaultBookSetId as never);
+    expect(defaultList.limit).toBe(20); expect(defaultList.items).toHaveLength(2);
+    expect(defaultList.items.map((item) => item.stagingId)).toEqual([firstId, secondId].sort((left, right) => {
+      const leftItem = defaultList.items.find((item) => item.stagingId === left)!; const rightItem = defaultList.items.find((item) => item.stagingId === right)!;
+      return rightItem.createdAt.localeCompare(leftItem.createdAt) || right.localeCompare(left);
+    }));
+    expect(await app.sourceStaging.list(tenant.tenantId as never, tenant.defaultBookSetId as never)).toEqual(defaultList);
+    expect((await app.sourceStaging.list(tenant.tenantId as never, tenant.defaultBookSetId as never, 1)).items).toHaveLength(1);
+    expect((await app.sourceStaging.list(tenant.tenantId as never, tenant.defaultBookSetId as never, 100)).items).toHaveLength(2);
+    await expect(app.sourceStaging.list(tenant.tenantId as never, tenant.defaultBookSetId as never, 0)).rejects.toThrow(/limit must be an integer/);
+
+    const otherList = await app.sourceStaging.list(otherTenant.tenantId as never, otherTenant.defaultBookSetId as never);
+    expect(otherList.items.map((item) => item.stagingId)).toEqual([otherId]);
+    expect((await app.sourceStaging.list(otherTenant.tenantId as never, otherTenant.defaultBookSetId as never, 100)).items).toEqual(otherList.items);
+    const emptyTenant = JSON.parse((await app.tenant.create({ schemaVersion: 1, tenantId: "source-list-empty-tenant" as never, requestId: "empty-tenant", actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "empty scope", payload: { kind: "COMPANY", name: "Empty Scope" } })).resultJson) as { tenantId: string; defaultBookSetId: string };
+    expect(await app.sourceStaging.list(emptyTenant.tenantId as never, emptyTenant.defaultBookSetId as never)).toEqual({ schemaVersion: 1, ordering: "createdAt DESC, stagingId DESC", limit: 20, items: [] });
+
+    for (const item of defaultList.items) {
+      expect(item).toMatchObject({ parserId: "SCB_DERIVED_TRANSACTION_CSV_V1", parserVersion: "1", state: "STAGED", outcomeCounts: { staged: 1, rejected: 0, unsupported: 0 }, replayed: false, postsJournal: false, zeroPosting: true });
+      expect(item.resultHash).toMatch(/^[0-9a-f]{64}$/); expect(item.sourceLabel).toMatch(/^source\/[0-9a-f]{16}$/);
+      expect(JSON.stringify(item)).not.toContain("PAN"); expect(JSON.stringify(item)).not.toContain("GSTIN"); expect(JSON.stringify(item)).not.toContain("ACCOUNT"); expect(JSON.stringify(item)).not.toContain("private");
+      expect(await app.sourceStaging.status(tenant.tenantId as never, tenant.defaultBookSetId as never, item.stagingId)).toMatchObject({ stagingId: item.stagingId, reportHash: item.resultHash });
+    }
+
+    const cliEnvelope = await new OperationDispatcher({ databasePath: dbPath, sourceRoot, source: "CLI" }).dispatch("source-staging.list", { tenantId: tenant.tenantId, bookSetId: tenant.defaultBookSetId, limit: 100 });
+    const mcpEnvelope = await new OperationDispatcher({ databasePath: dbPath, sourceRoot, source: "MCP" }).dispatch("source-staging.list", { tenantId: tenant.tenantId, bookSetId: tenant.defaultBookSetId, limit: 100 });
+    expect(mcpEnvelope).toEqual(cliEnvelope);
+    const native = new Database(dbPath, { readonly: true, safeIntegers: true }); expect(native.query("SELECT COUNT(*) AS count FROM journal_entries").get()).toEqual({ count: 0n }); native.close();
+  });
+
   it("rejects unsafe roots and source symlinks without exposing source content", async () => {
     directory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "agent-bahi-source-stage-path-")); const root = join(directory, "sources"); await mkdir(root); const outside = join(directory, "outside.csv"); await writeFile(outside, `${header}\n`); const link = join(root, "link.csv"); await symlink(outside, link);
     const dbPath = join(directory, "books.sqlite"); const bootstrap = await initializeAndUpgradeSqliteApplication(dbPath, { backupDestinationPath: join(directory, "bootstrap.sqlite") }); const tenant = JSON.parse((await bootstrap.tenant.create({ schemaVersion: 1, tenantId: "source-path-test" as never, requestId: "tenant", actor: { kind: "SYSTEM", id: "test" }, source: "INTERNAL", reason: "test", payload: { kind: "COMPANY", name: "Path Fixture" } })).resultJson) as { tenantId: string; defaultBookSetId: string }; const app = createSqliteApplication(dbPath, 1, 1, root);

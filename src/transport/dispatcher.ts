@@ -24,6 +24,13 @@ function optionalText(input: Input, name: string): string | undefined {
   return value;
 }
 
+function optionalInteger(input: Input, name: string): number | undefined {
+  const value = input[name];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new DomainError("INVALID_INPUT", `${name} must be an integer when supplied`);
+  return value;
+}
+
 function tenantId(input: Input) { return brandTenantId(text(input, "tenantId")); }
 function bookSetId(input: Input) { return brandBookSetId(text(input, "bookSetId")); }
 
@@ -106,6 +113,7 @@ const handlers: Record<string, Handler> = {
   "source-staging.preview": async (facade, input) => facade.sourceStaging.preview(input as never),
   "source-staging.stage": (facade, input) => facade.sourceStaging.stage(input as never),
   "source-staging.status": (facade, input) => facade.sourceStaging.status(tenantId(input), bookSetId(input), text(input, "stagingId")),
+  "source-staging.list": (facade, input) => facade.sourceStaging.list(tenantId(input), bookSetId(input), optionalInteger(input, "limit")),
   "bank-statement.get": (facade, input) => facade.bankStatement.get(tenantId(input), bookSetId(input), text(input, "statementId")),
   "bank-statement.list": (facade, input) => facade.bankStatement.list(tenantId(input), bookSetId(input), optionalText(input, "statementId") ? { statementId: optionalText(input, "statementId") } : undefined),
   "bank-match.confirm": (facade, input) => facade.bankMatch.confirm(input as never),

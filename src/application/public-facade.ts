@@ -24,7 +24,7 @@ import { executePartyCreate, executeInvoiceCreate, executeInvoicePost, executeRe
 import { executeBillCreate, executeBillPost, executeVendorPaymentRecord, getBill, listOutstandingBills, type BillCreatePayload, type BillCreateResult, type BillPostPayload, type BillPostResult, type VendorPaymentRecordPayload, type VendorPaymentRecordResult, type BillView } from "./services/purchase-command-service.ts";
 import { executeBankStatementImport, getBankStatement, listBankStatements, executeBankMatchConfirm, executeBankMatchUndo, bankMatchCandidates, bankReconciliationStatus, type BankStatementEnvelope, type BankStatementImportResult, type BankStatementView, type BankMatchConfirmEnvelope, type BankMatchUndoEnvelope, type BankMatchResult, type BankMatchCandidate, type BankReconciliationStatus } from "./services/bank-reconciliation-service.ts";
 import { inspectBankFileForScope, importBankFile, type SourceFileEnvelope, type SourceFilePreview, type SourceImportResult } from "./services/source-registry-service.ts";
-import { previewSourceStaging, stageSource, statusSourceStaging, type SourceStagingEnvelope, type SourceStagingPreview, type SourceStagingReport } from "./services/source-staging-service.ts";
+import { previewSourceStaging, stageSource, statusSourceStaging, listSourceStaging, type SourceStagingEnvelope, type SourceStagingPreview, type SourceStagingReport, type SourceStagingListResult } from "./services/source-staging-service.ts";
 import { previewZohoBackup, importZohoBackup, statusZohoBackup, type ZohoBackupEnvelope, type ZohoBackupPreview, type ZohoBackupReport } from "./services/zoho-backup-import-service.ts";
 import { executeGstRegistrationCreate, getGstRegistration, listGstRegistrations, executePartyGstProfileCreate, listPartyGstProfiles, listGstRegister, type GstRegistrationCreatePayload, type GstRegistrationCreateResult, type GstRegistrationView, type PartyGstProfileCreatePayload, type PartyGstProfileCreateResult, type PartyGstProfileView, type GstRegisterRow } from "./services/gst-service.ts";
 import { recordOutwardFacts, getOutwardFacts, listOutwardFacts, prepareReturn, validateReturn, exportReviewPack, recordObservation, getReturn, listReturns, readinessReport, type GstOutwardFactsPayload, type GstOutwardFactsView, type GstReturnPreparePayload, type GstReturnPrepareResult, type GstReturnValidateResult, type GstReturnExportPackPayload, type GstReturnExportPackResult, type GstReturnObservationPayload, type GstEnvelope } from "./services/gst-return-readiness-service.ts";
@@ -160,6 +160,7 @@ export interface SourceStagingCommands {
   preview(envelope: SourceStagingEnvelope): SourceStagingPreview;
   stage(envelope: SourceStagingEnvelope): Promise<CommandResult<SourceStagingReport>>;
   status(tenantId: TenantId, bookSetId: BookSetId, stagingId: string): Promise<SourceStagingReport>;
+  list(tenantId: TenantId, bookSetId: BookSetId, limit?: number): Promise<SourceStagingListResult>;
 }
 export interface BankMatchCommands {
   confirm(envelope: BankMatchConfirmEnvelope): Promise<CommandResult<BankMatchResult>>;
@@ -447,7 +448,7 @@ export function createPublicFacade(
     vendorPayment: { record: (envelope) => executeVendorPaymentRecord(sessionRunner, envelope) },
     bankStatement: { import: (envelope) => executeBankStatementImport(sessionRunner, envelope), inspectFile: (envelope) => inspectBankFileForScope(sessionRunner, envelope, sourceRoot), importFile: (envelope) => importBankFile(sessionRunner, envelope, sourceRoot), get: (tenantId, bookSetId, statementId) => getBankStatement(sessionRunner, tenantId, bookSetId, statementId), list: (tenantId, bookSetId, filter) => listBankStatements(sessionRunner, tenantId, bookSetId, filter) },
     zohoBackup: { preview: (envelope) => previewZohoBackup(sessionRunner, envelope, sourceRoot), import: (envelope) => importZohoBackup(sessionRunner, envelope, sourceRoot), status: (tenantId, bookSetId, importId) => statusZohoBackup(sessionRunner, tenantId, bookSetId, importId) },
-    sourceStaging: { preview: (envelope) => previewSourceStaging(envelope, sourceRoot), stage: (envelope) => stageSource(sessionRunner, envelope, sourceRoot), status: (tenantId, bookSetId, stagingId) => statusSourceStaging(sessionRunner, tenantId, bookSetId, stagingId) },
+    sourceStaging: { preview: (envelope) => previewSourceStaging(envelope, sourceRoot), stage: (envelope) => stageSource(sessionRunner, envelope, sourceRoot), status: (tenantId, bookSetId, stagingId) => statusSourceStaging(sessionRunner, tenantId, bookSetId, stagingId), list: (tenantId, bookSetId, limit) => listSourceStaging(sessionRunner, tenantId, bookSetId, limit) },
     bankMatch: { confirm: (envelope) => executeBankMatchConfirm(sessionRunner, envelope), undo: (envelope) => executeBankMatchUndo(sessionRunner, envelope), candidates: (tenantId, bookSetId, statementLineId) => bankMatchCandidates(sessionRunner, tenantId, bookSetId, statementLineId) },
     bankReconciliation: { status: (tenantId, bookSetId, statementId) => bankReconciliationStatus(sessionRunner, tenantId, bookSetId, statementId) },
     gst: {
