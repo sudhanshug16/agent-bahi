@@ -38,6 +38,26 @@ const commandSchema = (bookSet: boolean, payloadRequired = true) => objectSchema
   bookSet ? ["schemaVersion", "tenantId", "bookSetId", "requestId", "actor", "source", "reason", ...(payloadRequired ? ["payload"] : [])] : ["schemaVersion", "tenantId", "requestId", "actor", "source", "reason", ...(payloadRequired ? ["payload"] : [])],
   bookSet ? scopedEnvelopeProperties : envelopeProperties,
 );
+const sourceFileSchema = objectSchema(
+  ["schemaVersion", "tenantId", "bookSetId", "requestId", "actor", "source", "reason", "payload"],
+  {
+    ...scopedEnvelopeProperties,
+    payload: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", minLength: 1 },
+        bankAccountId: id,
+        parserId: { type: "string", enum: ["SCB_TRANSACTION_CSV_V1", "CRAZE_VIRTUAL_ACCOUNT_CSV_V1"] },
+        periodStart: date,
+        periodEnd: date,
+        authorityState: { type: "string", enum: ["PRIMARY", "DERIVED", "UNVERIFIED"] },
+        overrideReason: { type: "string", minLength: 1 },
+      },
+      required: ["filePath", "bankAccountId", "parserId"],
+      additionalProperties: true,
+    },
+  },
+);
 
 const entries: OperationCatalogEntry[] = [
   { id: "tenant.get", description: "Read one tenant by its explicit ID.", sideEffect: "read", requiredScope: "tenant", inputSchema: objectSchema(["tenantId"], { tenantId: id }), outputDescription: "Tenant record.", examples: ['{"tenantId":"tenant-1"}'], remediation: "Provide the exact tenantId; the transport never infers a tenant." },
@@ -84,8 +104,8 @@ const entries: OperationCatalogEntry[] = [
   { id: "bill.outstanding", description: "List outstanding vendor bills in an explicit scope.", sideEffect: "read", requiredScope: "bookSet", inputSchema: objectSchema(["tenantId", "bookSetId"], readScopeProperties), outputDescription: "Outstanding bill views.", examples: [], remediation: "Provide explicit tenantId and bookSetId." },
   { id: "vendor-payment.record", description: "Record an audited vendor payment and allocation.", sideEffect: "write", requiredScope: "bookSet", inputSchema: commandSchema(true), outputDescription: "Versioned vendor payment result.", examples: [], remediation: "Payment allocations must target eligible bills in this scope." },
   { id: "bank-statement.import", description: "Import a bank statement through the audited import boundary.", sideEffect: "write", requiredScope: "bookSet", inputSchema: commandSchema(true), outputDescription: "Versioned bank statement import result.", examples: [], remediation: "Use a stable requestId and explicit bank account and statement identity." },
-  { id: "source.inspect-file", description: "Preview a local bank CSV under the operator-configured source root without persistence or postings.", sideEffect: "read", requiredScope: "bookSet", inputSchema: commandSchema(true), outputDescription: "Parser, immutable content hash, masked identities, balances, rows, and deterministic diagnostics.", examples: [], remediation: "Configure AGENT_BAHI_SOURCE_ROOT and use one of the exact V1 parser IDs." },
-  { id: "bank-statement.import-file", description: "Register and import one local bank CSV atomically through the existing bank statement semantics.", sideEffect: "write", requiredScope: "bookSet", inputSchema: commandSchema(true), outputDescription: "Source registration and imported bank statement identity; no journal is created.", examples: [], remediation: "Use an explicit requestId, bankAccountId, parserId, and operator-configured source root; non-primary authority requires a HUMAN override reason." },
+  { id: "source.inspect-file", description: "Preview a local bank CSV under the operator-configured source root without persistence or postings.", sideEffect: "read", requiredScope: "bookSet", inputSchema: sourceFileSchema, outputDescription: "Parser, immutable content hash, masked identities, full-source versus imported row counts, inclusive period exclusions, balances, rows, and deterministic diagnostics.", examples: [], remediation: "Configure AGENT_BAHI_SOURCE_ROOT, use one exact V1 parser ID, and optionally provide payload.periodStart and payload.periodEnd for an inclusive subset preview." },
+  { id: "bank-statement.import-file", description: "Register and import one local bank CSV atomically through the existing bank statement semantics.", sideEffect: "write", requiredScope: "bookSet", inputSchema: sourceFileSchema, outputDescription: "Immutable full-source registration and imported bank statement identity with full-source versus imported row counts; no journal is created.", examples: [], remediation: "Use an explicit requestId, bankAccountId, parserId, and operator-configured source root; optionally provide an inclusive payload.periodStart/payload.periodEnd range; non-primary authority requires a HUMAN override reason." },
   { id: "zoho-backup.preview", description: "Preview a Zoho Books backup directory or ZIP under the operator-configured source root without persistence or postings.", sideEffect: "read", requiredScope: "bookSet", inputSchema: commandSchema(true), outputDescription: "Archive hash, per-file schema fingerprints, row outcomes, duplicate-header warnings, and explicit staged/unsupported coverage.", examples: [], remediation: "Use sourcePath for a directory or ZIP and configure AGENT_BAHI_SOURCE_ROOT; preview never mutates the database." },
   { id: "zoho-backup.import", description: "Human-confirm and immutably stage a Zoho Books backup/CSV export through the shared source registry.", sideEffect: "write", requiredScope: "bookSet", inputSchema: commandSchema(true), outputDescription: "Immutable import report and source hash; V1 stages supported source rows and posts zero journals when exact mapping semantics are not proven.", examples: [], remediation: "Use a fresh preview, confirm=true, and a HUMAN actor. Rejected rows, malformed relationships, cross-entity evidence, and unsupported statuses fail closed." },
   { id: "zoho-backup.status", description: "Read one immutable Zoho Books import report in explicit tenant and BookSet scope.", sideEffect: "read", requiredScope: "bookSet", inputSchema: objectSchema(["tenantId", "bookSetId", "importId"], { ...readScopeProperties, importId: id }), outputDescription: "Archive/source hashes, per-file fingerprints, row outcomes, and staged versus posted coverage.", examples: [], remediation: "Provide the exact importId returned by zoho-backup.import." },
