@@ -122,6 +122,20 @@ export const SKILL_GUIDES: readonly SkillGuide[] = [
     nextDrilldowns: [{ title: "Inspect statement", operationId: "bank-statement.get" }, { title: "Inspect outstanding invoices", operationId: "invoice.outstanding" }],
   }),
   guide({
+    id: "zoho-books-backup-import", version: 1, title: "Zoho Books backup import", summary: "Preview and human-confirm a privacy-safe Zoho Books backup or CSV export into immutable staged source evidence.", applicability: "A BookSet with an explicit tenant and BookSet scope and an operator-owned source directory or ZIP.", requiredScope: "bookSet",
+    preflightOperations: ["company.status", "zoho-backup.preview"],
+    steps: [
+      op("zoho-backup.preview", "Preview Zoho export", "bookSet", "Use an explicit allowed-root sourcePath; retain archive/source hashes, schema fingerprints, row outcomes, and all unsupported-object warnings. Preview never persists or posts."),
+      op("zoho-backup.import", "Human-confirm staging", "bookSet", "Import only the exact current preview with confirm=true and a HUMAN actor. Supported rows remain STAGED when account, tax, relationship, or posting semantics are not proven."),
+      op("zoho-backup.status", "Inspect immutable report", "bookSet", "Read the exact import report and distinguish staged, rejected, unsupported, and posted counts; V1 posted count is zero unless a later explicit mapping slice changes it."),
+    ],
+    allowedAgentJudgmentPoints: ["Explain source coverage and propose missing mapping evidence, but never infer accounts, tax classification, entity identity, or filing state."],
+    humanOnlyGates: [{ id: "zoho-import-confirmation", title: "Import confirmation", reason: "Archive staging creates immutable source evidence and requires explicit human ownership.", operationIds: ["zoho-backup.import"], evidence: ["Exact preview archive hash", "Human actor and reason", "Explicit confirmation"] }],
+    blockerRemediation: [{ blocker: "REJECTED_ROWS_REQUIRE_REVIEW or CROSS_ENTITY_SOURCE", remediation: "Correct the source or explicit entity/period scope and preview again; do not force the import." }, { blocker: "Unsupported objects or staged-only rows", remediation: "Retain the immutable coverage report and obtain a separately reviewed mapping before any canonical document or journal posting." }],
+    completionEvidence: [...commonEvidence, "The report explicitly distinguishes staged versus posted coverage and never claims a filing was submitted."],
+    nextDrilldowns: [{ title: "Inspect import report", operationId: "zoho-backup.status" }],
+  }),
+  guide({
     id: "gst-gstr1-return", version: 1, title: "GST GSTR-1 return", summary: "Prepare and locally validate a source-linked GSTR-1 artifact from a READY snapshot.", applicability: "A GST-registered BookSet with an explicit registration, tax period, readiness snapshot, and verified schema pack.", requiredScope: "bookSet",
     statusFocus: ["gst", "compliance"], statusActionCodes: ["GST_ITC_REVIEW_REQUIRED", "GST_EXPORTED_NOT_SUBMITTED", "COMPLIANCE_OBLIGATION_OVERDUE"],
     preflightOperations: ["company.status", "gst.return.readiness-report"],

@@ -169,4 +169,8 @@ preparation, validation, reconciliation, and review artifacts. Export is not
 submission or acceptance. Agent-Bahi does not automatically call a government
 or bank portal, submit payment, use a DSC/EVC, or claim current-law behavior
 without the required source-linked and human-verified authority material.
-Zoho Books import is deferred and is not present in this V1 operator surface.
+Zoho Books backup/CSV import is available through `zoho-backup.preview`,
+`zoho-backup.import`, and `zoho-backup.status`. It is source-faithful and
+human-confirmed: supported rows are staged when exact account, tax, relationship,
+or posting semantics are not proven, unsupported objects remain explicit rows,
+and the V1 importer posts zero journals and never marks a filing submitted.
