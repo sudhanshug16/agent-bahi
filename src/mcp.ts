@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { OperationDispatcher } from "./transport/dispatcher.ts";
 import { createMcpServer } from "./transport/mcp-server.ts";

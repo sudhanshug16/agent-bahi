@@ -3,6 +3,7 @@ import { OperationDispatcher } from "./dispatcher.ts";
 import type { DispatchEnvelope } from "./types.ts";
 import { runRemoteMcp } from "../mcp-http.ts";
 import { resolveDatabasePath } from "../infrastructure/config/database.ts";
+import { CLI_VERSION } from "../release.ts";
 
 export const EXIT_CODES = {
   SUCCESS: 0,
@@ -23,6 +24,7 @@ function help(): string {
     "  agent-bahi [--database PATH] operations describe OPERATION [--json]",
     "  agent-bahi [--database PATH] operations run OPERATION [--input FILE|-] [--json]",
     "  agent-bahi version [--json]",
+    "  agent-bahi --version",
     "  agent-bahi [--database PATH] db status|backup list|backup show|backup verify|upgrade preview|upgrade status",
     "  agent-bahi [--database PATH] db backup create|restore|upgrade apply --request-id ID --actor-id ID --yes",
     "  agent-bahi [--database PATH] database.compatibility|database.upgrade.preview|database.upgrade.status",
@@ -129,6 +131,10 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
   const explicitDatabase = args.includes("--database");
   if (args.includes("--help") || args.includes("-h") || args[0] === "help" || args.length === 0) {
     printHuman(help());
+    return EXIT_CODES.SUCCESS;
+  }
+  if (args.length === 1 && args[0] === "--version") {
+    printHuman(CLI_VERSION);
     return EXIT_CODES.SUCCESS;
   }
 

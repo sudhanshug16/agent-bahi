@@ -20,22 +20,60 @@ describe("local MIT release packaging contract", () => {
       bin: Record<string, string>;
       engines: Record<string, string>;
       scripts: Record<string, string>;
+      repository: { type: string; url: string };
+      homepage: string;
+      bugs: { url: string };
+      publishConfig: { access: string; registry: string };
     };
 
     expect(manifest).toMatchObject({
-      name: "agent-bahi",
+      name: "@sudhanshug/agent-bahi",
       version: "1.0.0",
       license: "MIT",
       packageManager: "bun@1.3.14",
       engines: { bun: "1.3.14" },
       bin: { "agent-bahi": "src/cli.ts", "agent-bahi-mcp": "src/mcp.ts" },
+      repository: { type: "git", url: "git+https://github.com/sudhanshug16/agent-bahi.git" },
+      homepage: "https://github.com/sudhanshug16/agent-bahi",
+      bugs: { url: "https://github.com/sudhanshug16/agent-bahi/issues" },
+      publishConfig: { access: "public", registry: "https://registry.npmjs.org/" },
     });
     expect(manifest.private).toBeUndefined();
-    expect(manifest.files).toEqual(expect.arrayContaining(["LICENSE", "README.md", "src", "dist"]));
+    expect(manifest.files).toEqual(expect.arrayContaining(["LICENSE", "README.md", "docs", "drizzle", "runtime-versions.json", "skills", "src", "scripts"]));
+    expect(manifest.files).not.toContain("dist");
     expect(manifest.scripts["build:release"]).toContain("bun run build");
     expect(manifest.scripts.build).toContain("--no-compile-autoload-dotenv --no-compile-autoload-bunfig");
     expect(manifest.scripts["build:macos-arm64"]).toContain("--no-compile-autoload-dotenv --no-compile-autoload-bunfig");
     expect(manifest.scripts["test:release"]).toBe("bun test tests/release-packaging.test.ts");
+    expect(manifest.scripts["release:check"]).toBe("bun run typecheck && bun run validate:skills && bun test");
+    expect(manifest.scripts.prepublishOnly).toBe("bun run release:check");
+  });
+
+  it("ships executable Bun entrypoints and the Trusted Publishing workflow", async () => {
+    const [cli, mcp, workflow] = await Promise.all([text("src/cli.ts"), text("src/mcp.ts"), text(".github/workflows/publish-npm.yml")]);
+    for (const entrypoint of [cli, mcp]) expect(entrypoint.startsWith("#!/usr/bin/env bun\n")).toBe(true);
+    expect(workflow).toContain("name: Publish npm");
+    expect(workflow).toContain("actions/checkout@v6");
+    expect(workflow).toContain("actions/setup-node@v6");
+    expect(workflow).toContain("node-version: 24");
+    expect(workflow).toContain("registry-url: https://registry.npmjs.org");
+    expect(workflow).toContain("package-manager-cache: false");
+    expect(workflow).toContain("oven-sh/setup-bun@v2");
+    expect(workflow).toContain("bun-version: 1.3.14");
+    expect(workflow).toContain("npm install --global npm@11.6.2");
+    expect(workflow).toContain("bun install --frozen-lockfile");
+    expect(workflow).toContain("bun run release:check");
+    expect(workflow).toContain("npm pack --dry-run");
+    expect(workflow).toContain("npm pack --pack-destination \"$RUNNER_TEMP\" --json");
+    expect(workflow).toContain("npm install --ignore-scripts");
+    expect(workflow).toContain("agent-bahi --version");
+    expect(workflow).toContain("agent-bahi --help");
+    expect(workflow).toContain("id-token: write");
+    expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).toContain("npm publish --access public");
+    expect(workflow).not.toContain("NODE_AUTH_TOKEN");
+    expect(workflow).not.toContain("npm stage publish");
+    expect(workflow).not.toContain("--provenance");
   });
 
   it("ships the canonical generic MIT notice and truthful unsigned release metadata", async () => {
@@ -63,12 +101,24 @@ describe("local MIT release packaging contract", () => {
       expect(content).toContain("DSC");
       expect(content).not.toContain("Implementation is intentionally not started");
       expect(content).not.toContain("No code exists yet");
+      expect(content).toContain("@sudhanshug/agent-bahi");
+      expect(content).toContain("Bun `1.3.14`");
+      expect(content).toContain("agent-bahi");
+      expect(content).toContain("agent-bahi-mcp");
+      expect(content).toContain(".github/workflows/publish-npm.yml");
+      expect(content).toContain("Trusted Publishing");
+      expect(content).toContain("automatic provenance");
+      expect(content).toContain("long-lived npm token");
+      expect(content).toContain("compiled binaries");
     }
     expect(readme).toContain("Trial Balance");
     expect(readme).toContain("Profit and Loss");
     expect(readme).toContain("Balance Sheet");
     expect(readme).toContain("Zoho Books import");
     expect(operatorGuide).toContain('signing: "not provided in V1"');
+    expect(readme).not.toContain("does not publish packages");
+    expect(operatorGuide).not.toContain("does not imply\nthat an npm package");
+    expect(operatorGuide).not.toContain("does not publish to npm");
   });
 
   it("keeps CLI help runnable and explicit about the release/MCP boundary", async () => {
@@ -88,5 +138,21 @@ describe("local MIT release packaging contract", () => {
     expect(stdout).toContain("database.upgrade");
     expect(stdout).toContain("Local stdio MCP");
     expect(stdout).toContain("TLS proxy/Tailscale");
+  });
+
+  it("supports the installed package's version flag", async () => {
+    const child = Bun.spawn([globalThis.process.execPath, "run", "src/cli.ts", "--version"], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("1.0.0");
   });
 });

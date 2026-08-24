@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 import { runCli } from "./transport/cli.ts";
 
 const exitCode = await runCli();

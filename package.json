@@ -1,8 +1,20 @@
 {
-  "name": "agent-bahi",
+  "name": "@sudhanshug/agent-bahi",
   "version": "1.0.0",
   "description": "Agent-first India accounting, bookkeeping, tax, payroll, reporting, CLI, and MCP system backed by SQLite.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sudhanshug16/agent-bahi.git"
+  },
+  "homepage": "https://github.com/sudhanshug16/agent-bahi",
+  "bugs": {
+    "url": "https://github.com/sudhanshug16/agent-bahi/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "packageManager": "bun@1.3.14",
   "files": [
@@ -13,8 +25,7 @@
     "runtime-versions.json",
     "skills",
     "src",
-    "scripts",
-    "dist"
+    "scripts"
   ],
   "bin": {
     "agent-bahi": "src/cli.ts",
@@ -27,6 +38,8 @@
     "typecheck": "tsc --noEmit",
     "validate:skills": "bun scripts/validate-skills.ts",
     "test:release": "bun test tests/release-packaging.test.ts",
+    "release:check": "bun run typecheck && bun run validate:skills && bun test",
+    "prepublishOnly": "bun run release:check",
     "test:gate0": "bun test tests/gate0/gate0.test.ts",
     "test:commands": "bun test tests/application/bookset-command.test.ts",
     "test": "bun test",

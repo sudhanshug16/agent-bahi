@@ -1,16 +1,16 @@
 # Agent-Bahi CLI, database operations, and MCP
 
-This is the V1 operator guide for the locally distributable MIT release. The
-supported runtime is Bun `1.3.14` and the supported data store is SQLite only.
-The package metadata is public for local packaging; this guide does not imply
-that an npm package, tag, or release has been published.
+This is the V1 operator guide for the public MIT package
+`@sudhanshug/agent-bahi`. The supported runtime is Bun `1.3.14` and the
+supported data store is SQLite only. The npm package ships Bun source, not
+compiled binaries.
 
 Install dependencies and inspect the deterministic help surface:
 
 ```text
-bun install --frozen-lockfile
-bun run src/cli.ts --help
-bun run src/cli.ts version --json
+bun add @sudhanshug/agent-bahi
+agent-bahi --help
+agent-bahi version --json
 ```
 
 The package exposes two Bun entrypoints:
@@ -19,6 +19,10 @@ The package exposes two Bun entrypoints:
 agent-bahi       # CLI operations and explicit database controls
 agent-bahi-mcp   # local stdio MCP server
 ```
+
+Keep Bun `1.3.14` installed when invoking these commands. In a checkout,
+`bun install --frozen-lockfile` and `bun run src/cli.ts ...` provide the same
+development surface.
 
 Remote MCP is an explicit HTTP server command. It serves MCP Streamable HTTP
 at `POST /mcp`, plus process liveness at `GET /healthz` and read-only database
@@ -174,10 +178,19 @@ cat dist/agent-bahi-darwin-arm64.manifest.json
 ```
 
 The manifest is unsigned integrity metadata and deliberately reports
-`signing: "not provided in V1"`. Release packaging does not publish to npm,
-create a tag, push to a remote, or submit artifacts to a portal. The compiled
-binary is the CLI release surface; `agent-bahi-mcp` remains the Bun stdio
-entrypoint under the pinned runtime.
+`signing: "not provided in V1"`. Compiled binaries are outside the npm package
+and have no signing or notarization claim; `agent-bahi-mcp` remains the Bun
+stdio entrypoint under the pinned runtime.
+
+## npm release
+
+`.github/workflows/publish-npm.yml` is the Trusted Publishing workflow. It runs
+when `package.json` changes on `main`, or through `workflow_dispatch`. It runs
+the release checks and an isolated package smoke test, then publishes only if
+the exact package version is not already present. Version changes on `main`
+therefore define the npm release boundary. GitHub Actions OIDC provides npm
+authentication and npm supplies automatic provenance; no long-lived npm token
+is configured.
 
 ## Compliance and portal boundary
 

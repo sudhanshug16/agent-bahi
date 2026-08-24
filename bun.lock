@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "agent-bahi",
+      "name": "@sudhanshug/agent-bahi",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.30.0",
         "drizzle-orm": "0.45.2",

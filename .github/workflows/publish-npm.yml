@@ -1,0 +1,99 @@
+name: Publish npm
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install npm
+        run: npm install --global npm@11.6.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run release checks
+        run: bun run release:check
+
+      - name: Inspect npm package
+        run: npm pack --dry-run
+
+      - name: Pack and smoke-test npm package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAME="$(node -p "const p = require('./package.json'); if (!p.name) throw new Error('package name is missing'); p.name")"
+          PACKAGE_VERSION="$(node -p "const p = require('./package.json'); if (!p.version) throw new Error('package version is missing'); p.version")"
+          test "$PACKAGE_NAME" = "@sudhanshug/agent-bahi"
+          test "$PACKAGE_VERSION" = "1.0.0"
+
+          PACK_JSON="$(npm pack --pack-destination "$RUNNER_TEMP" --json)"
+          TARBALL="$(node -e 'const packs = JSON.parse(process.argv[1]); if (!Array.isArray(packs) || packs.length !== 1 || !packs[0].filename) throw new Error("npm pack metadata is invalid"); process.stdout.write(packs[0].filename)' "$PACK_JSON")"
+          TARBALL="$RUNNER_TEMP/$TARBALL"
+          test -f "$TARBALL"
+
+          SMOKE_DIR="$(mktemp -d "$RUNNER_TEMP/agent-bahi-smoke.XXXXXX")"
+          trap 'rm -rf "$SMOKE_DIR" "$TARBALL"' EXIT
+          (
+            cd "$SMOKE_DIR"
+            npm init --yes >/dev/null
+          )
+          npm install --ignore-scripts --no-audit --no-fund --prefix "$SMOKE_DIR" "$TARBALL"
+          PATH="$SMOKE_DIR/node_modules/.bin:$PATH" agent-bahi --version | grep -Fx "$PACKAGE_VERSION"
+          PATH="$SMOKE_DIR/node_modules/.bin:$PATH" agent-bahi --help >/dev/null
+
+      - name: Publish new npm version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAME="$(node -p "const p = require('./package.json'); if (!p.name) throw new Error('package name is missing'); p.name")"
+          PACKAGE_VERSION="$(node -p "const p = require('./package.json'); if (!p.version) throw new Error('package version is missing'); p.version")"
+          VIEW_ERROR="$RUNNER_TEMP/npm-view-error.txt"
+          set +e
+          EXISTING_VERSION="$(npm view --silent "$PACKAGE_NAME@$PACKAGE_VERSION" version --registry=https://registry.npmjs.org 2>"$VIEW_ERROR")"
+          VIEW_STATUS=$?
+          set -e
+
+          if [ "$VIEW_STATUS" -eq 0 ]; then
+            test "$EXISTING_VERSION" = "$PACKAGE_VERSION"
+            echo "$PACKAGE_NAME@$PACKAGE_VERSION already exists; nothing to publish."
+            exit 0
+          fi
+
+          if ! grep -q 'E404' "$VIEW_ERROR"; then
+            cat "$VIEW_ERROR" >&2
+            exit "$VIEW_STATUS"
+          fi
+
+          npm publish --access public

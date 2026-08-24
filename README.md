@@ -4,7 +4,8 @@ Agent-Bahi is an MIT-licensed, agent-first India accounting and bookkeeping
 system for multiple legal entities and personal tax. V1 provides a shared
 typed CLI and MCP transport over a tenant- and BookSet-scoped application
 facade. It is implemented and locally distributable; it is not a hosted
-service and this repository does not publish packages or release tags.
+service. The public npm package is `@sudhanshug/agent-bahi` and ships the Bun
+source entrypoints.
 
 ## V1 capabilities
 
@@ -69,8 +70,10 @@ inside a trusted Tailscale deployment, or place it behind a user-managed HTTPS
 reverse proxy. The server does not generate certificates, provide multi-user
 RBAC, or initialize/upgrade databases. Local stdio MCP remains available.
 
-Release manifests are integrity metadata only. V1 does not claim artifact
-signatures, notarization, automatic updates, npm publication, tags, or pushes.
+Release manifests are integrity metadata only. The compiled binary boundary is
+separate from the npm source package: compiled binaries are unsigned local
+artifacts, with no signing or notarization claim. The npm package does not
+include `dist/`.
 
 ## Quick start
 
@@ -82,14 +85,26 @@ bun install --frozen-lockfile
 bun run typecheck
 ```
 
+Install the public package with Bun (Bun `1.3.14` is required):
+
+```sh
+bun add @sudhanshug/agent-bahi
+```
+
+The installed commands are `agent-bahi` for CLI operations and
+`agent-bahi-mcp` for local stdio MCP. The package is a Bun source package, so
+keep Bun `1.3.14` available when invoking either command.
+
 Use the source CLI during development:
 
 ```sh
-bun run src/cli.ts --help
-bun run src/cli.ts database.init --json
-bun run src/cli.ts database.status --json
-bun run src/cli.ts --database "$PWD/books.sqlite" operations list --json
+agent-bahi --help
+agent-bahi database.init --json
+agent-bahi database.status --json
+agent-bahi --database "$PWD/books.sqlite" operations list --json
 ```
+
+For a checkout, the equivalent source commands are `bun run src/cli.ts ...`.
 
 `database.init` is the first-run command. It creates the platform-default
 parent recursively with mode 0700 and the SQLite file with mode 0600 on POSIX;
@@ -105,7 +120,7 @@ for the full backup, restore, upgrade, and error contract.
 Run the local stdio server with the same database:
 
 ```sh
-bun run src/mcp.ts
+agent-bahi-mcp
 ```
 
 Stdio MCP resolves the same precedence and platform default as the CLI, but it
@@ -131,7 +146,8 @@ limits, readiness responses, TLS responsibility, and the Docker deployment.
 
 The release build produces a compiled CLI binary for the host and the existing
 macOS arm64 target, then writes a SHA-256 file and an unsigned manifest for the
-macOS artifact:
+macOS artifact. These compiled binaries are outside the npm package and are not
+signed or notarized:
 
 ```sh
 bun run build:release
@@ -139,14 +155,22 @@ bun run build:release
 cat dist/agent-bahi-darwin-arm64.manifest.json
 ```
 
-The manifest explicitly says `signing: "not provided in V1"`. The source
-package metadata is public and MIT-licensed for local packaging, but no
-`npm publish`, tag, push, or other external release action is part of this
-repository workflow.
+The manifest explicitly says `signing: "not provided in V1"`.
+
+## npm release
+
+The [Publish npm workflow](.github/workflows/publish-npm.yml) runs on pushes to
+`main` that change `package.json`, or by manual dispatch. It runs the full
+release checks and package smoke test, then publishes a new package version
+only when that exact version is not already on npm. Version changes on `main`
+are the release trigger; an already-published exact version is a successful
+no-op. npm Trusted Publishing supplies GitHub Actions OIDC authentication and
+automatic provenance, so this workflow uses no long-lived npm token.
 
 ## Development checks
 
 ```sh
+bun run release:check
 bun run test:release
 bun run validate:skills
 bun run typecheck
