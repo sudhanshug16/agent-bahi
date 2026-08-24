@@ -79,7 +79,7 @@ describe("canonical SQLite path policy", () => {
     test(`${kind} rejects relative paths and traversal components as typed failures`, async () => {
       const directory = await makeFixture();
       try {
-        for (const path of ["relative.sqlite", `${directory}/../escape.sqlite`, `${directory}/nested/../../escape.sqlite`]) {
+        for (const path of ["relative.sqlite", `${directory}/../escape.sqlite`, `${directory}/nested/../../escape.sqlite`, "\\\\server\\share\\database.sqlite", "\\\\?\\C:\\database.sqlite", "//server/share/database.sqlite"]) {
           const error = captureDomainFailure(() => openDatabase(kind, path));
           expect(error.code).toBe("SQLITE_UNSAFE_PATH");
         }
@@ -177,6 +177,9 @@ describe("canonical SQLite path policy", () => {
         "relative.sqlite",
         `${directory}/../escape.sqlite`,
         join(directory, "missing-parent", "database.sqlite"),
+        "\\\\server\\share\\database.sqlite",
+        "\\\\?\\C:\\database.sqlite",
+        "//server/share/database.sqlite",
       ]) {
         const nativeError = captureDomainFailure(() => openDatabase("native", path));
         const adapterError = captureDomainFailure(() => openDatabase("adapter", path));

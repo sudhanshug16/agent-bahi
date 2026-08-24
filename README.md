@@ -88,7 +88,7 @@ Use the source CLI during development:
 bun run src/cli.ts --help
 bun run src/cli.ts database.init --json
 bun run src/cli.ts database.status --json
-bun run src/cli.ts --database ./books.sqlite operations list --json
+bun run src/cli.ts --database "$PWD/books.sqlite" operations list --json
 ```
 
 `database.init` is the first-run command. It creates the platform-default

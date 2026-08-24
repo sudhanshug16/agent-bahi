@@ -87,9 +87,9 @@ running migrations. Operator actions are explicit:
 agent-bahi database.init --json
 agent-bahi database.status --json
 agent-bahi --database /absolute/books.sqlite database.init --json
-agent-bahi --database ./books.sqlite database.upgrade --backup /absolute/backup/path --json
-agent-bahi --database ./books.sqlite operations list --json
-agent-bahi --database ./books.sqlite operations run ledger.trial-balance --input input.json --json
+agent-bahi --database "$PWD/books.sqlite" database.upgrade --backup /absolute/backup/path --json
+agent-bahi --database "$PWD/books.sqlite" operations list --json
+agent-bahi --database "$PWD/books.sqlite" operations run ledger.trial-balance --input input.json --json
 ```
 
 `database.init` creates the current SQLite schema and is the only initialization
@@ -104,10 +104,10 @@ explicit CLI-owned upgrade. Normal business operations never create tables or
 run migrations implicitly:
 
 ```text
-agent-bahi --database ./books.sqlite database.status --json
-agent-bahi --database ./books.sqlite database.backup.create --destination /absolute/backup.sqlite --request-id req-1 --actor-id human-1 --yes --json
-agent-bahi --database ./books.sqlite database.upgrade.preview --json
-agent-bahi --database ./books.sqlite database.upgrade.apply --backup /absolute/backup.sqlite --request-id req-2 --actor-id human-1 --yes --json
+agent-bahi --database "$PWD/books.sqlite" database.status --json
+agent-bahi --database "$PWD/books.sqlite" database.backup.create --destination /absolute/backup.sqlite --request-id req-1 --actor-id human-1 --yes --json
+agent-bahi --database "$PWD/books.sqlite" database.upgrade.preview --json
+agent-bahi --database "$PWD/books.sqlite" database.upgrade.apply --backup /absolute/backup.sqlite --request-id req-2 --actor-id human-1 --yes --json
 ```
 
 The `db` aliases documented below are equivalent. Restore is explicit and

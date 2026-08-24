@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = process.cwd();
+const fixtureRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
 
 function runCli(args: string[], cwd: string, home: string, xdgDataHome: string, extraEnv: Record<string, string | undefined> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const environment: Record<string, string | undefined> = { ...process.env, HOME: home, XDG_DATA_HOME: xdgDataHome, ...extraEnv };
@@ -23,7 +24,7 @@ function runCli(args: string[], cwd: string, home: string, xdgDataHome: string, 
 
 describe("platform-default SQLite lifecycle", () => {
   test("database.init creates and reuses the host platform default without touching cwd", async () => {
-    const fixture = mkdtempSync(join(tmpdir(), "agent-bahi-default-") );
+    const fixture = mkdtempSync(join(fixtureRoot, "agent-bahi-default-"));
     const home = join(fixture, "home");
     const dataHome = join(fixture, "xdg-data");
     const unrelatedCwd = join(fixture, "unrelated-cwd");
@@ -56,7 +57,7 @@ describe("platform-default SQLite lifecycle", () => {
   });
 
   test("help, version, and read-only status do not initialize the default", async () => {
-    const fixture = mkdtempSync(join(tmpdir(), "agent-bahi-default-read-") );
+    const fixture = mkdtempSync(join(fixtureRoot, "agent-bahi-default-read-"));
     const home = join(fixture, "home");
     const dataHome = join(fixture, "xdg-data");
     mkdirSync(home);
@@ -73,7 +74,7 @@ describe("platform-default SQLite lifecycle", () => {
   });
 
   test("explicit and environment paths still require an existing parent", async () => {
-    const fixture = mkdtempSync(join(tmpdir(), "agent-bahi-default-parent-") );
+    const fixture = mkdtempSync(join(fixtureRoot, "agent-bahi-default-parent-"));
     const home = join(fixture, "home");
     mkdirSync(home);
     try {
@@ -93,7 +94,7 @@ describe("platform-default SQLite lifecycle", () => {
 
   test("rejects a platform-default symlink collision without following it", async () => {
     if (process.platform === "win32") return;
-    const fixture = mkdtempSync(join(tmpdir(), "agent-bahi-default-symlink-") );
+    const fixture = mkdtempSync(join(fixtureRoot, "agent-bahi-default-symlink-"));
     const home = join(fixture, "home");
     const dataHome = join(fixture, "xdg-data");
     const target = join(fixture, "outside");
@@ -109,6 +110,31 @@ describe("platform-default SQLite lifecycle", () => {
       expect(result.code).toBe(4);
       expect(result.stdout).toContain("SQLITE_UNSAFE_PATH");
       expect(() => lstatSync(join(target, "agent-bahi.sqlite"))).toThrow();
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a symlink-redirection component before creating a database in its target", async () => {
+    if (process.platform === "win32") return;
+    const fixture = mkdtempSync(join(fixtureRoot, "agent-bahi-default-redirect-"));
+    const home = join(fixture, "home");
+    const dataHome = join(fixture, "xdg-data");
+    const target = join(fixture, "redirect-target");
+    mkdirSync(home);
+    mkdirSync(target);
+    if (process.platform === "darwin") {
+      mkdirSync(join(home, "Library"), { recursive: true });
+      symlinkSync(target, join(home, "Library", "Application Support"), "dir");
+    } else {
+      symlinkSync(target, dataHome, "dir");
+    }
+    try {
+      const result = await runCli(["database.init", "--json"], fixture, home, dataHome);
+      expect(result.code).toBe(4);
+      expect(result.stdout).toContain("SQLITE_UNSAFE_PATH");
+      expect(() => lstatSync(join(target, "agent-bahi.sqlite"))).toThrow();
+      expect(() => lstatSync(join(target, "agent-bahi"))).toThrow();
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

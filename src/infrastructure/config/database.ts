@@ -1,5 +1,5 @@
 import { DomainError } from "../../core/types.ts";
-import { chmodSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, posix, win32 } from "node:path";
 
@@ -31,7 +31,7 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 function requireHome(value: string | undefined, platform: string): string {
   const home = nonEmpty(value);
-  const absolute = platform === "win32" ? win32.isAbsolute(home ?? "") : posix.isAbsolute(home ?? "");
+  const absolute = platform === "win32" ? isLocalWindowsAbsolute(home ?? "") : posix.isAbsolute(home ?? "");
   if (!home || !absolute) {
     throw new DomainError(
       "DATABASE_HOME_UNAVAILABLE",
@@ -46,7 +46,7 @@ function platformDefaultPath(platform: string, environment: Readonly<Record<stri
   if (platform === "darwin") return posix.join(home, "Library", "Application Support", "agent-bahi", DEFAULT_FILENAME);
   if (platform === "win32") {
     const localAppData = nonEmpty(environment.LOCALAPPDATA);
-    const base = localAppData && win32.isAbsolute(localAppData) ? localAppData : win32.join(home, "AppData", "Local");
+    const base = localAppData && isLocalWindowsAbsolute(localAppData) ? localAppData : win32.join(home, "AppData", "Local");
     return win32.join(base, "agent-bahi", DEFAULT_FILENAME);
   }
   if (platform === "linux") {
@@ -55,6 +55,10 @@ function platformDefaultPath(platform: string, environment: Readonly<Record<stri
     return posix.join(base, "agent-bahi", DEFAULT_FILENAME);
   }
   return posix.join(home, ".local", "share", "agent-bahi", DEFAULT_FILENAME);
+}
+
+function isLocalWindowsAbsolute(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) && !value.includes("\0") && !value.split(/[\\/]+/).some((component) => component === "..");
 }
 
 /**
@@ -88,7 +92,7 @@ export function resolveDatabasePath(options: DatabasePathResolverOptions = {}): 
 /** Ensure a platform-default parent is owned, directory-only, and private. */
 export function ensurePlatformDefaultDatabaseParent(databasePath: string): void {
   const parentPath = dirname(databasePath);
-  const absoluteParent = process.platform === "win32" ? win32.isAbsolute(parentPath) : posix.isAbsolute(parentPath);
+  const absoluteParent = process.platform === "win32" ? isLocalWindowsAbsolute(parentPath) : posix.isAbsolute(parentPath);
   if (!absoluteParent) throw new DomainError("DATABASE_DEFAULT_PATH_INVALID", "Platform-default SQLite parent must be absolute", { path: databasePath });
 
   const root = process.platform === "win32" ? win32.parse(parentPath).root : posix.parse(parentPath).root;
@@ -100,13 +104,7 @@ export function ensurePlatformDefaultDatabaseParent(databasePath: string): void 
     try {
       const stats = lstatSync(current);
       if (stats.isSymbolicLink()) {
-        if (current === parentPath) throw new DomainError("SQLITE_UNSAFE_PATH", "Platform-default SQLite parent must not be a symlink", { path: databasePath });
-        try {
-          if (!lstatSync(realpathSync(current)).isDirectory()) throw new Error("not-directory");
-        } catch {
-          throw new DomainError("SQLITE_UNSAFE_PATH", "Platform-default SQLite parent symlink must resolve to a directory", { path: databasePath });
-        }
-        continue;
+        throw new DomainError("SQLITE_UNSAFE_PATH", "Platform-default SQLite parent must not contain symlink components", { path: databasePath, component: current });
       }
       if (!stats.isDirectory()) throw new DomainError("SQLITE_UNSAFE_PATH", "Platform-default SQLite parent collision must be a directory", { path: databasePath });
     } catch (error) {

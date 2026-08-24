@@ -23,6 +23,10 @@ export function assertSafeSqlitePath(path: string): string {
     throwUnsafePath("SQLite database path must be absolute", path);
   }
 
+  if (process.platform === "win32" && !isLocalWindowsAbsolute(path)) {
+    throwUnsafePath("SQLite database path must be an absolute local drive path", path);
+  }
+
   if (isExplicitlyRejectedPath(path)) {
     throwUnsafePath("SQLite database path uses an explicitly rejected network or sync location", path);
   }
@@ -75,10 +79,19 @@ export function assertSafeSqlitePath(path: string): string {
 
 function isExplicitlyRejectedPath(path: string): boolean {
   return path.startsWith("//")
+    || path.startsWith("\\\\")
+    || path.startsWith("\\\\?\\")
+    || path.startsWith("\\\\.\\")
     || ["/net/", "/afs/", "/mnt/", "/media/", "/Volumes/"]
       .some((prefix) => path.startsWith(prefix))
     || path.includes("/Library/Mobile Documents/")
     || path.includes("/iCloud Drive/");
+}
+
+function isLocalWindowsAbsolute(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path)
+    && !path.includes("\0")
+    && !path.split(/[\\/]+/).some((component) => component === "..");
 }
 
 function isMissingPathError(error: unknown): boolean {

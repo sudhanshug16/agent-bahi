@@ -96,6 +96,23 @@ describe("database configuration", () => {
       path: "C:\\Users\\tester\\AppData\\Local\\agent-bahi\\agent-bahi.sqlite",
       source: "platform-default",
     });
+    for (const localAppData of [
+      "\\\\server\\share",
+      "//server/share",
+      "\\\\?\\C:\\Data",
+      "\\\\.\\PIPE\\agent-bahi",
+      "C:relative",
+      "/absolute/not-a-windows-drive",
+      "C:\\data\\..\\other",
+    ]) {
+      expect(resolveDatabasePath({ platform: "win32", home: "C:\\Users\\tester", env: { LOCALAPPDATA: localAppData } })).toEqual({
+        path: "C:\\Users\\tester\\AppData\\Local\\agent-bahi\\agent-bahi.sqlite",
+        source: "platform-default",
+      });
+    }
+    for (const home of ["relative-home", "\\\\server\\share", "//server/share", "\\\\?\\C:\\Users\\tester", "C:relative"]) {
+      expect(() => resolveDatabasePath({ platform: "win32", home, env: {} })).toThrow(DomainError);
+    }
     expect(resolveDatabasePath({ platform: "freebsd", home: "/home/tester", env: {} })).toEqual({
       path: "/home/tester/.local/share/agent-bahi/agent-bahi.sqlite",
       source: "platform-default",
