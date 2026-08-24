@@ -40,7 +40,37 @@ function pdfFacts(parserId: SourceStagingParserId, extracted: string, sourceHash
   if (parserId === "MUNIM_EXPENSE_SUMMARY_PDF_V1" || parserId === "MUNIM_TDS_REPORT_PDF_V1") { const empty = /There are no records to display/i.test(extracted); const preview: SourceStagingPreview = { schemaVersion: 1, parserId, parserVersion: "1", sourceHash, ...fp, rows: { staged: 0, rejected: 0, unsupported: 0 }, facts, coverage: empty ? "UNKNOWN_MISSING" : "KNOWN", postsJournal: false }; return { preview, facts, header: `PDF_LAYOUT_TEXT_V1:${parserId}`, pageCount: pages.length, }; }
   if (parserId === "MUNIM_SALES_REGISTER_PDF_V1") { let row = 0; for (let page = 0; page < pages.length; page += 1) { for (const match of pages[page]!.matchAll(/(\d{2}-\d{2}-\d{4})\s+([^\n]+?)\s+Export Sales\s*\n\s*([^\s\n]+)/g)) { row += 1; try { add("MUNIM_SALE", { date: sourceDate(match[1]!, "invoice date"), documentType: "SALES_INVOICE_VIEW", resolution: "UNRESOLVED" }, row, page + 1, "NORMALIZED_SALES_REGISTER_FACT"); } catch { facts.push({ factType: "MUNIM_SALE", fact: {}, rowNumber: row, pageNumber: page + 1, outcome: "REJECTED", reason: "MALFORMED_DATE" }); } } } }
   else if (parserId === "MUNIM_TRIAL_BALANCE_PDF_V1") { const match = /Difference in opening balance\s+([\d,]+\.\d{1,2})\s+Dr/i.exec(extracted); if (match) add("TB_OPENING_DIFFERENCE", { debitMinor: parseAmount(match[1]!, "opening difference", false), resolution: "UNRESOLVED" }, undefined, 1, "OPENING_DIFFERENCE_REQUIRES_REVIEW"); }
-  else if (parserId === "MUNIM_PAYMENT_RECEIVED_PDF_V1") { let row = 0; for (let page = 0; page < pages.length; page += 1) { for (const match of pages[page]!.matchAll(/(\d{2}-\d{2}-\d{4})\s+([^\n]+?)\s+(?:Other|NEFT|Net banking)\s*\n\s*(R\d+)/g)) { row += 1; add("MUNIM_RECEIPT", { date: sourceDate(match[1]!, "receipt date"), resolution: "UNRESOLVED" }, row, page + 1, "NORMALIZED_RECEIPT_FACT"); } } const dates = [...extracted.matchAll(/(\d{2}-\d{2}-\d{4})/g)].map((match) => match[1]!); for (let index = row; index < dates.length; index += 1) { add("MUNIM_RECEIPT", { date: sourceDate(dates[index]!, "receipt date"), resolution: "UNRESOLVED" }, index + 1, 1, "NORMALIZED_RECEIPT_FACT"); } }
+  else if (parserId === "MUNIM_PAYMENT_RECEIVED_PDF_V1") {
+    const receiptRow = /^\s*(\d{2}-\d{2}-\d{4})\s+([^\r\n]+?)\s+(Other|NEFT|Net banking)\s*$/i;
+    const receiptNumber = /^\s*R\d+\s*$/i;
+    const dateToken = /\b\d{2}-\d{2}-\d{4}\b/;
+    const supportedMode = /\b(?:Other|NEFT|Net banking)\b/i;
+    const receiptNumberToken = /\bR\d+\b/i;
+    let row = 0;
+    for (let page = 0; page < pages.length; page += 1) {
+      const lines = pages[page]!.split(/\r?\n/);
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        const line = lines[lineIndex]!;
+        const nextLine = lines[lineIndex + 1] ?? "";
+        const match = receiptRow.exec(line);
+        const candidate = dateToken.test(line) && (match !== null || supportedMode.test(line) || receiptNumber.test(nextLine) || receiptNumberToken.test(line));
+        if (!candidate) continue;
+        row += 1;
+        const party = match ? canonicalCell(match[2]!) : "";
+        if (!match || !receiptNumber.test(nextLine) || party.length < 2 || /^(?:report|generated|invoice|period|footer|header|receipt|payment)\b/i.test(party)) {
+          facts.push({ factType: "MUNIM_RECEIPT", fact: {}, rowNumber: row, pageNumber: page + 1, outcome: "REJECTED", reason: "MALFORMED_RECEIPT_ROW" });
+          if (receiptNumber.test(nextLine)) lineIndex += 1;
+          continue;
+        }
+        try {
+          add("MUNIM_RECEIPT", { date: sourceDate(match[1]!, "receipt date"), resolution: "UNRESOLVED" }, row, page + 1, "NORMALIZED_RECEIPT_FACT");
+        } catch {
+          facts.push({ factType: "MUNIM_RECEIPT", fact: {}, rowNumber: row, pageNumber: page + 1, outcome: "REJECTED", reason: "MALFORMED_RECEIPT_ROW" });
+        }
+        lineIndex += 1;
+      }
+    }
+  }
   else if (parserId === "MUNIM_SALES_INVOICE_VIEW_PDF_V1") { const number = /(\d{4}\/EXP\/\d+)/.exec(extracted)?.[1]; const date = /Invoice Date[\s\S]{0,80}?(\d{2}-\d{2}-\d{4})/.exec(extracted)?.[1]; const total = /Total Amount[\s\S]{0,80}?([\d,]+\.\d{2})/.exec(extracted)?.[1]; if (!number || !date || !total) facts.push({ factType: "MUNIM_SALES_INVOICE_VIEW", fact: {}, outcome: "REJECTED", reason: "REQUIRED_VIEW_FIELDS_MISSING", pageNumber: 1 }); else add("MUNIM_SALES_INVOICE_VIEW", { date: sourceDate(date, "invoice date"), totalMinor: parseAmount(total, "total amount", false), resolution: "UNRESOLVED" }, undefined, 1, "NORMALIZED_INVOICE_VIEW_FACT"); }
   const counts = { staged: facts.filter((f) => f.outcome === "STAGED").length, rejected: facts.filter((f) => f.outcome === "REJECTED").length, unsupported: facts.filter((f) => f.outcome === "UNSUPPORTED").length }; const range = dateRange(facts); return { preview: { schemaVersion: 1, parserId, parserVersion: "1", sourceHash, ...fp, ...(range.start ? { periodStart: range.start } : {}), ...(range.end ? { periodEnd: range.end } : {}), rows: counts, facts, postsJournal: false }, facts, header: `PDF_LAYOUT_TEXT_V1:${parserId}`, pageCount: pages.length, periodStart: range.start, periodEnd: range.end }; }
 function assertPeriod(payload: SourceStagingPayload, preview: SourceStagingPreview): void { if (payload.periodStart) isoDate(payload.periodStart, "periodStart"); if (payload.periodEnd) isoDate(payload.periodEnd, "periodEnd"); if (payload.periodStart && payload.periodEnd && payload.periodStart > payload.periodEnd) throw new DomainError("INVALID_DATE_RANGE", "periodStart must not be after periodEnd"); if (payload.periodStart && preview.periodEnd && payload.periodStart > preview.periodEnd || payload.periodEnd && preview.periodStart && payload.periodEnd < preview.periodStart) throw new DomainError("IMPORT_PERIOD_UNPROVABLE", "requested period does not overlap source facts"); }
