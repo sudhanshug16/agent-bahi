@@ -45,6 +45,17 @@ business operations require an explicit tenant and, where applicable, BookSet
 or TaxCase scope. PostgreSQL and MySQL references in the discovery material are
 research history, not supported V1 product backends.
 
+The database path is resolved in this order: explicit `--database PATH`, a
+non-empty `AGENT_BAHI_DATABASE`, then the platform default. On macOS the
+default is `~/Library/Application Support/agent-bahi/agent-bahi.sqlite`; on
+Linux it is `$XDG_DATA_HOME/agent-bahi/agent-bahi.sqlite` when XDG is absolute,
+otherwise `~/.local/share/agent-bahi/agent-bahi.sqlite`; on Windows it is
+`%LOCALAPPDATA%\\agent-bahi\\agent-bahi.sqlite` when LOCALAPPDATA is absolute,
+otherwise `%USERPROFILE%\\AppData\\Local\\agent-bahi\\agent-bahi.sqlite`.
+Other platforms use `~/.local/share/agent-bahi/agent-bahi.sqlite`. Relative or
+malformed XDG/LOCALAPPDATA values are ignored. Explicit and environment paths
+must have an existing parent; they are never created implicitly.
+
 Compliance and tax artifacts are preparation, validation, reconciliation, and
 review evidence. Agent-Bahi does not automatically submit to government or
 bank portals, make payments, obtain or use a DSC/EVC, or claim that an export
@@ -75,24 +86,32 @@ Use the source CLI during development:
 
 ```sh
 bun run src/cli.ts --help
-bun run src/cli.ts --database ./books.sqlite database.status --json
-bun run src/cli.ts --database ./books.sqlite database.init --json
+bun run src/cli.ts database.init --json
+bun run src/cli.ts database.status --json
 bun run src/cli.ts --database ./books.sqlite operations list --json
 ```
 
-Normal operations never initialize or upgrade a database implicitly. Before a
-business operation on an older database, inspect compatibility, create or
-verify a backup, preview the exact migration plan, and apply the explicit
-CLI-owned upgrade. See [CLI and MCP operations](docs/cli-mcp.md) for the full
-backup, restore, upgrade, and error contract.
+`database.init` is the first-run command. It creates the platform-default
+parent recursively with mode 0700 and the SQLite file with mode 0600 on POSIX;
+it is idempotent. It does not create parents for `--database` or
+`AGENT_BAHI_DATABASE`, and normal operations never initialize or upgrade a
+database implicitly. Before a business operation on an older database, inspect
+compatibility, create or verify a backup, preview the exact migration plan, and
+apply the explicit CLI-owned upgrade. See [CLI and MCP operations](docs/cli-mcp.md)
+for the full backup, restore, upgrade, and error contract.
 
 ## MCP
 
 Run the local stdio server with the same database:
 
 ```sh
-bun run src/mcp.ts --database "$PWD/books.sqlite"
+bun run src/mcp.ts
 ```
+
+Stdio MCP resolves the same precedence and platform default as the CLI, but it
+cannot initialize or upgrade a database. Run `agent-bahi database.init` first;
+MCP remains inspection-only. The HTTP MCP server launched by the CLI receives
+the already-resolved CLI database path and has the same initialization boundary.
 
 For a trusted remote deployment, opt in explicitly to a non-loopback HTTP
 bind and provide a bearer token from a file or environment variable:

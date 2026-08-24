@@ -29,6 +29,17 @@ agent-bahi --database /absolute/books.sqlite mcp serve
 agent-bahi --database /absolute/books.sqlite mcp serve --host 0.0.0.0 --port 8787 --allow-remote --token-file /run/secrets/agent-bahi-mcp-token --allowed-host books.example.test
 ```
 
+Database selection is shared by the CLI and stdio MCP: explicit
+`--database PATH` wins, then non-empty `AGENT_BAHI_DATABASE`, then the platform
+default. The defaults are macOS `~/Library/Application Support/agent-bahi/agent-bahi.sqlite`,
+Linux `$XDG_DATA_HOME/agent-bahi/agent-bahi.sqlite` only when XDG_DATA_HOME is
+absolute (otherwise `~/.local/share/agent-bahi/agent-bahi.sqlite`), Windows
+`%LOCALAPPDATA%\\agent-bahi\\agent-bahi.sqlite` only when LOCALAPPDATA is
+absolute (otherwise `%USERPROFILE%\\AppData\\Local\\agent-bahi\\agent-bahi.sqlite`),
+and `~/.local/share/agent-bahi/agent-bahi.sqlite` elsewhere. Relative or
+malformed XDG/LOCALAPPDATA values fall back. Explicit and environment database
+paths must point beneath an existing parent.
+
 The default is loopback (`127.0.0.1:8787`) with no token. Any non-loopback
 bind requires `--allow-remote` and a bearer token from
 `AGENT_BAHI_MCP_TOKEN`, `AGENT_BAHI_MCP_TOKEN_FILE`, or `--token-file`.
@@ -73,18 +84,24 @@ Normal operations perform a side-effect-free database compatibility check first.
 running migrations. Operator actions are explicit:
 
 ```text
-agent-bahi --database ./books.sqlite database.status --json
-agent-bahi --database ./books.sqlite database.init --json
+agent-bahi database.init --json
+agent-bahi database.status --json
+agent-bahi --database /absolute/books.sqlite database.init --json
 agent-bahi --database ./books.sqlite database.upgrade --backup /absolute/backup/path --json
 agent-bahi --database ./books.sqlite operations list --json
 agent-bahi --database ./books.sqlite operations run ledger.trial-balance --input input.json --json
 ```
 
 `database.init` creates the current SQLite schema and is the only initialization
-path. For an existing database, inspect compatibility, create and verify a
-backup, preview the exact migration plan, and apply the explicit CLI-owned
-upgrade. Normal business operations never create tables or run migrations
-implicitly:
+path. With no `--database`, it creates the exact platform-default parent
+recursively (0700 on POSIX) before path policy runs, then hardens the database
+file to 0600 on POSIX. It is safe to run again. Explicit and environment paths
+must already have an existing parent; missing parents and symlink collisions are
+rejected. Help, version, read commands, and stdio/HTTP MCP never create the
+default directory or database. For an existing database, inspect compatibility,
+create and verify a backup, preview the exact migration plan, and apply the
+explicit CLI-owned upgrade. Normal business operations never create tables or
+run migrations implicitly:
 
 ```text
 agent-bahi --database ./books.sqlite database.status --json

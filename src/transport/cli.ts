@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { OperationDispatcher } from "./dispatcher.ts";
 import type { DispatchEnvelope } from "./types.ts";
 import { runRemoteMcp } from "../mcp-http.ts";
+import { resolveDatabasePath } from "../infrastructure/config/database.ts";
 
 export const EXIT_CODES = {
   SUCCESS: 0,
@@ -31,8 +32,11 @@ function help(): string {
     "  Local stdio MCP: agent-bahi-mcp (database updates remain CLI-owned).",
     "  Remote MCP: mcp serve speaks HTTP on loopback by default; use a TLS proxy/Tailscale for HTTPS.",
     "",
-    "Update the binary first, then run an explicit CLI database upgrade. MCP is inspection-only and never migrates.",
-    "Database mutations require an explicit database path, requestId, HUMAN actor, and --yes.",
+    "First run: agent-bahi database.init --json",
+    "Database path precedence: --database PATH, AGENT_BAHI_DATABASE, then the platform default.",
+    "The default is macOS ~/Library/Application Support/agent-bahi/agent-bahi.sqlite; Linux $XDG_DATA_HOME/agent-bahi/agent-bahi.sqlite (or ~/.local/share/agent-bahi/agent-bahi.sqlite); Windows %LOCALAPPDATA%\\agent-bahi\\agent-bahi.sqlite (or %USERPROFILE%\\AppData\\Local\\agent-bahi\\agent-bahi.sqlite).",
+    "database.init may create only the platform-default parent; explicit and environment paths must already have an existing parent.",
+    "Update the binary first, then run an explicit CLI database upgrade. MCP is inspection-only and never initializes or migrates.",
     "Use --input - (or a file path) for deterministic JSON operation input.",
   ].join("\n");
 }
@@ -123,14 +127,30 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
   const json = args.includes("--json");
   if (json) args.splice(args.indexOf("--json"), 1);
   const explicitDatabase = args.includes("--database");
-  const databasePath = takeFlag(args, "--database") ?? process.env.AGENT_BAHI_DATABASE ?? `${process.cwd()}/agent-bahi.sqlite`;
   if (args.includes("--help") || args.includes("-h") || args[0] === "help" || args.length === 0) {
     printHuman(help());
     return EXIT_CODES.SUCCESS;
   }
 
+  const explicitDatabasePath = takeFlag(args, "--database");
+  if (explicitDatabase && !explicitDatabasePath) {
+    const error: DispatchEnvelope = { ok: false, error: { code: "INVALID_INPUT", message: "--database requires a non-empty path" } };
+    if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
+    return EXIT_CODES.INPUT;
+  }
+  let resolution;
+  try {
+    resolution = resolveDatabasePath({ explicitPath: explicitDatabasePath });
+  } catch (error) {
+    const envelope: DispatchEnvelope = { ok: false, error: { code: error instanceof Error && /^([A-Z][A-Z0-9_]+)$/.test(error.name) ? error.name : "INVALID_DATABASE_PATH", message: error instanceof Error ? error.message : String(error) } };
+    if (json) printJson(envelope); else printHumanError(`Error [${envelope.error.code}]: ${envelope.error.message}`);
+    return EXIT_CODES.INPUT;
+  }
+  const databasePath = resolution.path;
+  const dispatcherOptions = { databasePath, databasePathSource: resolution.source };
+
   if (args[0] === "version") {
-    const result = await new OperationDispatcher({ databasePath, allowOperatorOperations: false, source: "CLI" }).dispatch("system.version", {});
+    const result = await new OperationDispatcher({ ...dispatcherOptions, allowOperatorOperations: false, source: "CLI" }).dispatch("system.version", {});
     if (json) printJson(result); else printHuman(result.ok ? result.result : result);
     return errorExitCode(result);
   }
@@ -173,7 +193,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     }
   }
 
-  const metadataDispatcher = new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" });
+  const metadataDispatcher = new OperationDispatcher({ ...dispatcherOptions, allowOperatorOperations: true, source: "CLI" });
   if (args[0] === "skills" && ["list", "show", "check"].includes(args[1] ?? "")) {
     const subcommand = args[1];
     const id = args[2];
@@ -207,7 +227,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     }
     try {
       const input = await inputFrom(inputSpec);
-      result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
+      result = await new OperationDispatcher({ ...dispatcherOptions, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
     } catch (error) {
       result = { ok: false, operationId, error: { code: "INVALID_INPUT", message: error instanceof Error ? error.message : String(error) } };
     }
@@ -228,12 +248,6 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
       if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
       return EXIT_CODES.USAGE;
     }
-    const mutating = ["database.backup.create", "database.backup.restore", "database.upgrade.apply"].includes(operationId);
-    if (mutating && !explicitDatabase) {
-      const error: DispatchEnvelope = { ok: false, error: { code: "INVALID_INPUT", message: "Database mutations require an explicit --database path" } };
-      if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);
-      return EXIT_CODES.INPUT;
-    }
     const requestId = takeFlag(args, "--request-id");
     const actorId = takeFlag(args, "--actor-id");
     const backupDestinationPath = takeFlag(args, "--destination") ?? takeFlag(args, "--backup") ?? takeFlag(args, "--backup-path");
@@ -250,12 +264,12 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
       ...(backupDirectory ? { backupDirectory } : {}),
     };
     if (args.includes("--yes")) args.splice(args.indexOf("--yes"), 1);
-    result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
+    result = await new OperationDispatcher({ ...dispatcherOptions, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else if (args[0].startsWith("database.")) {
     operationId = args[0];
     const backup = takeFlag(args, "--backup");
     const input = operationId === "database.upgrade" ? { backupDestinationPath: backup } : {};
-    result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
+    result = await new OperationDispatcher({ ...dispatcherOptions, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else if (args[0] === "status") {
     operationId = "company.status";
     const tenant = takeFlag(args, "--tenant-id") ?? takeFlag(args, "--tenant");
@@ -265,7 +279,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
     const asOfTimestamp = takeFlag(args, "--as-of-timestamp");
     const focus = takeFlag(args, "--focus") ?? takeFlag(args, "--card");
     const input = { ...(tenant ? { tenantId: tenant } : {}), ...(bookSet ? { bookSetId: bookSet } : {}), ...(taxCase ? { taxCaseId: taxCase } : {}), ...(asOfDate ? { asOfDate } : {}), ...(asOfTimestamp ? { asOfTimestamp } : {}), ...(focus ? { focus } : {}) };
-    result = await new OperationDispatcher({ databasePath, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
+    result = await new OperationDispatcher({ ...dispatcherOptions, allowOperatorOperations: true, source: "CLI" }).dispatch(operationId, input);
   } else {
     const error: DispatchEnvelope = { ok: false, error: { code: "UNKNOWN_OPERATION", message: "Expected operations list, operations describe, operations run, or database.*" } };
     if (json) printJson(error); else printHumanError(`Error [${error.error.code}]: ${error.error.message}`);

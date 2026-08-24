@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 import {
   getDefaultSqlitePath,
   parseDatabaseUrl,
+  resolveDatabasePath,
   validateDatabaseConfig,
   type DatabaseConfig,
 } from "../../src/infrastructure/config/database.ts";
@@ -74,26 +75,46 @@ describe("database configuration", () => {
     expectDomainErrorCode(() => validateDatabaseConfig(missingSqlite), "INVALID_DATABASE_CONFIG");
   });
 
-  test("derives a deterministic default SQLite path and restores TMPDIR", async () => {
-    const controlledTmpDir = await mkdtemp(join(tmpdir(), "agent-bahi-config-"));
-    const originalTmpDir = Bun.env.TMPDIR;
+  test("resolves platform defaults, precedence, and malformed platform environment values without filesystem access", () => {
+    expect(resolveDatabasePath({ platform: "darwin", home: "/Users/tester", env: {} })).toEqual({
+      path: "/Users/tester/Library/Application Support/agent-bahi/agent-bahi.sqlite",
+      source: "platform-default",
+    });
+    expect(resolveDatabasePath({ platform: "linux", home: "/home/tester", env: { XDG_DATA_HOME: "/tmp/data" } })).toEqual({
+      path: "/tmp/data/agent-bahi/agent-bahi.sqlite",
+      source: "platform-default",
+    });
+    expect(resolveDatabasePath({ platform: "linux", home: "/home/tester", env: { XDG_DATA_HOME: "relative/data" } })).toEqual({
+      path: "/home/tester/.local/share/agent-bahi/agent-bahi.sqlite",
+      source: "platform-default",
+    });
+    expect(resolveDatabasePath({ platform: "win32", home: "C:\\Users\\tester", env: { LOCALAPPDATA: "C:\\Data" } })).toEqual({
+      path: "C:\\Data\\agent-bahi\\agent-bahi.sqlite",
+      source: "platform-default",
+    });
+    expect(resolveDatabasePath({ platform: "win32", home: "C:\\Users\\tester", env: { LOCALAPPDATA: "relative" } })).toEqual({
+      path: "C:\\Users\\tester\\AppData\\Local\\agent-bahi\\agent-bahi.sqlite",
+      source: "platform-default",
+    });
+    expect(resolveDatabasePath({ platform: "freebsd", home: "/home/tester", env: {} })).toEqual({
+      path: "/home/tester/.local/share/agent-bahi/agent-bahi.sqlite",
+      source: "platform-default",
+    });
+    expect(resolveDatabasePath({ platform: "linux", home: "/home/tester", env: { AGENT_BAHI_DATABASE: "/var/lib/agent-bahi.sqlite" } })).toEqual({
+      path: "/var/lib/agent-bahi.sqlite",
+      source: "environment",
+    });
+    expect(resolveDatabasePath({ explicitPath: "relative.sqlite", platform: "linux", home: "/home/tester", env: { AGENT_BAHI_DATABASE: "/var/lib/ignored.sqlite" } })).toEqual({
+      path: "relative.sqlite",
+      source: "explicit",
+    });
+    expect(() => resolveDatabasePath({ platform: "linux", home: "", env: {} })).toThrow(DomainError);
+    expect(() => resolveDatabasePath({ platform: "linux", env: {} })).toThrow(/absolute home directory/);
+  });
 
-    try {
-      Bun.env.TMPDIR = controlledTmpDir;
-      const expectedPath = join(controlledTmpDir, "agent-bahi.sqlite");
-
-      expect(getDefaultSqlitePath()).toBe(expectedPath);
-      expect(getDefaultSqlitePath()).toBe(expectedPath);
-    } finally {
-      if (originalTmpDir === undefined) {
-        delete Bun.env.TMPDIR;
-      } else {
-        Bun.env.TMPDIR = originalTmpDir;
-      }
-      await rm(controlledTmpDir, { recursive: true, force: true });
-    }
-
-    expect(Bun.env.TMPDIR).toBe(originalTmpDir);
+  test("getDefaultSqlitePath uses the host platform default rather than TMPDIR", () => {
+    expect(getDefaultSqlitePath()).toBe(resolveDatabasePath().path);
+    expect(getDefaultSqlitePath()).toEndWith("agent-bahi/agent-bahi.sqlite");
   });
 
   test("creates a working isolated SQLite adapter and rejects forged remote config before opening", async () => {

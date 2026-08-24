@@ -7,6 +7,7 @@ import { BUSINESS_OPERATION_CATALOG, findOperation } from "./catalog.ts";
 import { SKILL_GUIDES, checkSkillGuide, findSkillGuide, listOperations, listSkillGuides, operationForDisplay } from "./skills.ts";
 import type { DispatchEnvelope } from "./types.ts";
 import { databaseOperation, operationActorInput } from "../infrastructure/services/database-operations-service.ts";
+import { chmodInitializedDatabase, ensurePlatformDefaultDatabaseParent, type DatabasePathSource } from "../infrastructure/config/database.ts";
 
 type Input = Record<string, unknown>;
 type Handler = (facade: PublicApplicationFacade, input: Input) => Promise<unknown>;
@@ -404,6 +405,7 @@ const metadataOperationIds = new Set(["agent.skill.list", "agent.skill.show", "a
 
 export interface DispatcherOptions {
   readonly databasePath: string;
+  readonly databasePathSource?: DatabasePathSource;
   readonly allowOperatorOperations?: boolean;
   readonly source?: "CLI" | "MCP";
   readonly sourceRoot?: string;
@@ -462,7 +464,9 @@ export class OperationDispatcher {
         return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
       }
       if (operationId === "database.init") {
+        if (this.options.databasePathSource === "platform-default") ensurePlatformDefaultDatabaseParent(this.options.databasePath);
         await initializeSqliteDatabase(this.options.databasePath, { cliVersion: "0.0.0-gate0", buildId: "cli-init" });
+        chmodInitializedDatabase(this.options.databasePath);
         const result = { initialized: true, compatibility: await inspectSqliteApplicationCompatibility(this.options.databasePath) };
         return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
       }

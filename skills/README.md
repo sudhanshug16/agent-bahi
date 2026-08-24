@@ -8,9 +8,14 @@ required safety guidance. Edit the registry first, then update the matching
 
 Guides are instructions for deterministic operations, not dynamic execution.
 
-For database changes, use the database operations guidance in docs/cli-mcp.md. Update the CLI
-binary first, inspect compatibility and the exact migration preview, then use
-the CLI-only backup/restore/upgrade commands with an explicit database path,
+For database changes, use the database operations guidance in docs/cli-mcp.md.
+Resolve the database as `--database PATH`, non-empty `AGENT_BAHI_DATABASE`, or
+the platform default. On first run use `agent-bahi database.init`; only this
+CLI operation may recursively create the platform-default parent. Explicit and
+environment paths need existing parents. Stdio and HTTP MCP use the same
+resolved path but cannot initialize or upgrade, so initialize through the CLI
+first. Update the CLI binary first, inspect compatibility and the exact
+migration preview, then use the CLI-only backup/restore/upgrade commands with a
 HUMAN actor, request ID, and --yes. MCP remains inspection-only; mutation
 requests return CLI_REQUIRED. Retained backups and adjacent operation
 receipts record hashes and recovery outcomes, including RECOVERY_FAILED.

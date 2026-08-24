@@ -174,8 +174,9 @@ function writeReceipt(databasePath: string, receipt: OperationReceipt): void {
 }
 
 export async function databaseOperation(operation: string, databasePath: string, input: Record<string, unknown>): Promise<unknown> {
-  const canonical = assertSafeSqlitePath(databasePath);
+  // Version is metadata-only and must remain usable before a database exists.
   if (operation === "system.version") return versionResult();
+  const canonical = assertSafeSqlitePath(databasePath);
   if (operation === "database.compatibility") return inspectDatabaseCompatibility(canonical);
   if (operation === "database.status") return inspectSqliteApplicationCompatibility(canonical);
   if (operation === "database.upgrade.preview") {

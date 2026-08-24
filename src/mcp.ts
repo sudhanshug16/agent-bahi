@@ -1,13 +1,15 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { OperationDispatcher } from "./transport/dispatcher.ts";
 import { createMcpServer } from "./transport/mcp-server.ts";
+import { resolveDatabasePath } from "./infrastructure/config/database.ts";
 
 export async function runMcp(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = [...argv];
   const databaseFlag = args.indexOf("--database");
-  const databasePath = databaseFlag >= 0 ? args[databaseFlag + 1] : process.env.AGENT_BAHI_DATABASE ?? `${process.cwd()}/agent-bahi.sqlite`;
-  if (!databasePath || databasePath.startsWith("--")) throw new Error("--database requires a path");
-  const dispatcher = new OperationDispatcher({ databasePath, allowOperatorOperations: false, source: "MCP" });
+  const explicitPath = databaseFlag >= 0 ? args[databaseFlag + 1] : undefined;
+  if (databaseFlag >= 0 && (!explicitPath || explicitPath.startsWith("--"))) throw new Error("--database requires a non-empty path");
+  const resolution = resolveDatabasePath({ explicitPath });
+  const dispatcher = new OperationDispatcher({ databasePath: resolution.path, databasePathSource: resolution.source, allowOperatorOperations: false, source: "MCP" });
   const server = createMcpServer(dispatcher);
   await server.connect(new StdioServerTransport());
 }
