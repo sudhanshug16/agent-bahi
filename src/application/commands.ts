@@ -195,6 +195,20 @@ export interface Gstr1ArtifactBindingPayload { registrationId: string; taxPeriod
 export interface Gstr1ArtifactValidatePayload { artifactId: string; expectedArtifactHash: string; }
 export interface Gstr1ArtifactExportPayload { artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
 
+export type GstGstr3bFilingFrequency = "MONTHLY" | "QUARTERLY";
+export type GstGstr3bFactType = "PORTAL_GSTR1_LIABILITY" | "PORTAL_GSTR2B_ITC" | "REVERSE_CHARGE_INWARD" | "IMPORT_GOODS_ITC" | "IMPORT_SERVICES_ITC" | "INELIGIBLE_ITC" | "ITC_REVERSAL" | "ITC_RECLAIM" | "INTEREST_LATE_FEE" | "CASH_LEDGER" | "CREDIT_LEDGER" | "TAX_DEPOSIT" | "NIL_EXEMPT_NONGST" | "INTERSTATE_UNREGISTERED_SUMMARY" | "ECOMMERCE_9_5";
+export interface GstGstr3bLaneSpec { laneId: string; version: string; label: string; officialField: string; toleranceMinor?: string; }
+export interface GstGstr3bSchemaPackRegisterPayload {
+  packId?: string; jurisdiction: "IN"; returnType: "GSTR3B"; filingFrequency: GstGstr3bFilingFrequency; applicableFrom: string; applicableTo?: string;
+  readinessContractVersion: string; ruleSnapshotReference: string; artifactReferences: AuthorityArtifactReference[]; packVersion: string; laneSpec: GstGstr3bLaneSpec[]; validationSchema: unknown; mappingSpec: unknown; supersedesPackId?: string;
+}
+export interface GstGstr3bSchemaPackDecisionPayload { packId: string; expectedPackHash: string; reason: string; }
+export interface GstGstr3bFactPayload { factId?: string; gstin: string; taxPeriodFrom: string; taxPeriodTo: string; factType: GstGstr3bFactType; facts: Record<string, unknown>; provenance: Record<string, unknown>; }
+export interface GstGstr3bFactDecisionPayload { bookSetId: string; factId: string; expectedFactHash: string; reason: string; }
+export interface GstGstr3bArtifactBindingPayload { bookSetId: string; gstin: string; taxPeriodFrom: string; taxPeriodTo: string; schemaPackId: string; gstr1ArtifactId?: string; gstr1ArtifactHash?: string; readinessSnapshotId?: string; }
+export interface GstGstr3bArtifactValidatePayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; }
+export interface GstGstr3bArtifactExportPayload { bookSetId: string; artifactId: string; expectedArtifactHash: string; expectedValidationHash: string; }
+
 export type WithholdingStatementForm = "24Q" | "26Q" | "27Q" | "27EQ";
 export type WithholdingStatementQuarter = "Q1" | "Q2" | "Q3" | "Q4";
 export type WithholdingStatementFilingType = "ORIGINAL" | "CORRECTION";

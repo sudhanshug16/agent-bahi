@@ -699,14 +699,16 @@ async function personalTaxCounts(session: BusinessSession, tenantId: string, tax
   };
 }
 
-async function artifactCounts(session: BusinessSession, tenantId: string, bookSetId: string): Promise<{ gstArtifacts: number; gstExported: number; tdsArtifacts: number; tdsExported: number }> {
-  const [gst, gstExports, tds, tdsExports] = await Promise.all([
+async function artifactCounts(session: BusinessSession, tenantId: string, bookSetId: string): Promise<{ gstArtifacts: number; gstExported: number; gstr3bArtifacts: number; gstr3bExported: number; tdsArtifacts: number; tdsExported: number }> {
+  const [gst, gstExports, gstr3b, gstr3bExports, tds, tdsExports] = await Promise.all([
     session.query("SELECT id FROM gst_gstr1_artifacts WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]),
     session.query("SELECT id FROM gst_gstr1_export_activities WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]),
+    session.query("SELECT id FROM gst_gstr3b_artifacts WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]),
+    session.query("SELECT id FROM gst_gstr3b_export_activities WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]),
     session.query("SELECT id FROM withholding_statement_artifacts WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]),
     session.query("SELECT id FROM withholding_statement_export_activities WHERE tenant_id = ? AND book_set_id = ?", [tenantId, bookSetId]),
   ]);
-  return { gstArtifacts: gst.rows.length, gstExported: gstExports.rows.length, tdsArtifacts: tds.rows.length, tdsExported: tdsExports.rows.length };
+  return { gstArtifacts: gst.rows.length, gstExported: gstExports.rows.length, gstr3bArtifacts: gstr3b.rows.length, gstr3bExported: gstr3bExports.rows.length, tdsArtifacts: tds.rows.length, tdsExported: tdsExports.rows.length };
 }
 
 async function periodCounts(session: BusinessSession, tenantId: string, bookSetId: string): Promise<{ closeEvents: number; reopened: number; packs: number; stalePacks: number }> {
@@ -764,9 +766,11 @@ async function buildCards(
   const artifactData = await Promise.all(summaries.slice(0, CARD_LIMIT).map((summary) => artifactCounts(session, summary.bookSet.tenantId, summary.bookSet.bookSetId)));
   const gstArtifacts = artifactData.reduce((n, item) => n + item.gstArtifacts, 0);
   const gstExports = artifactData.reduce((n, item) => n + item.gstExported, 0);
+  const gstr3bArtifacts = artifactData.reduce((n, item) => n + item.gstr3bArtifacts, 0);
+  const gstr3bExports = artifactData.reduce((n, item) => n + item.gstr3bExported, 0);
   const gstRegistrations = countSummary(summaries, (s) => s.gst.registrationsApplicableAsOf.count);
   const gstPending = countSummary(summaries, (s) => s.gst.pendingReviewItc.count);
-  cards.push(card("gst", cardState(gstRegistrations > 0, false, gstRegistrations > 0 && gstArtifacts === 0 && countSummary(summaries, (s) => s.gst.postedSalesActivity.count + s.gst.postedPurchaseActivity.count) > 0, gstPending > 0 || gstExports > 0), gstRegistrations === 0 ? "GST registration is not configured for this scope." : `${gstRegistrations} registration${gstRegistrations === 1 ? "" : "s"}; ${gstPending} ITC item${gstPending === 1 ? "" : "s"} need review${gstExports ? `; ${gstExports} export artifact${gstExports === 1 ? "" : "s"} await portal follow-up.` : "."}`, { registrations: gstRegistrations, artifacts: gstArtifacts, exportedNotSubmitted: gstExports, pendingReviewItc: gstPending }, [...(gstPending ? ["GST_ITC_REVIEW_REQUIRED"] : []), ...(gstExports ? ["GST_EXPORTED_NOT_SUBMITTED"] : [])], [], asOfDate, asOfTimestamp, [...common, { operationId: "gst.return.readiness-report", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}) } }, { operationId: "gst.gstr1-artifact.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), artifactId: "<artifact-id>" } }]));
+  cards.push(card("gst", cardState(gstRegistrations > 0, false, gstRegistrations > 0 && gstArtifacts === 0 && gstr3bArtifacts === 0 && countSummary(summaries, (s) => s.gst.postedSalesActivity.count + s.gst.postedPurchaseActivity.count) > 0, gstPending > 0 || gstExports > 0 || gstr3bExports > 0), gstRegistrations === 0 ? "GST registration is not configured for this scope." : `${gstRegistrations} registration${gstRegistrations === 1 ? "" : "s"}; ${gstPending} ITC item${gstPending === 1 ? "" : "s"} need review${gstr3bExports ? `; ${gstr3bExports} GSTR-3B export${gstr3bExports === 1 ? "" : "s"} await portal follow-up.` : gstExports ? `; ${gstExports} GSTR-1 export${gstExports === 1 ? "" : "s"} await portal follow-up.` : "."}`, { registrations: gstRegistrations, artifacts: gstArtifacts, gstr3bArtifacts, exportedNotSubmitted: gstExports + gstr3bExports, pendingReviewItc: gstPending }, [...(gstPending ? ["GST_ITC_REVIEW_REQUIRED"] : []), ...(gstExports ? ["GST_EXPORTED_NOT_SUBMITTED"] : []), ...(gstr3bExports ? ["GST_GSTR3B_EXPORTED_NOT_SUBMITTED"] : [])], [], asOfDate, asOfTimestamp, [...common, { operationId: "gst.return.readiness-report", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}) } }, { operationId: "gst.gstr1-artifact.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), artifactId: "<artifact-id>" } }, { operationId: "gst.gstr3b.status", inputTemplate: { ...(firstScope ? { tenantId: firstScope } : {}), ...(bookSetId ? { bookSetId } : {}), artifactId: "<artifact-id>" } }]));
 
   const tdsProfiles = countSummary(summaries, (s) => s.tdsTcs.unverifiedProfileCount);
   const tdsLiabilities = countSummary(summaries, (s) => s.tdsTcs.undepositedLiabilityCount);
