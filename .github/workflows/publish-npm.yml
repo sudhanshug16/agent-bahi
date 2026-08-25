@@ -130,4 +130,40 @@ jobs:
             reject_npmrc_auth_token "$NPM_CONFIG_USERCONFIG"
           fi
 
+          NPM_LOG_DIR="$RUNNER_TEMP/npm-publish-debug"
+          mkdir -p "$NPM_LOG_DIR"
+          export npm_config_logs_dir="$NPM_LOG_DIR"
+
+          redact_npm_log() {
+            sed -E \
+              -e 's#https?://[^[:space:]]+#<redacted-url>#g' \
+              -e 's#(ACTIONS_ID_TOKEN_REQUEST_TOKEN[[:space:]]*[:=][[:space:]]*)[^[:space:]]+#\1<redacted>#Ig' \
+              -e 's#((^|[[:space:]])(authorization|proxy-authorization|cookie|set-cookie)[[:space:]]*:[[:space:]]*).*$#\1<redacted>#Ig' \
+              -e 's#((^|[?&[:space:]])[A-Za-z0-9_-]*(access[_-]?token|id[_-]?token|refresh[_-]?token|token|auth|secret|password|passwd|credential|cookie|api[_-]?key|apikey)[A-Za-z0-9_-]*[[:space:]]*[:=][[:space:]]*)(Bearer[[:space:]]+|JWT[[:space:]]+)?[^&[:space:]]+#\1<redacted>#Ig' \
+              -e 's#((^|[[:space:]])(bearer|jwt)[[:space:]]+)[^[:space:]]+#\1<redacted>#Ig' \
+              -e 's#(^|[^[:alnum:]_-])(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)([^[:alnum:]_-]|$)#\1<redacted-jwt>\3#g'
+          }
+
+          set +e
           npm publish --access public --provenance --loglevel verbose
+          PUBLISH_STATUS=$?
+          set -e
+
+          if [ "$PUBLISH_STATUS" -ne 0 ]; then
+            set +e
+            LATEST_NPM_LOG=""
+            if [ -d "$NPM_LOG_DIR" ]; then
+              mapfile -d '' NPM_LOGS < <(find "$NPM_LOG_DIR" -type f -name '*-debug-*.log' -print0 | sort -z)
+              if [ "${#NPM_LOGS[@]}" -gt 0 ]; then
+                LATEST_NPM_LOG="${NPM_LOGS[${#NPM_LOGS[@]} - 1]}"
+              fi
+            fi
+            if [ -n "$LATEST_NPM_LOG" ] && [ -f "$LATEST_NPM_LOG" ]; then
+              redact_npm_log "$LATEST_NPM_LOG" >&2
+            else
+              echo "npm publish failed; no npm debug log was found under RUNNER_TEMP." >&2
+            fi
+            set -e
+          fi
+
+          exit "$PUBLISH_STATUS"
