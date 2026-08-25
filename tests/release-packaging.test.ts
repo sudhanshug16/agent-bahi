@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+// The release helper is intentionally executed by Node in the workflow; Bun tests import it to inject deterministic fetch responses.
+// @ts-expect-error JavaScript release helper has no generated declaration file.
+import { checkNpmVersion } from "../scripts/npm-version-preflight.mjs";
+
 const root = process.cwd();
 
 async function text(path: string): Promise<string> {
@@ -87,6 +91,15 @@ describe("local MIT release packaging contract", () => {
     expect(workflow).toContain('test "$(npm --version)" = "12.0.2"');
     expect(workflow).toContain("bun install --frozen-lockfile");
     expect(workflow).toContain("bun run release:check");
+    expect(workflow).toContain("scripts/npm-version-preflight.mjs");
+    expect(workflow).toContain('echo "npm publish preflight: checking exact registry version."');
+    expect(workflow).toContain('echo "npm publish stage: starting Trusted Publishing publish."');
+    expect(workflow).not.toContain("npm view");
+    expect(workflow).not.toContain("--silent");
+    expect(workflow).toContain('if [ -s "$PREFLIGHT_ERROR" ]; then');
+    expect(workflow).toContain("npm version preflight failed without diagnostics; refusing to publish.");
+    expect(workflow).toContain('elif [ ! -s "$LATEST_NPM_LOG" ]; then');
+    expect(workflow).toContain("npm publish failed; npm debug log was empty:");
     expect(workflow).toContain("npm pack --dry-run");
     expect(workflow).toContain("npm pack --pack-destination \"$RUNNER_TEMP\" --json");
     expect(workflow).toContain("!Array.isArray(metadata)");
@@ -154,12 +167,49 @@ describe("local MIT release packaging contract", () => {
     expect(propagatedStatus).toBeGreaterThan(redactedEmission);
     expect(propagatedStatus).toBeGreaterThan(diagnosticRestoreExit);
     expect(workflow.indexOf("npm install --global npm@12.0.2")).toBeLessThan(publishCommand);
+    expect(workflow.indexOf('echo "npm publish preflight: checking exact registry version."')).toBeLessThan(publishCommand);
+    expect(workflow.indexOf('echo "npm publish stage: starting Trusted Publishing publish."')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('if [ -n "${NODE_AUTH_TOKEN:-}" ]; then')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('reject_npmrc_auth_token ".npmrc"')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('reject_npmrc_auth_token "$HOME/.npmrc"')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('reject_npmrc_auth_token "$NPM_CONFIG_USERCONFIG"')).toBeLessThan(publishCommand);
     expect(workflow.indexOf("--loglevel verbose", publishCommand)).toBeGreaterThan(publishCommand);
+  });
+
+  it("makes the npm version preflight fail closed around mocked registry responses", async () => {
+    const request = (status: number, body: unknown, ok = status >= 200 && status < 300) =>
+      async () => ({ status, ok, json: async () => body }) as Response;
+
+    expect(await checkNpmVersion({
+      packageName: "@sudhanshug/agent-bahi",
+      packageVersion: "1.0.0",
+      fetchImpl: request(200, { versions: { "1.0.0": {} } }),
+    })).toBe("exists");
+
+    expect(await checkNpmVersion({
+      packageName: "@sudhanshug/agent-bahi",
+      packageVersion: "1.0.0",
+      fetchImpl: request(200, { versions: { "0.9.0": {} } }),
+    })).toBe("absent");
+
+    await expect(checkNpmVersion({
+      packageName: "@sudhanshug/agent-bahi",
+      packageVersion: "1.0.0",
+      fetchImpl: request(503, { error: "registry unavailable" }),
+    })).rejects.toThrow("registry returned HTTP 503");
+
+    await expect(checkNpmVersion({
+      packageName: "@sudhanshug/agent-bahi",
+      packageVersion: "1.0.0",
+      fetchImpl: request(200, "not a packument"),
+    })).rejects.toThrow("registry packument is malformed");
+
+    await expect(checkNpmVersion({
+      packageName: "@sudhanshug/agent-bahi",
+      packageVersion: "1.0.0",
+      fetchImpl: async () => ({ status: 200, ok: true, json: async () => { throw new SyntaxError("Unexpected end of JSON input"); } }) as unknown as Response,
+    })).rejects.toThrow("registry returned malformed JSON");
   });
 
   it("parses npm 12 pack metadata and rejects unsafe filenames", async () => {

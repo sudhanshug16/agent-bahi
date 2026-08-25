@@ -89,22 +89,34 @@ jobs:
 
           PACKAGE_NAME="$(node -p "const p = require('./package.json'); if (!p.name) throw new Error('package name is missing'); p.name")"
           PACKAGE_VERSION="$(node -p "const p = require('./package.json'); if (!p.version) throw new Error('package version is missing'); p.version")"
-          VIEW_ERROR="$RUNNER_TEMP/npm-view-error.txt"
+          PREFLIGHT_ERROR="$RUNNER_TEMP/npm-version-preflight-error.txt"
+          echo "npm publish preflight: checking exact registry version."
           set +e
-          EXISTING_VERSION="$(npm view --silent "$PACKAGE_NAME@$PACKAGE_VERSION" version --registry=https://registry.npmjs.org 2>"$VIEW_ERROR")"
-          VIEW_STATUS=$?
+          VERSION_STATUS="$(node scripts/npm-version-preflight.mjs "$PACKAGE_NAME" "$PACKAGE_VERSION" 2>"$PREFLIGHT_ERROR")"
+          PREFLIGHT_STATUS=$?
           set -e
 
-          if [ "$VIEW_STATUS" -eq 0 ]; then
-            test "$EXISTING_VERSION" = "$PACKAGE_VERSION"
-            echo "$PACKAGE_NAME@$PACKAGE_VERSION already exists; nothing to publish."
-            exit 0
+          if [ "$PREFLIGHT_STATUS" -ne 0 ]; then
+            if [ -s "$PREFLIGHT_ERROR" ]; then
+              cat "$PREFLIGHT_ERROR" >&2
+            else
+              echo "npm version preflight failed without diagnostics; refusing to publish." >&2
+            fi
+            exit "$PREFLIGHT_STATUS"
           fi
 
-          if ! grep -q 'E404' "$VIEW_ERROR"; then
-            cat "$VIEW_ERROR" >&2
-            exit "$VIEW_STATUS"
-          fi
+          case "$VERSION_STATUS" in
+            exists)
+              echo "$PACKAGE_NAME@$PACKAGE_VERSION already exists; nothing to publish."
+              exit 0
+              ;;
+            absent)
+              ;;
+            *)
+              echo "npm version preflight returned an invalid result; refusing to publish." >&2
+              exit 1
+              ;;
+          esac
 
           if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
             echo "Refusing to publish: GitHub Actions OIDC environment is unavailable." >&2
@@ -145,6 +157,7 @@ jobs:
           }
 
           set +e
+          echo "npm publish stage: starting Trusted Publishing publish."
           npm publish --access public --provenance --loglevel verbose
           PUBLISH_STATUS=$?
           set -e
@@ -158,10 +171,12 @@ jobs:
                 LATEST_NPM_LOG="${NPM_LOGS[${#NPM_LOGS[@]} - 1]}"
               fi
             fi
-            if [ -n "$LATEST_NPM_LOG" ] && [ -f "$LATEST_NPM_LOG" ]; then
-              redact_npm_log "$LATEST_NPM_LOG" >&2
-            else
+            if [ -z "$LATEST_NPM_LOG" ] || [ ! -f "$LATEST_NPM_LOG" ]; then
               echo "npm publish failed; no npm debug log was found under RUNNER_TEMP." >&2
+            elif [ ! -s "$LATEST_NPM_LOG" ]; then
+              echo "npm publish failed; npm debug log was empty: $LATEST_NPM_LOG" >&2
+            else
+              redact_npm_log "$LATEST_NPM_LOG" >&2
             fi
             set -e
           fi
