@@ -58,13 +58,13 @@ describe("local MIT release packaging contract", () => {
     expect(pushTrigger).toContain("      - .github/workflows/publish-npm.yml");
     expect(workflow).toContain("actions/setup-node@v7");
     expect(workflow).not.toContain("actions/setup-node@v6");
-    expect(workflow).toContain("node-version: 24");
+    expect(workflow).toContain("node-version: 24.15.0");
     expect(workflow).not.toContain("registry-url:");
     expect(workflow).toContain("package-manager-cache: false");
     expect(workflow).toContain("oven-sh/setup-bun@v2");
     expect(workflow).toContain("bun-version: 1.3.14");
-    expect(workflow).toContain("npm install --global npm@11.17.0");
-    expect(workflow).toContain('test "$(npm --version)" = "11.17.0"');
+    expect(workflow).toContain("npm install --global npm@12.0.2");
+    expect(workflow).toContain('test "$(npm --version)" = "12.0.2"');
     expect(workflow).toContain("bun install --frozen-lockfile");
     expect(workflow).toContain("bun run release:check");
     expect(workflow).toContain("npm pack --dry-run");
@@ -85,11 +85,11 @@ describe("local MIT release packaging contract", () => {
     expect(workflow).toContain('reject_npmrc_auth_token "$NPM_CONFIG_USERCONFIG"');
     expect(workflow).toContain("Refusing to publish: NODE_AUTH_TOKEN is set");
     expect(workflow).toContain("Refusing to publish: npm config contains _authToken");
-    expect(workflow).toContain("npm publish --access public --loglevel verbose");
+    expect(workflow).toContain("npm publish --access public --provenance --loglevel verbose");
     expect(workflow).not.toMatch(/^\s*(?:export\s+)?NODE_AUTH_TOKEN\s*=/m);
     expect(workflow).not.toMatch(/^\s*NODE_AUTH_TOKEN:\s*/m);
     expect(workflow).not.toContain("npm stage publish");
-    expect(workflow).not.toContain("--provenance");
+    expect(workflow).toContain("--provenance");
 
     const publishCommand = workflow.indexOf("npm publish --access public");
     expect(workflow.indexOf('if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then')).toBeLessThan(publishCommand);
