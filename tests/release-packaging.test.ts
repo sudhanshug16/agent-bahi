@@ -8,6 +8,26 @@ async function text(path: string): Promise<string> {
   return readFile(join(root, path), "utf8");
 }
 
+async function runPackMetadataParser(workflow: string, metadata: unknown): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const startMarker = "TARBALL=\"$(node -e '";
+  const endMarker = "' \"$PACKAGE_NAME\" \"$PACK_JSON\")\"";
+  const start = workflow.indexOf(startMarker);
+  const end = workflow.indexOf(endMarker, start + startMarker.length);
+  if (start < 0 || end < 0) throw new Error("pack metadata parser is missing");
+  const parser = workflow.slice(start + startMarker.length, end);
+  const child = Bun.spawn(["node", "-e", parser, "@sudhanshug/agent-bahi", JSON.stringify(metadata)], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { exitCode, stdout, stderr };
+}
+
 describe("local MIT release packaging contract", () => {
   it("is public, MIT licensed, Bun-pinned, and includes both source entrypoints", async () => {
     const manifest = JSON.parse(await text("package.json")) as {
@@ -69,6 +89,13 @@ describe("local MIT release packaging contract", () => {
     expect(workflow).toContain("bun run release:check");
     expect(workflow).toContain("npm pack --dry-run");
     expect(workflow).toContain("npm pack --pack-destination \"$RUNNER_TEMP\" --json");
+    expect(workflow).toContain("!Array.isArray(metadata)");
+    expect(workflow).toContain("Object.keys(metadata).length === 1");
+    expect(workflow).toContain("Object.hasOwn(metadata, packageName)");
+    expect(workflow).toContain("typeof filename !== \"string\"");
+    expect(workflow).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]*\\.tgz$/");
+    expect(workflow).toContain("path.basename(filename) !== filename");
+    expect(workflow).toContain("process.stdout.write(filename)");
     expect(workflow).toContain("npm install --ignore-scripts");
     expect(workflow).toContain("agent-bahi --version");
     expect(workflow).toContain("agent-bahi --help");
@@ -98,6 +125,37 @@ describe("local MIT release packaging contract", () => {
     expect(workflow.indexOf('reject_npmrc_auth_token "$HOME/.npmrc"')).toBeLessThan(publishCommand);
     expect(workflow.indexOf('reject_npmrc_auth_token "$NPM_CONFIG_USERCONFIG"')).toBeLessThan(publishCommand);
     expect(workflow.indexOf("--loglevel verbose", publishCommand)).toBeGreaterThan(publishCommand);
+  });
+
+  it("parses npm 12 pack metadata and rejects unsafe filenames", async () => {
+    const workflow = await text(".github/workflows/publish-npm.yml");
+    const npm12Metadata = {
+      "@sudhanshug/agent-bahi": {
+        id: "@sudhanshug/agent-bahi@1.0.0",
+        name: "@sudhanshug/agent-bahi",
+        version: "1.0.0",
+        filename: "sudhanshug-agent-bahi-1.0.0.tgz",
+      },
+    };
+    const valid = await runPackMetadataParser(workflow, npm12Metadata);
+    expect(valid.exitCode).toBe(0);
+    expect(valid.stdout).toBe("sudhanshug-agent-bahi-1.0.0.tgz");
+    expect(valid.stderr).toBe("");
+
+    for (const metadata of [
+      [],
+      { "@sudhanshug/agent-bahi": {} },
+      { "@sudhanshug/agent-bahi": { filename: "../agent-bahi.tgz" } },
+      { "@sudhanshug/agent-bahi": { filename: "/tmp/agent-bahi.tgz" } },
+      { "@sudhanshug/agent-bahi": { filename: "agent-bahi.zip" } },
+      {
+        "@sudhanshug/agent-bahi": { filename: "agent-bahi.tgz" },
+        "@other/package": { filename: "other.tgz" },
+      },
+    ]) {
+      const invalid = await runPackMetadataParser(workflow, metadata);
+      expect(invalid.exitCode).not.toBe(0);
+    }
   });
 
   it("ships the canonical generic MIT notice and truthful unsigned release metadata", async () => {
