@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { initializeAndUpgradeSqliteApplication } from "../../src/application/application.ts";
+import { BackupService } from "../../src/infrastructure/services/backup-service.ts";
+import { defaultBackupDirectory } from "../../src/infrastructure/services/backup-paths.ts";
 
 type TenantData = {
   tenantId: string;
@@ -123,5 +125,48 @@ describe("company.status", () => {
     expect(focused.cards[0]).toMatchObject({ id: "bank", asOfDate: "2026-08-23", asOfTimestamp: "2026-08-23T12:00:00.000Z" });
     expect(focused.cards[0]!.drillDowns.every((drilldown) => ["company.status", "database.compatibility", "bank-statement.list", "bank-reconciliation.status"].includes(drilldown.operationId))).toBe(true);
     await expect(app.company.status({ tenantId: tenant.tenantId as any, asOfDate: "2026-08-23", focus: "not-a-card" })).rejects.toMatchObject({ code: "INVALID_STATUS_FOCUS" });
+  });
+
+  it("reports a verified canonical local backup as healthy", async () => {
+    const { app, dbPath } = await fixture();
+    await activeTenant(app, "Verified Backup Co");
+    const backupDirectory = defaultBackupDirectory(dbPath);
+    await mkdir(backupDirectory, { recursive: true });
+    const backupPath = join(backupDirectory, "company-status.backup");
+    await new BackupService(dbPath).createBackup(backupPath);
+
+    const result = await app.company.status({ asOfDate: "2026-08-23" });
+    const database = result.cards.find((card) => card.id === "database")!;
+    expect(database).toMatchObject({ status: "HEALTHY", counts: { latestVerifiedBackup: 1, backupCandidates: 1, verifiedBackups: 1 }, actionCodes: [], blockerCodes: [] });
+    expect(JSON.stringify(result)).not.toContain(dbPath);
+  });
+
+  it("blocks status when a canonical local backup candidate is tampered", async () => {
+    const { app, dbPath } = await fixture();
+    await activeTenant(app, "Tampered Backup Co");
+    const backupDirectory = defaultBackupDirectory(dbPath);
+    await mkdir(backupDirectory, { recursive: true });
+    const backupPath = join(backupDirectory, "company-status.backup");
+    await new BackupService(dbPath).createBackup(backupPath);
+    const tampered = await readFile(backupPath);
+    tampered[100] = (tampered[100] ?? 0) ^ 0xff;
+    await writeFile(backupPath, tampered);
+
+    const result = await app.company.status({ asOfDate: "2026-08-23" });
+    const database = result.cards.find((card) => card.id === "database")!;
+    expect(database).toMatchObject({ status: "BLOCKED", counts: { latestVerifiedBackup: 0, backupCandidates: 1, verifiedBackups: 0 }, blockerCodes: ["BACKUP_VERIFICATION_FAILED"] });
+    expect(result.overallStatus).toBe("BLOCKED");
+    expect(result.overallReadiness).toBe("BLOCKED");
+    expect(JSON.stringify(result)).not.toContain(dbPath);
+  });
+
+  it("keeps status unknown when no canonical local backup candidate exists", async () => {
+    const { app, dbPath } = await fixture();
+    await activeTenant(app, "No Backup Co");
+    const result = await app.company.status({ asOfDate: "2026-08-23" });
+    const database = result.cards.find((card) => card.id === "database")!;
+    expect(database).toMatchObject({ status: "UNKNOWN", counts: { latestVerifiedBackup: 0, backupCandidates: 0, verifiedBackups: 0 }, actionCodes: ["BACKUP_STATUS_UNAVAILABLE"], blockerCodes: [] });
+    expect(result.overallStatus).toBe("UNKNOWN");
+    expect(JSON.stringify(result)).not.toContain(dbPath);
   });
 });

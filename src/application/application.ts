@@ -28,6 +28,7 @@ import { UpgradeError } from "../infrastructure/services/upgrade-coordinator.ts"
 import { createPublicFacade, type PublicApplicationFacade } from "./public-facade.ts";
 import { LedgerReportService } from "./services/ledger-report-service.ts";
 import { CompanyStatusService } from "./services/company-status-service.ts";
+import { createSqliteBackupStatusProvider } from "../infrastructure/services/sqlite-backup-status-provider.ts";
 
 /**
  * Internal composition type (all raw services).
@@ -123,7 +124,7 @@ export function createSqliteApplication(
     internal.bookSetScope,
     sessionRunner,
     new LedgerReportService(sessionRunner),
-    new CompanyStatusService(sessionRunner, () => inspectSqliteApplicationCompatibility(dbPath)),
+    new CompanyStatusService(sessionRunner, () => inspectSqliteApplicationCompatibility(dbPath), createSqliteBackupStatusProvider(dbPath)),
     sourceRoot,
   );
 }

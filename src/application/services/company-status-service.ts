@@ -74,6 +74,16 @@ export interface CompanyStatusResult {
   drillDown: CompanyStatusDrillDown[];
 }
 
+export interface CompanyStatusBackupStatus {
+  status: "VERIFIED" | "UNKNOWN" | "BLOCKED";
+  candidateCount: number;
+  verifiedCount: number;
+  latestVerifiedAt?: string;
+  blockerCode?: "BACKUP_VERIFICATION_FAILED";
+}
+
+export type CompanyStatusBackupStatusProvider = () => Promise<CompanyStatusBackupStatus>;
+
 export type CompanyStatusCardState = "HEALTHY" | "ACTION_REQUIRED" | "BLOCKED" | "NOT_CONFIGURED" | "NOT_APPLICABLE" | "UNKNOWN";
 
 export interface CompanyStatusCard {
@@ -737,6 +747,7 @@ async function buildCards(
   bookSetId: string | undefined,
   taxCaseId: string | undefined,
   panByTenant: ReadonlyMap<string, boolean>,
+  backupStatus: CompanyStatusBackupStatus,
 ): Promise<CompanyStatusCard[]> {
   const allIssues = summaries.flatMap(issuesFor);
   const issueCodes = (codes: string[]) => allIssues.filter((issue) => codes.includes(issue.code));
@@ -744,8 +755,22 @@ async function buildCards(
   const common = scopeDrillDowns(firstScope, bookSetId, asOfDate, asOfTimestamp);
   const cards: CompanyStatusCard[] = [];
   const compatibilityBlocked = !["READY", "AVAILABLE"].includes(compatibility.status);
-  const backupState: CompanyStatusCardState = compatibilityBlocked ? "BLOCKED" : "UNKNOWN";
-  cards.push(card("database", backupState, compatibilityBlocked ? "Database upgrade or recovery is required; backup safety cannot be established." : "SQLite schema and data format are compatible, but the latest verified backup is not queryable from the business read fence.", { latestVerifiedBackup: 0 }, ["BACKUP_STATUS_UNAVAILABLE"], compatibilityBlocked ? ["DATABASE_NOT_READY"] : [], asOfDate, asOfTimestamp, [...common, { operationId: "database.compatibility", inputTemplate: {} }, { operationId: "database.backup.list", inputTemplate: {} }, { operationId: "database.upgrade.preview", inputTemplate: {} }]));
+  const backupState: CompanyStatusCardState = compatibilityBlocked || backupStatus.status === "BLOCKED"
+    ? "BLOCKED"
+    : backupStatus.status === "VERIFIED" ? "HEALTHY" : "UNKNOWN";
+  const backupSummary = compatibilityBlocked
+    ? "Database upgrade or recovery is required; backup safety cannot be established."
+    : backupStatus.status === "BLOCKED"
+      ? "A canonical local SQLite backup candidate could not be verified."
+      : backupStatus.status === "VERIFIED"
+        ? `SQLite schema and data format are compatible; ${backupStatus.verifiedCount} verified local backup${backupStatus.verifiedCount === 1 ? "" : "s"} available.`
+        : "SQLite schema and data format are compatible, but no canonical local backup candidate is available to verify.";
+  const backupCounts = {
+    latestVerifiedBackup: backupStatus.status === "VERIFIED" ? 1 : 0,
+    backupCandidates: backupStatus.candidateCount,
+    verifiedBackups: backupStatus.verifiedCount,
+  };
+  cards.push(card("database", backupState, backupSummary, backupCounts, backupStatus.status === "UNKNOWN" || compatibilityBlocked ? ["BACKUP_STATUS_UNAVAILABLE"] : [], compatibilityBlocked ? ["DATABASE_NOT_READY"] : backupStatus.blockerCode ? [backupStatus.blockerCode] : [], asOfDate, asOfTimestamp, [...common, { operationId: "database.compatibility", inputTemplate: {} }, { operationId: "database.backup.list", inputTemplate: {} }, { operationId: "database.upgrade.preview", inputTemplate: {} }]));
 
   const lifecycleOk = tenants.length > 0 && tenants.every((item) => String(item.lifecycle) === "ACTIVE");
   cards.push(card("tenant-bookset", lifecycleOk ? "HEALTHY" : "BLOCKED", `${tenants.length} active tenant${tenants.length === 1 ? "" : "s"} in scope; ${summaries.length} active BookSet${summaries.length === 1 ? "" : "s"}.`, { tenants: tenants.length, bookSets: summaries.length }, [], lifecycleOk ? [] : ["TENANT_OR_BOOKSET_INACTIVE"], asOfDate, asOfTimestamp, [...common, { operationId: "tenant.list-active", inputTemplate: {} }, { operationId: "book-set.list", inputTemplate: firstScope ? { tenantId: firstScope } : {} }]));
@@ -863,6 +888,7 @@ export class CompanyStatusService {
       currentDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
       requiredDataFormatVersion: CURRENT_SCHEMA_MANIFEST.dataFormatVersion,
     }),
+    private readonly backupStatusProvider: CompanyStatusBackupStatusProvider = async () => ({ status: "UNKNOWN", candidateCount: 0, verifiedCount: 0 }),
   ) {}
 
   async status(input: CompanyStatusInput = {}): Promise<CompanyStatusResult> {
@@ -874,6 +900,10 @@ export class CompanyStatusService {
     if (normalizedFocus && !CARD_FOCUSES.has(normalizedFocus)) throw new DomainError("INVALID_STATUS_FOCUS", "focus must be a registered status card focus", { focus: input.focus, allowed: [...CARD_FOCUSES, ...Object.keys(FOCUS_ALIASES)].sort() });
     if (input.bookSetId && !input.tenantId) throw new DomainError("TENANT_SCOPE_REQUIRED", "tenantId is required when bookSetId is supplied");
     const compatibility = await this.compatibilityProvider();
+    const compatibilityBlocked = !["READY", "AVAILABLE"].includes(compatibility.status);
+    const backupStatus = compatibilityBlocked
+      ? { status: "BLOCKED" as const, candidateCount: 0, verifiedCount: 0 }
+      : await this.backupStatusProvider();
     return this.sessionRunner.withBusinessSession("read", async (session) => {
       const selected = await selectTenants(session, input.tenantId);
       if (input.taxCaseId && selected.rows.length !== 1) throw new DomainError("TAX_CASE_SCOPE_REQUIRED", "taxCaseId requires one explicit tenant scope");
@@ -906,12 +936,13 @@ export class CompanyStatusService {
         }
       }
       const global = !input.tenantId && selected.rows.length > 1;
-      const rawIssues = summaries.flatMap(issuesFor).sort((left, right) => issueRank(left) - issueRank(right) || (left.code.localeCompare(right.code)) || String(left.bookSetId ?? "").localeCompare(String(right.bookSetId ?? "")));
+      const databaseBlockers: CompanyStatusIssue[] = backupStatus.blockerCode ? [{ severity: "BLOCKED", code: backupStatus.blockerCode }] : [];
+      const rawIssues = [...summaries.flatMap(issuesFor), ...databaseBlockers].sort((left, right) => issueRank(left) - issueRank(right) || (left.code.localeCompare(right.code)) || String(left.bookSetId ?? "").localeCompare(String(right.bookSetId ?? "")));
       const issues = global ? rawIssues.map((issue) => issue.bookSetId ? { ...issue, bookSetId: maskIdentifier(issue.bookSetId) } : issue) : rawIssues;
       const hasBlocked = issues.some((issue) => issue.severity === "BLOCKED");
       const tenants = selected.rows.map((tenant) => ({ tenantId: global ? maskIdentifier(String(tenant.id)) : String(tenant.id), name: String(tenant.name), kind: String(tenant.kind), lifecycle: String(tenant.lifecycle), bookSetCount: summaries.filter((summary) => summary.bookSet.tenantId === String(tenant.id)).length }));
       const selectedTenant = selected.rows.length === 1 && !global ? selected.rows[0] : selected.rows.length === 1 ? selected.rows[0] : undefined;
-      const cards = await buildCards(session, summaries, selected.rows, compatibility, asOfDate, asOfTimestamp, input.tenantId ? String(input.tenantId) : undefined, input.bookSetId ? String(input.bookSetId) : undefined, input.taxCaseId, panByTenant);
+      const cards = await buildCards(session, summaries, selected.rows, compatibility, asOfDate, asOfTimestamp, input.tenantId ? String(input.tenantId) : undefined, input.bookSetId ? String(input.bookSetId) : undefined, input.taxCaseId, panByTenant, backupStatus);
       const focusedCards = normalizedFocus ? cards.filter((item) => item.id === normalizedFocus) : cards;
       const outputSummaries = global ? summaries.map((summary) => ({ ...summary, bookSet: { ...summary.bookSet, tenantId: maskIdentifier(summary.bookSet.tenantId), bookSetId: maskIdentifier(summary.bookSet.bookSetId) } })) : summaries;
       const outputDrillDown = global ? [] : summaries.flatMap((summary) => drillDown(summary.bookSet.tenantId, summary.bookSet.bookSetId, asOfDate, summary.compliance));

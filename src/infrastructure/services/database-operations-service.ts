@@ -11,6 +11,9 @@ import { CURRENT_SCHEMA_MANIFEST, KNOWN_SCHEMA_MANIFESTS, ORDERED_UPGRADE_STEPS 
 import { assertSafeSqlitePath } from "../sqlite/path-policy.ts";
 import { detectDatabaseState } from "./database-state-detector.ts";
 import { appendOperationReceipt, receiptDatabasePathHash, type OperationReceipt } from "./operation-receipt.ts";
+import { defaultBackupDirectory } from "./backup-paths.ts";
+
+export { defaultBackupDirectory } from "./backup-paths.ts";
 
 export type CompatibilityStatus = "CURRENT" | "UPGRADE_REQUIRED" | "CLI_TOO_OLD" | "DIRTY_IN_PROGRESS" | "UNKNOWN_TAMPERED" | "UNINITIALIZED";
 
@@ -118,11 +121,6 @@ export async function inspectDatabaseCompatibility(databasePath: string, cliVers
     const result = { ...base, status: "UNKNOWN_TAMPERED" as const };
     return { ...result, remediation: remediation(canonical, result.status) };
   } finally { db.close(); }
-}
-
-export function defaultBackupDirectory(databasePath: string): string {
-  const canonical = assertSafeSqlitePath(databasePath);
-  return `${canonical}.backups`;
 }
 
 function checksum(path: string): string {
