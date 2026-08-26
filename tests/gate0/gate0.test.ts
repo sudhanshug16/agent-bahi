@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EXIT_CODES, runCli } from "../../spikes/gate0/cli-smoke.ts";
 import { runLocalSqliteProof } from "../../spikes/gate0/proof.ts";
+import { CLI_VERSION } from "../../src/domain/commands/registry.ts";
 
 describe("Gate0 local SQLite proofs", () => {
   test("all required local SQLite failure and success cases pass", async () => {
@@ -21,14 +22,14 @@ describe("Gate0 local SQLite proofs", () => {
 describe("domain-owned CLI registry smoke", () => {
   test("help, version, JSON success, and structured JSON error are deterministic", async () => {
     expect((await runCli(["--help"])).output).toContain("agent-bahi — deterministic accounting CLI");
-    expect(await runCli(["--version"])).toEqual({ output: "0.0.0-gate0", error: "", exitCode: EXIT_CODES.ok });
+    expect(await runCli(["--version"])).toEqual({ output: CLI_VERSION, error: "", exitCode: EXIT_CODES.ok });
     const proofResult = await runCli(["--json", "gate0.proof"]);
     expect(proofResult.error).toBe("");
     expect(proofResult.exitCode).toBe(EXIT_CODES.ok);
     const parsed = JSON.parse(proofResult.output);
     expect(parsed.ok).toBe(true);
     expect(parsed.command).toBe("gate0.proof");
-    expect(parsed.version).toBe("0.0.0-gate0");
+    expect(parsed.version).toBe(CLI_VERSION);
     expect(parsed.results).toBeDefined();
     expect(Array.isArray(parsed.results)).toBe(true);
     expect(parsed.results.every((r: any) => r.status === "PASS")).toBe(true);

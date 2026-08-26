@@ -1,6 +1,6 @@
 {
   "name": "@sudhanshug/agent-bahi",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Agent-first India accounting, bookkeeping, tax, payroll, reporting, CLI, and MCP system backed by SQLite.",
   "license": "MIT",
   "repository": {

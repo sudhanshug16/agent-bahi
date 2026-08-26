@@ -52,7 +52,7 @@ describe("local MIT release packaging contract", () => {
 
     expect(manifest).toMatchObject({
       name: "@sudhanshug/agent-bahi",
-      version: "1.0.1",
+      version: "1.0.2",
       license: "MIT",
       packageManager: "bun@1.3.14",
       engines: { bun: "1.3.14" },
@@ -183,31 +183,31 @@ describe("local MIT release packaging contract", () => {
 
     expect(await checkNpmVersion({
       packageName: "@sudhanshug/agent-bahi",
-      packageVersion: "1.0.1",
-      fetchImpl: request(200, { versions: { "1.0.1": {} } }),
+      packageVersion: "1.0.2",
+      fetchImpl: request(200, { versions: { "1.0.2": {} } }),
     })).toBe("exists");
 
     expect(await checkNpmVersion({
       packageName: "@sudhanshug/agent-bahi",
-      packageVersion: "1.0.1",
+      packageVersion: "1.0.2",
       fetchImpl: request(200, { versions: { "0.9.0": {} } }),
     })).toBe("absent");
 
     await expect(checkNpmVersion({
       packageName: "@sudhanshug/agent-bahi",
-      packageVersion: "1.0.1",
+      packageVersion: "1.0.2",
       fetchImpl: request(503, { error: "registry unavailable" }),
     })).rejects.toThrow("registry returned HTTP 503");
 
     await expect(checkNpmVersion({
       packageName: "@sudhanshug/agent-bahi",
-      packageVersion: "1.0.1",
+      packageVersion: "1.0.2",
       fetchImpl: request(200, "not a packument"),
     })).rejects.toThrow("registry packument is malformed");
 
     await expect(checkNpmVersion({
       packageName: "@sudhanshug/agent-bahi",
-      packageVersion: "1.0.1",
+      packageVersion: "1.0.2",
       fetchImpl: async () => ({ status: 200, ok: true, json: async () => { throw new SyntaxError("Unexpected end of JSON input"); } }) as unknown as Response,
     })).rejects.toThrow("registry returned malformed JSON");
   });
@@ -216,15 +216,15 @@ describe("local MIT release packaging contract", () => {
     const workflow = await text(".github/workflows/publish-npm.yml");
     const npm12Metadata = {
       "@sudhanshug/agent-bahi": {
-        id: "@sudhanshug/agent-bahi@1.0.1",
+        id: "@sudhanshug/agent-bahi@1.0.2",
         name: "@sudhanshug/agent-bahi",
-        version: "1.0.1",
-        filename: "sudhanshug-agent-bahi-1.0.1.tgz",
+        version: "1.0.2",
+        filename: "sudhanshug-agent-bahi-1.0.2.tgz",
       },
     };
     const valid = await runPackMetadataParser(workflow, npm12Metadata);
     expect(valid.exitCode).toBe(0);
-    expect(valid.stdout).toBe("sudhanshug-agent-bahi-1.0.1.tgz");
+    expect(valid.stdout).toBe("sudhanshug-agent-bahi-1.0.2.tgz");
     expect(valid.stderr).toBe("");
 
     for (const metadata of [
@@ -301,7 +301,7 @@ describe("local MIT release packaging contract", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(stdout).toContain("agent-bahi 1.0.1");
+    expect(stdout).toContain("agent-bahi 1.0.2");
     expect(stdout).toContain("database.upgrade");
     expect(stdout).toContain("Local stdio MCP");
     expect(stdout).toContain("TLS proxy/Tailscale");
@@ -320,6 +320,6 @@ describe("local MIT release packaging contract", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("1.0.1");
+    expect(stdout.trim()).toBe("1.0.2");
   });
 });

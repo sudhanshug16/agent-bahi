@@ -136,11 +136,11 @@ describe.serial("remote MCP Streamable HTTP", () => {
       const help = await run(["--help"]);
       expect(help.code).toBe(0);
       expect(help.stderr).toBe("");
-      expect(help.stdout).toContain("agent-bahi 1.0.1");
+      expect(help.stdout).toContain("agent-bahi 1.0.2");
       const version = await run(["version", "--json"]);
       expect(version.code).toBe(0);
       expect(version.stderr).toBe("");
-      expect(version.stdout).toContain('"version":"1.0.1"');
+      expect(version.stdout).toContain('"version":"1.0.2"');
       const initializedResult = await run(["--database", path, "database.init", "--json"]);
       expect(initializedResult.code).toBe(0);
       expect(initializedResult.stderr).toBe("");

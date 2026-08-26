@@ -57,7 +57,7 @@ jobs:
           PACKAGE_NAME="$(node -p "const p = require('./package.json'); if (!p.name) throw new Error('package name is missing'); p.name")"
           PACKAGE_VERSION="$(node -p "const p = require('./package.json'); if (!p.version) throw new Error('package version is missing'); p.version")"
           test "$PACKAGE_NAME" = "@sudhanshug/agent-bahi"
-          test "$PACKAGE_VERSION" = "1.0.1"
+          test "$PACKAGE_VERSION" = "1.0.2"
 
           PACK_JSON="$(npm pack --pack-destination "$RUNNER_TEMP" --json)"
           TARBALL="$(node -e '
