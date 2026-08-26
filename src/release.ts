@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 /** Release identity is intentionally local and never performs network checks. */
-export const CLI_VERSION = "1.0.0";
+export const CLI_VERSION = "1.0.1";
 export const PROTOCOL_VERSION = 1;
 export const BUILD_COMMIT = process.env.AGENT_BAHI_BUILD_COMMIT ?? "unbuilt";
 export const BUILD_TARGET = process.env.AGENT_BAHI_BUILD_TARGET ?? "source";

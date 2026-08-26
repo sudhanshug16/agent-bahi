@@ -16,7 +16,7 @@ afterEach(async () => {
 async function fixture(): Promise<string> {
   directory = await mkdtemp(join(tmpdir(), "agent-bahi-db-operations-"));
   const path = join(directory, "books.sqlite");
-  await initializeSqliteDatabase(path, { cliVersion: "1.0.0", buildId: "test" });
+  await initializeSqliteDatabase(path, { cliVersion: "1.0.1", buildId: "test" });
   return path;
 }
 
@@ -31,7 +31,7 @@ describe("Database Operations + Release CLI V1", () => {
   it("reports version and compatibility without implicit migration", async () => {
     const path = await fixture();
     const version = await new OperationDispatcher({ databasePath: path, source: "CLI" }).dispatch("system.version", {});
-    expect(version).toMatchObject({ ok: true, result: { version: "1.0.0", protocolVersion: 1, supportedSchemaVersion: 8, updateChecks: "disabled" } });
+    expect(version).toMatchObject({ ok: true, result: { version: "1.0.1", protocolVersion: 1, supportedSchemaVersion: 8, updateChecks: "disabled" } });
     const compatibility = await databaseOperation("database.compatibility", path, {});
     expect(compatibility).toMatchObject({ status: "CURRENT", currentSchemaVersion: 8, currentDataFormatVersion: 1 });
   });

@@ -16,7 +16,7 @@ export const EXIT_CODES = {
 
 function help(): string {
   return [
-    "agent-bahi 1.0.0 — agent-first SQLite accounting transport",
+    `agent-bahi ${CLI_VERSION} — agent-first SQLite accounting transport`,
     "",
     "Usage:",
     "  agent-bahi [--database PATH] skills list|show <id>|check [id] [--json]",
