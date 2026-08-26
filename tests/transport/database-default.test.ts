@@ -3,6 +3,8 @@ import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
+import { CLI_VERSION } from "../../src/release.ts";
 
 const root = process.cwd();
 const fixtureRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
@@ -48,9 +50,25 @@ describe("platform-default SQLite lifecycle", () => {
       }
       expect(() => lstatSync(join(unrelatedCwd, "agent-bahi.sqlite"))).toThrow();
 
+      const initialized = new Database(databasePath, { readonly: true });
+      try {
+        expect((initialized.query("SELECT last_writer_cli_version FROM database_control WHERE id = 1").get() as { last_writer_cli_version: string }).last_writer_cli_version).toBe(CLI_VERSION);
+      } finally {
+        initialized.close();
+      }
+
       const second = await runCli(["database.init", "--json"], unrelatedCwd, home, dataHome);
       expect(second.code).toBe(0);
       expect(lstatSync(databasePath).isFile()).toBe(true);
+
+      const upgrade = await runCli(["database.upgrade", "--backup", join(fixture, "upgrade.backup"), "--json"], unrelatedCwd, home, dataHome);
+      expect(upgrade.code).toBe(0);
+      const upgraded = new Database(databasePath, { readonly: true });
+      try {
+        expect((upgraded.query("SELECT last_writer_cli_version FROM database_control WHERE id = 1").get() as { last_writer_cli_version: string }).last_writer_cli_version).toBe(CLI_VERSION);
+      } finally {
+        upgraded.close();
+      }
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

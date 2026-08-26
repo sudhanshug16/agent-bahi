@@ -8,6 +8,7 @@ import { SKILL_GUIDES, checkSkillGuide, findSkillGuide, listOperations, listSkil
 import type { DispatchEnvelope } from "./types.ts";
 import { databaseOperation, operationActorInput } from "../infrastructure/services/database-operations-service.ts";
 import { chmodInitializedDatabase, ensurePlatformDefaultDatabaseParent, type DatabasePathSource } from "../infrastructure/config/database.ts";
+import { CLI_VERSION } from "../release.ts";
 
 type Input = Record<string, unknown>;
 type Handler = (facade: PublicApplicationFacade, input: Input) => Promise<unknown>;
@@ -465,14 +466,14 @@ export class OperationDispatcher {
       }
       if (operationId === "database.init") {
         if (this.options.databasePathSource === "platform-default") ensurePlatformDefaultDatabaseParent(this.options.databasePath);
-        await initializeSqliteDatabase(this.options.databasePath, { cliVersion: "0.0.0-gate0", buildId: "cli-init" });
+        await initializeSqliteDatabase(this.options.databasePath, { cliVersion: CLI_VERSION, buildId: "cli-init" });
         chmodInitializedDatabase(this.options.databasePath);
         const result = { initialized: true, compatibility: await inspectSqliteApplicationCompatibility(this.options.databasePath) };
         return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
       }
       const backupDestinationPath = text(input, "backupDestinationPath");
       if (!isAbsolute(backupDestinationPath)) throw new DomainError("INVALID_BACKUP_PATH", "backupDestinationPath must be absolute");
-      await upgradeSqliteDatabase(this.options.databasePath, { backupDestinationPath, cliVersion: "0.0.0-gate0", buildId: "cli-upgrade" });
+      await upgradeSqliteDatabase(this.options.databasePath, { backupDestinationPath, cliVersion: CLI_VERSION, buildId: "cli-upgrade" });
       const result = { upgraded: true, compatibility: await inspectSqliteApplicationCompatibility(this.options.databasePath) };
       return { ok: true, operationId, result, resultHash: computeResultHash(canonicalJson(result)) };
     } catch (error) {

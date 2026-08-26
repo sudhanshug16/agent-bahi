@@ -5,6 +5,7 @@ import { SqliteAdapter } from "../../src/infrastructure/adapters/sqlite-adapter.
 import { BusinessSessionFactory } from "../../src/infrastructure/adapters/business-session-factory.ts";
 import { MigrationService } from "../../src/infrastructure/services/migration-service.ts";
 import { CompatibilityService } from "../../src/infrastructure/services/compatibility-service.ts";
+import { CLI_VERSION } from "../../src/release.ts";
 import { DatabaseControlService } from "../../src/infrastructure/services/database-control-service.ts";
 import { TenantService } from "../../src/application/services/tenant-service.ts";
 import { BookSetService } from "../../src/application/services/book-set-service.ts";
@@ -435,9 +436,9 @@ describe("Phase 1A: Production Persistence Foundation", () => {
 
   describe("Compatibility Service", () => {
     it("should initialize default compatibility matrix", async () => {
-      const compat = await compatibilityService.checkCompatibility("0.0.0-gate0");
+      const compat = await compatibilityService.checkCompatibility(CLI_VERSION);
       expect(compat.compatible).toBe(true);
-      expect(compat.cliVersion).toBe("0.0.0-gate0");
+      expect(compat.cliVersion).toBe(CLI_VERSION);
     });
 
     it("should fail for incompatible CLI version", async () => {
@@ -450,7 +451,7 @@ describe("Phase 1A: Production Persistence Foundation", () => {
     });
 
     it("should gate read-only mode for Gate0", async () => {
-      const compat = await compatibilityService.checkCompatibility("0.0.0-gate0");
+      const compat = await compatibilityService.checkCompatibility(CLI_VERSION);
       expect(compat.message).toContain("Read-only");
     });
   });

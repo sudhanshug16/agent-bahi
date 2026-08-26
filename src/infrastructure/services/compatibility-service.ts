@@ -1,6 +1,7 @@
 import type { Database } from "../../application/ports/persistence.ts";
 import type { Dialect } from "../../core/types.ts";
 import { IncompatibleDatabaseError } from "../../core/types.ts";
+import { CLI_VERSION } from "../../release.ts";
 
 interface CompatibilityEntry {
   cliVersionMin: string;
@@ -12,8 +13,8 @@ interface CompatibilityEntry {
 
 const INITIAL_COMPATIBILITY_MATRIX: readonly CompatibilityEntry[] = [
   {
-    cliVersionMin: "0.0.0-gate0",
-    cliVersionMax: "0.0.0-gate0",
+    cliVersionMin: CLI_VERSION,
+    cliVersionMax: CLI_VERSION,
     schemaLogicalId: "gate0-001-core-sqlite",
     dataFormatVersion: "1.0.0",
     readPolicy: "read_only",
